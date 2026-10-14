@@ -25,6 +25,33 @@ DSH 主控助理编排插件。Lead 主会话只负责理解需求、维护路�
 
 在主会话 header 点击“任务看板”。右侧栏按 Conversation 展示场景、状态、轻量路由卡、TaskRun 时间线、进度、错误、结果摘要和后台投递状态；点击“打开子会话”可查看完整子会话。V1 看板只读。
 
+## 分发安装
+
+要求接收方已安装 DSH `0.2.1-alpha.1`，并且使用 Web profile。
+
+把 `may-dsh-orchestrator-0.1.0.tgz` 发给对方后执行：
+
+```sh
+dsh plugin --profile web add /path/to/may-dsh-orchestrator-0.1.0.tgz
+dsh web --no-open --host 127.0.0.1 --port 3080
+```
+
+新版本覆盖安装时，先移除旧版本再添加新 tarball：
+
+```sh
+dsh plugin --profile web remove @may/dsh-orchestrator
+dsh plugin --profile web add /path/to/may-dsh-orchestrator-0.1.0.tgz
+```
+
+重新生成分发包：
+
+```sh
+pnpm install
+pnpm pack:dist
+```
+
+tarball 只包含运行所需的 `lib/`、`cordis.patch.yml`、README、LICENSE 和 package metadata；不包含源码测试、source map、本机 `node_modules` 或开发仓库路径。
+
 ## 本地开发
 
 ```sh

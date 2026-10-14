@@ -1,8 +1,15 @@
-import { mkdirSync, rmSync, symlinkSync } from 'node:fs'
+import { existsSync, mkdirSync, rmSync, symlinkSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 
 const root = resolve(import.meta.dirname, '..')
-const dsh = '/Users/may/Documents/ChatGPT/New project 2'
+const dsh = process.env.DSH_REPO
+  ? resolve(process.env.DSH_REPO)
+  : resolve(import.meta.dirname, '../../New project 2')
+
+if (!existsSync(dsh)) {
+  throw new Error(`DSH source repository not found: ${dsh}. Set DSH_REPO=/path/to/deepseek-harness and retry.`)
+}
+
 const links = {
   '@deepseek-ai/cordis': `${dsh}/vendor/cordis`,
   '@deepseek-ai/schemastery': `${dsh}/vendor/schemastery`,
@@ -18,6 +25,7 @@ const links = {
   '@deepseek-ai/dsh-api-session-controller': `${dsh}/packages/api/session-controller`,
 }
 for (const [name, target] of Object.entries(links)) {
+  if (!existsSync(target)) throw new Error(`linked DSH package does not exist: ${target}`)
   const link = resolve(root, 'node_modules', name)
   mkdirSync(dirname(link), { recursive: true })
   rmSync(link, { recursive: true, force: true })

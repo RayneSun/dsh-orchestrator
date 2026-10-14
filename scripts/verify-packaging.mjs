@@ -47,6 +47,7 @@ for (const required of [
   'package.json',
   'cordis.patch.yml',
   'README.zh.md',
+  'LICENSE',
   'lib/index.js',
   'lib/client.js',
   'lib/typert.host.js',
@@ -55,8 +56,18 @@ for (const required of [
   if (!packed.has(required)) fail(`npm pack output omits ${required}`)
 }
 for (const forbidden of packed) {
+  if (forbidden.endsWith('.map')) fail(`npm pack output leaks a source map: ${forbidden}`)
   if (forbidden.startsWith('src/') || forbidden.startsWith('tests/') || forbidden.startsWith('node_modules/')) {
     fail(`npm pack output leaks development path ${forbidden}`)
+  }
+}
+
+for (const file of packed) {
+  if (file.endsWith('.js') || file === 'cordis.patch.yml') {
+    const content = read(file)
+    if (content.includes('/Users/') || content.includes('New project 2')) {
+      fail(`packaged file ${file} contains a local development path`)
+    }
   }
 }
 
