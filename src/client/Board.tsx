@@ -4,7 +4,8 @@ import type { Snapshot, TaskRecord } from '../types.ts'
 interface BoardProps {
   sessionId?: string
   useTabInfo?: () => { tab: { navigation?: { params?: unknown } } }
-  remote: any
+  orchestrator: { snapshot(request: { parentSessionId: string }): Promise<{ ok: true; value: Snapshot } | { ok: false; error?: { message?: string } }> }
+  remoteEvents: { $on(event: string, listener: () => void): () => void }
   uiWorkspace: any
 }
 
@@ -47,7 +48,7 @@ function TaskLine({ task }: { task: TaskRecord }): React.ReactElement {
   </li>
 }
 
-export function Board({ sessionId: propSessionId, useTabInfo, remote, uiWorkspace }: BoardProps): React.ReactElement {
+export function Board({ sessionId: propSessionId, useTabInfo, orchestrator, remoteEvents, uiWorkspace }: BoardProps): React.ReactElement {
   const tabSession = tabSessionId(useTabInfo)
   const sessionId = propSessionId ?? tabSession
   const [snapshot, setSnapshot] = useState<Snapshot | undefined>()
@@ -56,13 +57,13 @@ export function Board({ sessionId: propSessionId, useTabInfo, remote, uiWorkspac
   const load = useCallback(async () => {
     if (!sessionId) return
     try {
-      const result = await remote.orchestrator.snapshot({ parentSessionId: sessionId })
-      if (result?.ok) setSnapshot(result.value)
-      else setError(result?.error?.message ?? '读取任务看板失败')
+      const result = await orchestrator.snapshot({ parentSessionId: sessionId })
+      if (result.ok === true) setSnapshot(result.value)
+      else setError(result.error?.message ?? '读取任务看板失败')
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
     }
-  }, [remote, sessionId])
+  }, [orchestrator, sessionId])
 
   useEffect(() => {
     setSnapshot(undefined)
@@ -71,7 +72,7 @@ export function Board({ sessionId: propSessionId, useTabInfo, remote, uiWorkspac
     const timer = setInterval(() => { void load() }, 5000)
     let disposeEvent: (() => void) | undefined
     try {
-      disposeEvent = remote.$on('commands/change', () => { void load() })
+      disposeEvent = remoteEvents.$on('commands/change', () => { void load() })
     } catch {
       // 轮询仍是重连和事件不可用时的兜底。
     }
@@ -79,7 +80,7 @@ export function Board({ sessionId: propSessionId, useTabInfo, remote, uiWorkspac
       clearInterval(timer)
       disposeEvent?.()
     }
-  }, [load, remote])
+  }, [load, remoteEvents])
 
   const tasksByConversation = useMemo(() => {
     const map = new Map<string, TaskRecord[]>()

@@ -99,7 +99,7 @@ export function applyOutlinePatch(
   }
 }
 
-export interface TaskUpdateInput {
+export interface TaskTransitionInput {
   status: Extract<TaskStatus, 'running' | 'blocked' | 'completed' | 'failed'>
   progressNote?: string
   userAnswer?: string
@@ -108,7 +108,7 @@ export interface TaskUpdateInput {
   outlinePatch?: OutlinePatch
 }
 
-export function transitionTask(task: TaskRecord, input: TaskUpdateInput, at = new Date().toISOString()): TaskRecord {
+export function transitionTask(task: TaskRecord, input: TaskTransitionInput, at = new Date().toISOString()): TaskRecord {
   if (!canTransition(task.status, input.status)) {
     throw new StateError('invalid_task_transition', `task cannot move from ${task.status} to ${input.status}`)
   }

@@ -1,5 +1,6 @@
 export { default } from './service.ts'
-export { OrchestratorService, LEAD_PRESET, WORKER_PRESET } from './service.ts'
+export { OrchestratorService } from './service.ts'
+export { LEAD_PRESET, WORKER_PRESET, buildPresetDefinitions } from './presets.ts'
 export { orchestratorDomain } from './storage.ts'
 export * from './types.ts'
 export * from './state-machine.ts'

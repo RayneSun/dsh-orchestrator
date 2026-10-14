@@ -1,8 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import { createConversation, createTask } from '../src/types.ts'
 import {
-  StateError, activateConversation, applyOutlinePatch, failTaskWithoutTerminalReport,
-  settleConversation, transitionTask,
+  StateError, activateConversation, applyOutlinePatch, assertRevision,
+  canTransition, failTask, failTaskWithoutTerminalReport, interruptTaskAfterRestart,
+  settleConversation, startConversation, transitionTask,
 } from '../src/state-machine.ts'
 
 function pair() {
@@ -54,5 +55,55 @@ describe('任务状态机', () => {
     const next = applyOutlinePatch(conv, { tags: ['天气', '天气', '穿衣'], entities: ['温度'] })
     expect(next.outline.tags).toEqual(['天气', '穿衣'])
     expect(next.outline.entities).toEqual(['温度'])
+  })
+})
+
+
+describe('状态迁移和修订号', () => {
+  it('blocked 必须说明原因，failed 必须带 error', () => {
+    const queued = createTask({
+      id: 't', parentSessionId: 'p', conversationId: 'c', predecessorTaskId: null,
+      subject: 's', prompt: 'p', scene: 'general', responseMode: 'wait',
+    })
+    expect(() => transitionTask(queued, { status: 'blocked' })).toThrow(/blocked/)
+    expect(() => transitionTask(queued, { status: 'failed' })).toThrow(/failed/)
+    expect(transitionTask(queued, { status: 'failed', error: 'boom' }).status).toBe('failed')
+  })
+
+  it('queued 可直接完成，完成后修订号递增且不能继续迁移', () => {
+    const task = createTask({
+      id: 't', parentSessionId: 'p', conversationId: 'c', predecessorTaskId: null,
+      subject: 's', prompt: 'p', scene: 'general', responseMode: 'wait',
+    })
+    const done = transitionTask(task, { status: 'completed', userAnswer: '答案' })
+    expect(done.revision).toBe(1)
+    expect(done.endedAt).toBe(done.updatedAt)
+    expect(canTransition(done.status, 'running')).toBe(false)
+  })
+
+  it('终态任务再次失败时保持原记录不变', () => {
+    const { task } = pair()
+    const done = transitionTask(task, { status: 'completed', userAnswer: 'done' })
+    expect(failTask(done, 'later')).toBe(done)
+  })
+
+  it('expected revision 不一致时拒绝乐观更新', () => {
+    const conv = createConversation({
+      id: 'c', childSessionId: 'child', parentSessionId: 'p',
+      scene: 'code', title: 't',
+    })
+    expect(() => assertRevision(conv, 3)).toThrowError(StateError)
+    expect(() => assertRevision(conv, 0)).not.toThrow()
+    expect(startConversation(conv).state).toBe('running')
+  })
+
+  it('重启恢复会把后台活动任务转 blocked 并保留待投递 outbox', () => {
+    const task = createTask({
+      id: 't', parentSessionId: 'p', conversationId: 'c', predecessorTaskId: null,
+      subject: 's', prompt: 'p', scene: 'code', responseMode: 'background',
+    })
+    const blocked = interruptTaskAfterRestart(task)
+    expect(blocked.status).toBe('blocked')
+    expect(blocked.delivery).toEqual({ state: 'pending', attempts: 0 })
   })
 })

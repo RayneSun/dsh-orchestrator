@@ -11,10 +11,12 @@ import type { SessionId } from '@deepseek-ai/dsh-session'
 import type {} from '@deepseek-ai/dsh-agent-preset-registry'
 import type {} from '@deepseek-ai/dsh-api-session-controller'
 import type {} from '@deepseek-ai/dsh-session-persistence'
-import { LEAD_PROMPT, deliveryNotice, workerPrompt } from './messages.ts'
+import { deliveryNotice, workerPrompt } from './messages.ts'
+import { toJson } from './json.ts'
 import { routeQuery } from './router.ts'
 import { isForbidden, sceneDefinitions } from './scenes.ts'
 import { orchestratorDomain } from './storage.ts'
+import { buildPresetDefinitions, LEAD_PRESET, LEAD_TOOL_DENY, WORKER_PRESET } from './presets.ts'
 import {
   activateConversation,
   applyOutlinePatch,
@@ -37,6 +39,10 @@ import {
   type Scene,
   type Snapshot,
   type TaskRecord,
+  dispatchInputSchema,
+  taskUpdateInputSchema,
+  type DispatchInput,
+  type TaskUpdateInput,
 } from './types.ts'
 
 declare module '@deepseek-ai/dsh-llm' {
@@ -53,17 +59,11 @@ declare module '@deepseek-ai/cordis' {
   }
 }
 
-const PLUGIN = '@may/dsh-orchestrator'
-export const LEAD_PRESET = 'may-orchestrator-lead'
-export const WORKER_PRESET: Record<Scene, string> = {
-  code: 'may-orchestrator-worker-code',
-  general: 'may-orchestrator-worker-general',
-  research: 'may-orchestrator-worker-research',
-  review: 'may-orchestrator-worker-review',
-}
-
 type DomainType = Domain<typeof orchestratorDomain>
 type Waiter = { resolve: (task: TaskRecord) => void }
+type DispatchProvision =
+  | { ok: true; conv: ConversationRecord; task: TaskRecord }
+  | { ok: false; result: unknown }
 
 function jsonOutput() {
   return {
@@ -203,55 +203,9 @@ export class OrchestratorService extends TypertRemoteService {
   }
 
   private async registerPresets(): Promise<void> {
-    const shell = (name: string, disabled?: boolean) => disabled === undefined
-      ? { id: name, name }
-      : { id: name, name, disabled }
-    const bash = shell('@deepseek-ai/dsh-tool-bash', process.platform === 'win32')
-    const pwsh = shell('@deepseek-ai/dsh-tool-pwsh', process.platform !== 'win32')
-    const basics = [
-      { id: 'agent-instructions', name: '@deepseek-ai/dsh-agent-instructions' },
-      { id: 'time-context', name: '@deepseek-ai/dsh-time-context' },
-    ]
-    const compaction = [
-      { id: 'compaction-basic', name: '@deepseek-ai/dsh-compaction-basic' },
-      { id: 'command-compact', name: '@deepseek-ai/dsh-command-compact' },
-      { id: 'tool-result-pruner', name: '@deepseek-ai/dsh-compaction-tool-result-pruner', config: { thresholdChars: 8192 } },
-    ]
-    const definitions: any[] = [
-      {
-        id: LEAD_PRESET,
-        name: '主控助理',
-        order: 8,
-        description: '只负责路由和编排，把执行工作分发给持久子会话',
-        plugins: [
-          { id: 'persona', name: '@deepseek-ai/dsh-persona', config: { prefix: LEAD_PROMPT, suffix: '你的工作目录是 {{cwd}}。' } },
-          ...basics,
-          { id: 'tool-web', name: '@deepseek-ai/dsh-tool-web', config: { fetch: true, searchTimeoutMs: 60_000 } },
-          { id: 'tool-ask-user', name: '@deepseek-ai/dsh-tool-ask-user' },
-          ...compaction,
-        ],
-      },
-      ...scenes.map((scene) => {
-        const definition = sceneDefinitions[scene]
-        return {
-          id: WORKER_PRESET[scene],
-          name: definition.label,
-          order: 20 + scenes.indexOf(scene),
-          description: `Orchestrator ${scene} worker`,
-          plugins: [
-            ...basics,
-            ...(scene === 'code' || scene === 'general' ? [bash, pwsh] : []),
-            { id: 'tool-fs', name: '@deepseek-ai/dsh-tool-fs' },
-            { id: 'tool-fs-search', name: '@deepseek-ai/dsh-tool-fs-search', config: { sampleOverCapGlobResults: false } },
-            { id: 'tool-web', name: '@deepseek-ai/dsh-tool-web', config: { fetch: true, searchTimeoutMs: 60_000 } },
-            ...compaction,
-          ],
-        }
-      }),
-    ]
     const disposers: Array<() => Promise<void>> = []
     this.hostCtx.effect(() => () => Promise.allSettled(disposers.map(dispose => dispose())))
-    for (const definition of definitions) {
+    for (const definition of buildPresetDefinitions()) {
       disposers.push(await this.hostCtx.agentPresets.register(definition))
     }
   }
@@ -291,24 +245,69 @@ export class OrchestratorService extends TypertRemoteService {
   private configureLead(agent: Agent): void {
     this.resetInstalled(String(agent.session.id))
     const scoped = agent.ctx
+    this.installSettlementFilter(agent)
     this.keep(agent, scoped.systemPrompt.section({
       name: 'orchestrator:roster',
       order: 610,
       text: () => this.renderRoster(String(agent.session.id)),
     }))
+    this.keep(agent, scoped.tools.restrict({ deny: [...LEAD_TOOL_DENY] }))
+    this.keep(agent, scoped.on('agent/pre-step', async ({ messages }, next) => {
+      const managedSettled = (message: { source?: unknown }): boolean => {
+        const source = message.source as { kind?: string; senderSessionId?: string } | undefined
+        return source?.kind === 'subagent-settled'
+          && typeof source.senderSessionId === 'string'
+          && this.conversationByChild(source.senderSessionId)?.parentSessionId === String(agent.session.id)
+      }
+      if (!messages.some(managedSettled)) return next()
+      const visible = messages.filter(message => !managedSettled(message))
+      if (visible.length === 0) return { kind: 'reject' as const }
+      return { kind: 'enter' as const, messages: visible }
+    }))
     for (const tool of this.leadTools(agent)) this.keep(agent, scoped.tools.register(tool as any))
+  }
+
+  private isManagedSettlement(agent: Agent, message: { source?: unknown }): boolean {
+    const source = message.source as { kind?: string; senderSessionId?: string } | undefined
+    if (source?.kind !== 'subagent-settled' || typeof source.senderSessionId !== 'string') return false
+    return this.conversationByChild(source.senderSessionId)?.parentSessionId === String(agent.session.id)
+  }
+
+  /** task_update 是唯一完成通道；过滤子代理框架自带的 settled 唤醒，避免空回合和重复答案。 */
+  private installSettlementFilter(agent: Agent): void {
+    for (const name of ['followup', 'steer', 'inject'] as const) {
+      const original = agent[name].bind(agent)
+      const replacement = (message: { source?: unknown }): void => {
+        if (this.isManagedSettlement(agent, message)) return
+        original(message as never)
+      }
+      ;(agent as unknown as Record<typeof name, typeof replacement>)[name] = replacement
+      this.keep(agent, () => {
+        ;(agent as unknown as Record<typeof name, typeof original>)[name] = original
+      })
+    }
   }
 
   private async configureWorker(agent: Agent, conv: ConversationRecord): Promise<void> {
     this.resetInstalled(String(agent.session.id))
     const wanted = WORKER_PRESET[conv.scene]
     try {
-      if (this.composedPreset(agent) !== wanted) await this.hostCtx.agentPresets.recompose(agent.ctx, wanted)
+      if (this.composedPreset(agent) !== wanted) await this.hostCtx.agentPresets.select(agent, wanted)
     } catch (error) {
-      this.hostCtx.logger.warn(`orchestrator: worker preset ${wanted} unavailable: ${String(error)}`)
+      // 冷恢复或已有首个 turn 时，select 会锁定；仍需重绑 live scope，保证本次打开使用 Worker 能力。
+      this.hostCtx.logger.warn(`orchestrator: worker preset select ${wanted} unavailable: ${String(error)}`)
+      try {
+        if (this.composedPreset(agent) !== wanted) await this.hostCtx.agentPresets.recompose(agent.ctx, wanted)
+      } catch (recomposeError) {
+        this.hostCtx.logger.warn(`orchestrator: worker preset ${wanted} unavailable: ${String(recomposeError)}`)
+      }
     }
 
     const scoped = agent.ctx
+    const toolFilter = sceneDefinitions[conv.scene].toolFilter
+    if (toolFilter.allow) {
+      this.keep(agent, scoped.tools.restrict({ allow: toolFilter.allow }))
+    }
     this.keep(agent, scoped.systemPrompt.section({
       name: 'orchestrator:worker-policy',
       order: 610,
@@ -340,7 +339,7 @@ export class OrchestratorService extends TypertRemoteService {
         },
       },
       output: jsonOutput(),
-      execute: async (args: any) => await this.updateFromWorker(args, String(agent.session.id)),
+      execute: async (args: any) => toJson(await this.updateFromWorker(args, String(agent.session.id))),
     })))
   }
 
@@ -370,7 +369,7 @@ export class OrchestratorService extends TypertRemoteService {
         execute: async ({ query }: { query: string }) => {
           const conversations = this.snapshotFor(String(agent.session.id)).conversations
             .filter(conv => ['idle', 'blocked'].includes(conv.state))
-          return { candidates: routeQuery(query, conversations, 6) } as any
+          return toJson({ candidates: routeQuery(query, conversations, 6) })
         },
       }),
       defineTool({
@@ -386,14 +385,14 @@ export class OrchestratorService extends TypertRemoteService {
           waitTimeoutMs: { type: 'integer', description: 'wait 超时，默认 60000；超时自动转后台' },
         },
         output: jsonOutput(),
-        execute: async (args: any) => await this.dispatch(args, agent),
+        execute: async (args: any) => toJson(await this.dispatch(args, agent)),
       }),
       defineTool({
         name: 'orchestrator_list',
         description: '列出当前主会话下全部工作流和 TaskRun 状态。',
         parameters: {},
         output: jsonOutput(),
-        execute: async () => this.snapshotFor(String(agent.session.id)) as any,
+        execute: async () => toJson(this.snapshotFor(String(agent.session.id))),
       }),
       defineTool({
         name: 'orchestrator_get',
@@ -402,112 +401,126 @@ export class OrchestratorService extends TypertRemoteService {
         output: jsonOutput(),
         execute: async ({ conversationId }: { conversationId: string }) => {
           const conv = this.conversationById(conversationId)
-          if (!conv || conv.parentSessionId !== String(agent.session.id)) return { error: 'conversation not found' }
+          if (!conv || conv.parentSessionId !== String(agent.session.id)) {
+            return toJson({ error: 'conversation not found' })
+          }
           const tasks = [...this.tasks().entries()].map(([, task]) => task).filter(task => task.conversationId === conv.id)
-          return { conversation: conv, tasks }
+          return toJson({ conversation: conv, tasks })
         },
       }),
     ]
   }
 
-  private async dispatch(args: any, parent: Agent): Promise<any> {
+  private async dispatch(rawArgs: unknown, parent: Agent): Promise<any> {
+    const parsed = dispatchInputSchema.safeParse(rawArgs)
+    if (!parsed.success) return { kind: 'error', error: parsed.error.issues[0]?.message ?? 'invalid orchestrator_dispatch arguments' }
+    const args: DispatchInput = parsed.data
     const parentSessionId = String(parent.session.id)
     const scene: Scene = args.scene
-    const responseMode: 'wait' | 'background' = args.responseMode
-    if (!scenes.includes(scene)) return { kind: 'error', error: `unknown scene ${scene}` }
-    const timeout = Math.min(600_000, Math.max(1000, Number(args.waitTimeoutMs ?? 60_000)))
+    const responseMode = args.responseMode
+    const timeout = args.waitTimeoutMs ?? 60_000
 
-    return this.serialize(async () => {
-      let conv: ConversationRecord
-      let task: TaskRecord
-      const at = timestamp()
+    // waitTask 必须在串行写锁外等待，否则 Worker 的 task_update 无法进入状态机。
+    const provisioned = await this.serialize(() => this.provisionDispatch(args, parent, parentSessionId, scene))
+    if (provisioned.ok === false) return provisioned.result
+    const { conv, task } = provisioned
+    if (responseMode === 'background') {
+      return { kind: 'background', taskId: task.id, conversationId: conv.id, childSessionId: conv.childSessionId }
+    }
+    return await this.waitTask(task.id, timeout, args.subject)
+  }
 
-      if (args.conversationId) {
-        const existing = this.conversationById(args.conversationId)
-        if (!existing || existing.parentSessionId !== parentSessionId) return { kind: 'error', error: 'conversation not found' }
-        if (existing.scene !== scene) return { kind: 'error', error: `scene mismatch: conversation is ${existing.scene}, request is ${scene}` }
-        if (existing.activeTaskId) return { kind: 'error', error: `conversation busy: ${existing.activeTaskId}` }
-        task = createTask({
-          id: createId('task'),
-          parentSessionId,
-          conversationId: conv.id,
-          predecessorTaskId: existing.lastTaskId,
-          subject: args.subject,
-          prompt: args.prompt,
-          scene,
-          responseMode,
-          ...args.acceptanceCriteria ? { acceptanceCriteria: args.acceptanceCriteria } : {},
-        })
-        conv = activateConversation(existing, task.id, at)
-        await this.putPair(conv, task)
-        try {
-          await queueHostSubagentPrompt(
-            this.hostCtx.subagents,
+  private async provisionDispatch(
+    args: DispatchInput,
+    parent: Agent,
+    parentSessionId: string,
+    scene: Scene,
+  ): Promise<DispatchProvision> {
+    let conv: ConversationRecord
+    let task: TaskRecord
+    const at = timestamp()
+
+    if (args.conversationId) {
+      const existing = this.conversationById(args.conversationId)
+      if (!existing || existing.parentSessionId !== parentSessionId) return { ok: false, result: { kind: 'error', error: 'conversation not found' } }
+      if (existing.scene !== scene) return { ok: false, result: { kind: 'error', error: `scene mismatch: conversation is ${existing.scene}, request is ${scene}` } }
+      if (existing.activeTaskId) return { ok: false, result: { kind: 'error', error: `conversation busy: ${existing.activeTaskId}` } }
+      task = createTask({
+        id: createId('task'),
+        parentSessionId,
+        conversationId: existing.id,
+        predecessorTaskId: existing.lastTaskId,
+        subject: args.subject,
+        prompt: args.prompt,
+        scene,
+        responseMode: args.responseMode,
+        ...args.acceptanceCriteria ? { acceptanceCriteria: args.acceptanceCriteria } : {},
+      })
+      conv = activateConversation(existing, task.id, at)
+      await this.putPair(conv, task)
+      try {
+        await queueHostSubagentPrompt(
+          this.hostCtx.subagents,
+          parent,
+          conv.childSessionId as SessionId,
+          [{ type: 'text', text: workerPrompt(scene, task) }],
+          { kind: 'orchestrator', form: 'notice', summary: `orchestrator task ${task.id}` },
+          AbortSignal.timeout(120_000),
+        )
+      } catch (error) {
+        return { ok: false, result: await this.failLaunch(conv, task, error) }
+      }
+    } else {
+      const conversationId = createId('conv')
+      const taskId = createId('task')
+      const childSessionId = randomUUID()
+      const provisional = createConversation({ id: conversationId, childSessionId, parentSessionId, scene, title: args.subject })
+      conv = { ...provisional, activeTaskId: taskId, lastTaskId: taskId }
+      task = createTask({
+        id: taskId,
+        parentSessionId,
+        conversationId,
+        predecessorTaskId: null,
+        subject: args.subject,
+        prompt: args.prompt,
+        scene,
+        responseMode: args.responseMode,
+        ...args.acceptanceCriteria ? { acceptanceCriteria: args.acceptanceCriteria } : {},
+      })
+      await this.putPair(conv, task)
+      try {
+        await this.hostCtx.subagents.startContinuable({
+          provider: 'spawn',
+          label: args.subject,
+          childId: childSessionId as SessionId,
+          request: {
+            prompt: [{ type: 'text', text: workerPrompt(scene, task) }],
             parent,
-            conv.childSessionId as SessionId,
-            [{ type: 'text', text: workerPrompt(scene, task) }],
-            { kind: 'orchestrator', form: 'notice', summary: `orchestrator task ${task.id}` },
-            AbortSignal.timeout(120_000),
-          )
-        } catch (error) {
-          return await this.failLaunch(conv, task, error)
-        }
-      } else {
-        const conversationId = createId('conv')
-        const taskId = createId('task')
-        const childSessionId = randomUUID()
-        const provisional = createConversation({ id: conversationId, childSessionId, parentSessionId, scene, title: args.subject })
-        conv = { ...provisional, activeTaskId: taskId, lastTaskId: taskId }
-        task = createTask({
-          id: taskId,
-          parentSessionId,
-          conversationId,
-          predecessorTaskId: null,
-          subject: args.subject,
-          prompt: args.prompt,
-          scene,
-          responseMode,
-          ...args.acceptanceCriteria ? { acceptanceCriteria: args.acceptanceCriteria } : {},
+            persona: sceneDefinitions[scene].persona,
+            // 创建窗口先继承 Lead preset；文件等工具要等 Worker preset recompose 后才可枚举。
+            maxDepth: 1,
+          },
+          signal: AbortSignal.timeout(120_000),
         })
-        await this.putPair(conv, task)
-        try {
-          await this.hostCtx.subagents.startContinuable({
-            provider: 'spawn',
-            label: args.subject,
-            childId: childSessionId as SessionId,
-            request: {
-              prompt: [{ type: 'text', text: workerPrompt(scene, task) }],
-              parent,
-              persona: sceneDefinitions[scene].persona,
-              toolFilter: sceneDefinitions[scene].toolFilter,
-              maxDepth: 1,
-            },
-            signal: AbortSignal.timeout(120_000),
-          })
-        } catch (error) {
-          return await this.failLaunch(conv, task, error)
-        }
+      } catch (error) {
+        return { ok: false, result: await this.failLaunch(conv, task, error) }
       }
+    }
 
-      // 快速 Worker 可能在 inbox 接受与此处收尾之间已提交终态，只能补 queued -> running。
-      const acceptedTask = this.taskById(task.id)
-      const acceptedConv = this.conversationById(conv.id)
-      if (acceptedTask && acceptedConv) {
-        const now = timestamp()
-        const nextTask = acceptedTask.status === 'queued'
-          ? { ...acceptedTask, revision: acceptedTask.revision + 1, updatedAt: now, status: 'running' as const, startedAt: acceptedTask.startedAt ?? now }
-          : acceptedTask
-        const nextConv = acceptedConv.state === 'provisioning' ? startConversation(acceptedConv, now) : acceptedConv
-        if (nextTask !== acceptedTask || nextConv !== acceptedConv) await this.putPair(nextConv, nextTask)
-        conv = nextConv
-        task = nextTask
-      }
-
-      if (responseMode === 'background') {
-        return { kind: 'background', taskId: task.id, conversationId: conv.id, childSessionId: conv.childSessionId }
-      }
-      return await this.waitTask(task.id, timeout, args.subject)
-    })
+    // 快速 Worker 可能在 inbox 接受与此处收尾之间已提交终态；只补 queued -> running，不回滚终态。
+    const acceptedTask = this.taskById(task.id)
+    const acceptedConv = this.conversationById(conv.id)
+    if (acceptedTask && acceptedConv) {
+      const now = timestamp()
+      const nextTask = acceptedTask.status === 'queued'
+        ? { ...acceptedTask, revision: acceptedTask.revision + 1, updatedAt: now, status: 'running' as const, startedAt: acceptedTask.startedAt ?? now }
+        : acceptedTask
+      const nextConv = acceptedConv.state === 'provisioning' ? startConversation(acceptedConv, now) : acceptedConv
+      if (nextTask !== acceptedTask || nextConv !== acceptedConv) await this.putPair(nextConv, nextTask)
+      conv = nextConv
+      task = nextTask
+    }
+    return { ok: true, conv, task }
   }
 
   private async failLaunch(conv: ConversationRecord, task: TaskRecord, error: unknown): Promise<unknown> {
@@ -564,7 +577,10 @@ export class OrchestratorService extends TypertRemoteService {
     })
   }
 
-  private async updateFromWorker(args: any, childSessionId: string): Promise<any> {
+  private async updateFromWorker(rawArgs: unknown, childSessionId: string): Promise<any> {
+    const parsed = taskUpdateInputSchema.safeParse(rawArgs)
+    if (!parsed.success) throw new Error(parsed.error.issues[0]?.message ?? 'invalid task_update arguments')
+    const args: TaskUpdateInput = parsed.data
     let shouldDeliver = false
     const result = await this.serialize(async () => {
       const conv = this.conversationByChild(childSessionId)
@@ -585,9 +601,12 @@ export class OrchestratorService extends TypertRemoteService {
         }
       }
       await this.putPair(nextConv, task)
-      this.waiters.get(task.id)?.resolve(task)
-      this.waiters.delete(task.id)
-      shouldDeliver = task.responseMode === 'background' && task.delivery?.state === 'pending'
+      const terminal = ['completed', 'blocked', 'failed'].includes(task.status)
+      if (terminal) {
+        this.waiters.get(task.id)?.resolve(task)
+        this.waiters.delete(task.id)
+      }
+      shouldDeliver = terminal && task.responseMode === 'background' && task.delivery?.state === 'pending'
       return { ok: true as const, taskId: task.id, status: task.status, conversationState: nextConv.state }
     })
     if (shouldDeliver) void this.deliverPendingTask(result.taskId)

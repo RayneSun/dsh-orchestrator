@@ -10,15 +10,16 @@ export const activeTaskStatuses = ['queued', 'running'] as const
 export const terminalTaskStatuses = ['blocked', 'completed', 'failed', 'cancelled'] as const
 
 const trimmed = z.string().trim().min(1)
+const trimmedList = z.array(trimmed)
 const now = () => new Date().toISOString()
 
 export const outlineSchema = z.object({
   summary: z.string().default(''),
-  keyFacts: z.array(z.string()).default([]),
-  entities: z.array(z.string()).default([]),
-  tags: z.array(z.string()).default([]),
-  artifacts: z.array(z.string()).default([]),
-  openQuestions: z.array(z.string()).default([]),
+  keyFacts: trimmedList.default([]),
+  entities: trimmedList.default([]),
+  tags: trimmedList.default([]),
+  artifacts: trimmedList.default([]),
+  openQuestions: trimmedList.default([]),
 }).strict()
 
 export const conversationSchema = z.object({
@@ -50,14 +51,14 @@ export const deliverySchema = z.discriminatedUnion('state', [
 ])
 
 export const outlinePatchSchema = z.object({
-  title: z.string().optional(),
-  summary: z.string().optional(),
-  keyFacts: z.array(z.string()).optional(),
-  entities: z.array(z.string()).optional(),
-  tags: z.array(z.string()).optional(),
-  artifacts: z.array(z.string()).optional(),
-  openQuestions: z.array(z.string()).optional(),
-}).partial().strict()
+  title: trimmed.optional(),
+  summary: trimmed.optional(),
+  keyFacts: trimmedList.optional(),
+  entities: trimmedList.optional(),
+  tags: trimmedList.optional(),
+  artifacts: trimmedList.optional(),
+  openQuestions: trimmedList.optional(),
+}).strict()
 
 export const taskSchema = z.object({
   id: trimmed,
@@ -148,3 +149,35 @@ export function createTask(input: {
     updatedAt: ts,
   }
 }
+
+export const dispatchInputSchema = z.object({
+  subject: z.string().trim().min(1),
+  prompt: z.string().trim().min(1),
+  scene: sceneSchema,
+  conversationId: z.string().trim().min(1).optional(),
+  responseMode: z.enum(['wait', 'background']),
+  acceptanceCriteria: z.string().trim().min(1).optional(),
+  waitTimeoutMs: z.number().int().positive().max(600_000).optional(),
+}).strict()
+
+export const taskUpdateInputSchema = z.object({
+  status: z.enum(['running', 'blocked', 'completed', 'failed']),
+  progressNote: trimmed.optional(),
+  userAnswer: trimmed.optional(),
+  resultSummary: trimmed.optional(),
+  error: trimmed.optional(),
+  outlinePatch: outlinePatchSchema.optional(),
+}).strict().superRefine((value, ctx) => {
+  if (value.status === 'completed' && !value.userAnswer) {
+    ctx.addIssue({ code: 'custom', path: ['userAnswer'], message: 'completed task_update requires userAnswer' })
+  }
+  if (value.status === 'failed' && !value.error) {
+    ctx.addIssue({ code: 'custom', path: ['error'], message: 'failed task_update requires error' })
+  }
+  if (value.status === 'blocked' && !value.error && !value.progressNote) {
+    ctx.addIssue({ code: 'custom', path: ['progressNote'], message: 'blocked task_update requires error or progressNote' })
+  }
+})
+
+export type DispatchInput = z.infer<typeof dispatchInputSchema>
+export type TaskUpdateInput = z.infer<typeof taskUpdateInputSchema>

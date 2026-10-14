@@ -63,6 +63,8 @@ export default defineConfig([
     clean: false,
     splitting: false,
     external: specifier => clientInject.has(specifier),
+    // DSH Web 只注入 dsh.client.inject 中的包；Zod 必须内联进 closure。
+    deps: { alwaysBundle: [/^zod($|\/)/] },
     outputOptions: {
       entryFileNames: 'client.js',
       banner: `window.__ModuleLoader__.load({ id: ${JSON.stringify(pkg.name)}, factory: (require) => {`,

@@ -31,7 +31,7 @@ const descriptor = {
     typeSymbol: '@may/dsh-orchestrator#orchestrator/snapshot:result',
     create: () => snapshotResultSchema,
   },
-  sourceLocation: { file: 'src/service.ts', line: 172, column: 3 },
+  sourceLocation: { file: 'src/service.ts', line: 171, column: 3 },
 }
 
 export const TYPERT_REMOTE = {

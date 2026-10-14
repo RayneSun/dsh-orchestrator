@@ -29,3 +29,21 @@ describe('词法路由', () => {
     expect(candidates).toHaveLength(0)
   })
 })
+
+
+describe('追问和不同主题路由', () => {
+  it('代码报错的后续重构请求命中同一代码工作流', () => {
+    const conv = createConversation({
+      id: 'conv_code', childSessionId: 'child-code', parentSessionId: 'parent',
+      scene: 'code', title: '修复 TypeScript 编译错误',
+    })
+    conv.outline.summary = '修复测试中的类型错误并保证 build 通过'
+    conv.outline.tags = ['TypeScript', '编译', '测试']
+    const candidates = routeQuery('那顺手重构一下相关测试', [conv])
+    expect(candidates[0]?.conversation.id).toBe('conv_code')
+  })
+
+  it('天气工作流不会承接午餐预算问题', () => {
+    expect(routeQuery('帮我规划午餐预算', [weatherConv()])).toHaveLength(0)
+  })
+})

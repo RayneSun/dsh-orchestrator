@@ -22,7 +22,8 @@ function BoardBody(props: any): React.ReactElement {
   return <Board
     sessionId={props.sessionId}
     useTabInfo={props.useTabInfo}
-    remote={props.remote}
+    orchestrator={props.orchestrator}
+    remoteEvents={props.remoteEvents}
     uiWorkspace={props.uiWorkspace}
   />
 }
@@ -31,59 +32,75 @@ function BoardTitle(): React.ReactElement {
   return <>任务看板</>
 }
 
+function registerUi(ctx: any): void {
+  // $mount 创建的是独立服务键 remote.orchestrator；必须在这个 inject fiber 内取出。
+  const orchestrator = ctx.remote.orchestrator
+  ctx.effect(() => ctx.sidebarRightTabs.register({
+    id: TAB_ID,
+    kind: KIND,
+    priority: 'extension',
+    title: () => '任务看板',
+  }))
+
+  ctx.effect(() => {
+    const disposeHeader = ctx.slots.inject(
+      'conversation.session.header.utilities',
+      () => ctx.slots.register({
+        name: 'conversation.session.header.utilities',
+        id: `${PLUGIN_ID}/header`,
+        order: -6,
+        inject: (sessionId: string) => ({
+          sessionId,
+          sidebarRight: ctx.sidebarRight,
+        }),
+      }, HeaderButton),
+    )
+    const disposeBody = ctx.slots.inject('sidebar.right.pane.tab', () => ctx.slots.register({
+      name: 'sidebar.right.pane.tab',
+      key: TAB_ID,
+      inject: (sessionId: string) => ({
+        sessionId,
+        orchestrator,
+        remoteEvents: ctx.remote,
+        uiWorkspace: ctx.uiWorkspace,
+      }),
+    }, BoardBody))
+    const disposeTitle = ctx.slots.inject('sidebar.right.pane.tab.title', () => ctx.slots.register({
+      name: 'sidebar.right.pane.tab.title',
+      key: TAB_ID,
+      inject: () => ({}),
+    }, BoardTitle))
+    return async () => {
+      for (const dispose of [disposeTitle, disposeBody, disposeHeader]) await Promise.resolve(dispose())
+    }
+  })
+}
+
 export async function apply(ctx: Context): Promise<() => Promise<void>> {
   adoptStyles()
   const client = ctx as any
-  const disposeRemote = await client.remote.$mount(remoteContribution)
-  const disposers: Array<() => unknown> = []
-
+  let disposeRemote: () => Promise<void>
   try {
-    disposers.push(client.sidebarRightTabs.register({
-      id: TAB_ID,
-      kind: KIND,
-      priority: 'extension',
-      title: () => '任务看板',
-    }))
-
-    client.effect(() => {
-      const disposeHeader = client.slots.inject(
-        'conversation.session.header.utilities',
-        () => client.slots.register({
-          name: 'conversation.session.header.utilities',
-          id: `${PLUGIN_ID}/header`,
-          order: -6,
-          inject: (sessionId: string) => ({
-            sessionId,
-            sidebarRight: client.sidebarRight,
-          }),
-        }, HeaderButton),
-      )
-      const disposeBody = client.slots.inject('sidebar.right.pane.tab', () => client.slots.register({
-        name: 'sidebar.right.pane.tab',
-        key: TAB_ID,
-        inject: (sessionId: string) => ({
-          sessionId,
-          remote: client.remote,
-          uiWorkspace: client.uiWorkspace,
-        }),
-      }, BoardBody))
-      const disposeTitle = client.slots.inject('sidebar.right.pane.tab.title', () => client.slots.register({
-        name: 'sidebar.right.pane.tab.title',
-        key: TAB_ID,
-        inject: () => ({}),
-      }, BoardTitle))
-      return async () => {
-        for (const dispose of [disposeTitle, disposeBody, disposeHeader]) await Promise.resolve(dispose())
-      }
-    })
+    disposeRemote = await client.remote.$mount(remoteContribution)
   } catch (error) {
-    for (const dispose of disposers.reverse()) await Promise.resolve(dispose())
+    console.error('orchestrator remote mount failed', error)
+    throw error
+  }
+
+  const ui = client.inject(
+    ['remote.orchestrator', 'remote', 'slots', 'uiWorkspace', 'sidebarRightTabs', 'sidebarRight'],
+    registerUi,
+  )
+  try {
+    await ui
+  } catch (error) {
+    await ui.dispose()
     await disposeRemote()
     throw error
   }
 
   return async () => {
-    for (const dispose of disposers.reverse()) await Promise.resolve(dispose())
+    await ui.dispose()
     await disposeRemote()
   }
 }
