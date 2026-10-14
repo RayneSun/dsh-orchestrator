@@ -1,0 +1,73 @@
+import { createRequire } from 'node:module'
+import { defineConfig } from 'tsdown'
+
+const require = createRequire(import.meta.url)
+const pkg = require('./package.json') as {
+  name: string
+  dsh: { client: { inject: string[] } }
+}
+
+const deepseekExternal = /^@deepseek-ai\//
+const clientInject = new Set<string>(pkg.dsh.client.inject)
+const esm = {
+  format: ['esm'] as const,
+  platform: 'node' as const,
+  target: 'es2024',
+  fixedExtension: false,
+  dts: false,
+  sourcemap: true,
+  clean: false,
+  splitting: false,
+  outputOptions: { entryFileNames: '[name].js' },
+  external: [deepseekExternal, /^node:/, 'zod'],
+}
+
+export default defineConfig([
+  {
+    name: `${pkg.name}/host`,
+    entry: { index: 'src/index.ts' },
+    outDir: 'lib',
+    ...esm,
+  },
+  {
+    name: `${pkg.name}/typert-host`,
+    entry: { 'typert.host': 'src/typert-host.ts' },
+    outDir: 'lib',
+    ...esm,
+  },
+  {
+    name: `${pkg.name}/remote-client`,
+    entry: { 'typert.remote-client': 'src/remote.ts' },
+    outDir: 'lib',
+    format: ['esm'],
+    platform: 'browser',
+    target: 'es2024',
+    fixedExtension: false,
+    dts: false,
+    sourcemap: true,
+    clean: false,
+    splitting: false,
+    outputOptions: { entryFileNames: '[name].js' },
+    external: [deepseekExternal],
+  },
+  {
+    name: `${pkg.name}/client`,
+    entry: { client: 'src/client/index.tsx' },
+    outDir: 'lib',
+    format: ['cjs'],
+    platform: 'browser',
+    target: 'es2024',
+    fixedExtension: false,
+    dts: false,
+    sourcemap: true,
+    clean: false,
+    splitting: false,
+    external: specifier => clientInject.has(specifier),
+    outputOptions: {
+      entryFileNames: 'client.js',
+      banner: `window.__ModuleLoader__.load({ id: ${JSON.stringify(pkg.name)}, factory: (require) => {`,
+      intro: 'var module = { exports: {} }; var exports = module.exports;',
+      footer: 'return module.exports; } });',
+    },
+  },
+])

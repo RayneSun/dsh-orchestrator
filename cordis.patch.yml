@@ -1,0 +1,4 @@
+# dsh-orchestrator host bundle patch. Client artifact is discovered from package metadata.
+- insert:
+    - id: may-dsh-orchestrator
+      name: '@may/dsh-orchestrator'
