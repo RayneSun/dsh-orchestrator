@@ -62,6 +62,12 @@ function TaskLine({ task }: { task: TaskRecord }): React.ReactElement {
         <span className="dsho-taskSubject" title={task.subject}>{task.subject}</span>
       </div>
       {task.cancelledReason && <p className="dsho-subtle">{task.cancelledReason}</p>}
+      {task.delivery?.state === 'pending' && <p className="dsho-subtle">
+        {task.delivery.attempts === 0
+          ? '正在把中断消息同步回主会话…'
+          : <>同步未成功（已重试 {task.delivery.attempts} 次，将自动继续）{task.delivery.lastError ? ` · ${task.delivery.lastError}` : ''}</>}
+      </p>}
+      {task.delivery?.state === 'delivered' && <p className="dsho-subtle">已同步回主会话 · {time(task.delivery.deliveredAt)}</p>}
       <div className="dsho-times">更新 {time(task.updatedAt)}</div>
     </li>
   }

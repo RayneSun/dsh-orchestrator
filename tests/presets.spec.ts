@@ -42,17 +42,19 @@ describe('Orchestrator agent presets', () => {
       '@deepseek-ai/dsh-tool-jobs',
       '@deepseek-ai/dsh-tool-skill',
       '@deepseek-ai/dsh-skill-filesystem',
-      '@deepseek-ai/dsh-tool-goal',
-      '@deepseek-ai/dsh-command-goal',
       '@deepseek-ai/dsh-tool-todo',
       '@deepseek-ai/dsh-tool-web',
-      '@deepseek-ai/dsh-tool-present',
       '@deepseek-ai/dsh-persona',
     ]) {
       expect(names.has(name)).toBe(true)
     }
-    expect(names.has('@deepseek-ai/dsh-tool-ask-user')).toBe(false)
     for (const name of [
+      // 不面向终端用户：提问、文件卡片、目标管理（目标由 Orchestrator 负责）
+      '@deepseek-ai/dsh-tool-ask-user',
+      '@deepseek-ai/dsh-tool-present',
+      '@deepseek-ai/dsh-tool-goal',
+      '@deepseek-ai/dsh-command-goal',
+      // 禁止再派生
       '@deepseek-ai/dsh-tool-subagent',
       '@deepseek-ai/dsh-tool-subagent-control',
       '@deepseek-ai/dsh-tool-workflow',

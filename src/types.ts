@@ -6,7 +6,9 @@ export const activeTaskStatuses = ['queued', 'running'] as const
 /** 终态：任务不再推进（input_required 等待 Lead 带着答复派发新 TaskRun）。 */
 export const terminalTaskStatuses = ['input_required', 'completed', 'failed', 'cancelled', 'interrupted'] as const
 /** 需要向主会话投递通知的终态。 */
-export const deliverableTaskStatuses = ['input_required', 'completed', 'failed'] as const
+// interrupted 是否投递取决于产生路径：改单接管不投递（新任务立即接续），手动停止投递通知。
+// 因此该表只表示"允许带 delivery"，pending 由具体路径挂起。
+export const deliverableTaskStatuses = ['input_required', 'completed', 'failed', 'interrupted'] as const
 
 const trimmed = z.string().trim().min(1)
 const trimmedList = z.array(trimmed)

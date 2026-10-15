@@ -47,6 +47,11 @@ export function deliveryNotice(task: TaskRecord): string {
   if (task.status === 'completed') {
     return `${base}\n\nWorker 答案：\n${task.userAnswer ?? ''}\n\n请结合主会话语境，用自然语言把结果回复用户。`
   }
+  if (task.status === 'interrupted') {
+    return `${base}
+
+任务被手动中断（不是失败），子会话和已有进展都已保留。请简短告知用户任务已被中断，并询问是继续原任务、调整需求还是放弃；拿到答复后用 orchestrator_dispatch 复用同一 conversationId 派发，不要新建工作流。`
+  }
   if (task.status === 'input_required') {
     return task.question
       ? `${base}\n\nWorker 需要用户补充信息：\n${task.question}\n\n请用你自己的话向用户提问；拿到答复后用 orchestrator_dispatch 复用同一 conversationId 派发回去。`

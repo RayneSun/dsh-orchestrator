@@ -69,6 +69,9 @@ type DispatchProvision =
   | { ok: true; conv: ConversationRecord; task: TaskRecord }
   | { ok: false; result: unknown }
 
+/** Worker 子会话用空 section 遮蔽的全局系统提示段（同名 scoped section shadow 全局）。 */
+const WORKER_SUPPRESSED_SECTIONS = ['harness:source', 'app:web-surface'] as const
+
 const jsonOutput = () => ({
   schema: { type: 'json' as const },
   render: (_args: unknown, value: unknown) => [{ type: 'text' as const, text: JSON.stringify(value) }],
@@ -332,6 +335,11 @@ export class OrchestratorService extends TypertRemoteService {
     // 不做工具白名单裁剪：宿主与用户安装的其他工具（浏览器、MCP、技能等）对 Worker 全部可见；
     // 通用行为约束和 task_update 协议已固化在 WORKER_PRESET 的 persona 中。
     this.keep(agent, scoped.tools.guard(exec => isWorkerToolForbidden(exec.name)))
+    // 遮蔽与 Worker 任务无关的全局系统提示段（DSH 自举开发说明、Web GUI/HMR 说明），
+    // 每个子会话可省约 1.5k 字符；scoped 同名 section 只影响本子会话，主会话仍保留。
+    for (const sectionName of WORKER_SUPPRESSED_SECTIONS) {
+      this.keep(agent, scoped.systemPrompt.section({ name: sectionName, order: 0, text: '', interpolate: false }))
+    }
     this.keep(agent, scoped.on('session/event', (session, event) => {
       if (String(session.id) !== String(agent.session.id)) return
       const ev = event as unknown as { type?: unknown; data?: { todos?: unknown; reason?: { kind?: string } } }
@@ -818,16 +826,20 @@ export class OrchestratorService extends TypertRemoteService {
       const now = timestamp()
       // 用户手动停止子会话：任务标 interrupted（无失败通知），工作流回到 idle，可直接继续派发新需求。
       const manuallyStopped = this.consumeAbortedTurn(childSessionId)
-      const task = manuallyStopped
+      let task = manuallyStopped
         ? interruptTaskForRevision(previous, '子会话执行被手动停止；工作流已保留，可继续派发新需求', now)
         : failTask(previous, previous.status === 'queued' ? '子会话在任务开始前结束' : '子会话结束前未提交终态 task_update', now)
+      // 手动停止也要通知主会话（background 模式挂起投递），Lead 据此告知用户并询问下一步。
+      if (manuallyStopped && task.responseMode === 'background') {
+        task = { ...task, delivery: { state: 'pending', attempts: 0 } }
+      }
       const settled = settleConversation(conv, task, now)
       const nextConv = manuallyStopped ? settled : failConversation(settled, now)
       await this.putPair(nextConv, task)
       this.waiters.get(task.id)?.resolve(task)
       this.waiters.delete(task.id)
       outcome = manuallyStopped ? 'interrupted' : 'failed'
-      shouldDeliver = !manuallyStopped && task.responseMode === 'background'
+      shouldDeliver = task.responseMode === 'background'
       taskId = task.id
     })
     if (outcome === 'ignored') {
@@ -836,7 +848,6 @@ export class OrchestratorService extends TypertRemoteService {
     }
     if (outcome === 'interrupted') {
       this.hostCtx.logger.info?.(`orchestrator: task ${taskId} interrupted by manual stop: ${childSessionId}`)
-      return
     }
     if (shouldDeliver && taskId) await this.deliverPendingTask(taskId)
   }

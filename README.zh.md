@@ -13,7 +13,8 @@ Worker 的任务上报协议、安全红线（支付/删除等不可逆操作先
 
 - Lead 先调用 `orchestrator_route`，强相关追问复用原 Conversation。
 - `orchestrator_dispatch` 新建 Conversation，或向已有持久子会话排队新 TaskRun；目标会话仍在运行时，会先把旧任务原子标记为 `interrupted`（改单中断，区别于失败/取消，不向主会话投递失败通知），中断子会话当前轮次，再把新需求 steer 进**同一个**子会话继续执行。
-- 用户在子会话中手动停止执行时，活动任务同样进入 `interrupted`（不投递失败通知），工作流回到 idle，可直接继续派发新需求。
+- 用户在子会话中手动停止执行时，活动任务进入 `interrupted`（非失败），工作流回到 idle，并向主会话投递中断通知：Lead 据此简短告知用户并询问继续、改需求还是放弃，答复仍复用同一工作流。
+- Worker 系统提示自动遮蔽 DSH 自举开发说明（checkout/Web GUI/HMR）等与执行任务无关的全局段落，且不组合 present/goal 等面向终端用户的插件，降低每轮上下文体积。
 - `orchestrator_route` 同时考虑运行中的工作流；纯词法 0 命中时，若只有一个工作流且查询呈现改单/追问语气（如“改成白天背景”），会兜底返回该工作流。
 - Worker 不能直接向用户提问：需要用户选择或补充时调用 `task_update({status:'input_required', question})`，由 Lead 向用户提问，并把答复作为新 TaskRun 派发回同一子会话。
 - Worker 多步骤任务继续使用内置 `todo_write`；Host 监听子会话的 `todo/write` 事件（约 350ms 合并）并自动同步到 TaskRun 的步骤进度，任务看板会实时显示 `✓/▶/○` 与 `已完成/总数`。Worker 不需要为每个 todo 变化调用 `task_update`，todo 全完成也不会自动结束任务，终态仍以 `task_update` 为准。
@@ -30,10 +31,10 @@ Worker 的任务上报协议、安全红线（支付/删除等不可逆操作先
 
 要求接收方已安装 DSH `0.2.1-alpha.1`，并且使用 Web profile。
 
-把 `may-dsh-orchestrator-0.2.5.tgz` 发给对方后执行：
+把 `may-dsh-orchestrator-0.2.6.tgz` 发给对方后执行：
 
 ```sh
-dsh plugin --profile web add /path/to/may-dsh-orchestrator-0.2.5.tgz
+dsh plugin --profile web add /path/to/may-dsh-orchestrator-0.2.6.tgz
 dsh web --no-open --host 127.0.0.1 --port 3080
 ```
 
@@ -41,7 +42,7 @@ dsh web --no-open --host 127.0.0.1 --port 3080
 
 ```sh
 dsh plugin --profile web remove @may/dsh-orchestrator
-dsh plugin --profile web add /path/to/may-dsh-orchestrator-0.2.5.tgz
+dsh plugin --profile web add /path/to/may-dsh-orchestrator-0.2.6.tgz
 ```
 
 重新生成分发包：
