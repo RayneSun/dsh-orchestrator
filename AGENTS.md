@@ -28,7 +28,7 @@ pnpm build
 export npm_config_cache=/private/tmp/dsh-npm-cache
 pnpm verify:packaging   # 校验 tgz 只含 lib/ 等 8 个文件
 npm pack --pack-destination dist   # 产物 dist/may-dsh-orchestrator-<version>.tgz
-# 改 package.json 版本号与 README.zh.md 中的安装文件名，保持一致
+# 改 package.json 版本号与 README.md 中的安装文件名，保持一致
 ```
 
 安装到 web profile 并重启（需提权）：
@@ -119,5 +119,5 @@ dsh plugin --profile web add <tgz 绝对路径>
 
 ## 背景材料
 
-- README.zh.md：用户面说明，发版时随版本号更新。
+- README.md：用户面说明，发版时随版本号更新。
 - git log：0.2.0（background/单 Worker 预设）→ 0.2.1（路由追问兜底/改单 steer/blocked 提问）→ 0.2.2（todo 进度桥接看板）→ 0.2.3（interrupted 改单语义）→ 0.2.4（手动停止捕获、看板与话术精简）→ 0.2.5（白名单、input_required、上下文瘦身、鲁棒性）→ 0.2.6（手动中断通知、状态配色、Worker 提示词瘦身）→ 0.2.7（子会话折叠、柔光动效、按钮突出、提示词/恢复加固）。

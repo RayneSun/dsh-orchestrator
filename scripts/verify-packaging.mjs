@@ -46,7 +46,7 @@ const packed = new Set((report?.files ?? []).map(file => file.path))
 for (const required of [
   'package.json',
   'cordis.patch.yml',
-  'README.zh.md',
+  'README.md',
   'LICENSE',
   'lib/index.js',
   'lib/client.js',
