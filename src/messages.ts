@@ -50,7 +50,7 @@ export function deliveryNotice(task: TaskRecord): string {
   if (task.status === 'interrupted') {
     return `${base}
 
-任务被手动中断（不是失败），子会话和已有进展都已保留。请简短告知用户任务已被中断，并询问是继续原任务、调整需求还是放弃；拿到答复后用 orchestrator_dispatch 复用同一 conversationId 派发，不要新建工作流。`
+任务被手动中断（不是失败），子会话和已有进展都已保留。请简短告知用户任务已被中断，并询问是继续原任务还是调整需求；拿到答复后用 orchestrator_dispatch 复用同一 conversationId 派发，不要新建工作流。`
   }
   if (task.status === 'input_required') {
     return task.question

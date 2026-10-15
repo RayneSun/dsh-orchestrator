@@ -28,8 +28,9 @@ import {
   interruptTaskAfterRestart,
   settleConversation,
   startConversation,
-  StateError,
+  classifyWorkerTurnEnd,
   transitionTask,
+  type WorkerTurnEndCause,
 } from './state-machine.ts'
 import {
   createConversation,
@@ -44,6 +45,8 @@ import {
   activeTaskStatuses,
   deliverableTaskStatuses,
   dispatchInputSchema,
+  routeQueryInputSchema,
+  conversationIdInputSchema,
   taskUpdateInputSchema,
   type DispatchInput,
   type TaskUpdateInput,
@@ -70,15 +73,28 @@ type DispatchProvision =
   | { ok: false; result: unknown }
 
 /** Worker 子会话用空 section 遮蔽的全局系统提示段（同名 scoped section shadow 全局）。 */
-const WORKER_SUPPRESSED_SECTIONS = ['harness:source', 'app:web-surface'] as const
+const WORKER_SUPPRESSED_SECTIONS = ['harness:source', 'app:web-surface', 'ui:deliverable-file-references'] as const
+const RECOVERY_INTERVAL_MS = 15_000
+const REVISION_GUARD_MS = 120_000
+const TODO_FLUSH_DELAY_MS = 350
+const DEFAULT_WAIT_TIMEOUT_MS = 60_000
+const LAUNCH_ACCEPT_TIMEOUT_MS = 120_000
+const PERSISTENCE_STAT_TIMEOUT_MS = 5_000
 
-const jsonOutput = () => ({
-  schema: { type: 'json' as const },
-  render: (_args: unknown, value: unknown) => [{ type: 'text' as const, text: JSON.stringify(value) }],
-})
+type WorkerTurnEnd = { until: number; cause: WorkerTurnEndCause }
+
+function isSessionNotFoundError(error: unknown): boolean {
+  if (!error || typeof error !== 'object') return false
+  const candidate = error as { name?: unknown; message?: unknown }
+  return candidate.name === 'SessionPersistenceNotFoundError'
+    || typeof candidate.message === 'string' && candidate.message.includes('not found')
+}
 
 /** 无状态 JSON 输出描述，所有编排工具共用一个实例。 */
-const sharedJsonOutput = jsonOutput()
+const sharedJsonOutput = {
+  schema: { type: 'json' as const },
+  render: (_args: unknown, value: unknown) => [{ type: 'text' as const, text: JSON.stringify(value) }],
+}
 
 export class OrchestratorService extends TypertRemoteService {
   static inject = [
@@ -98,7 +114,7 @@ export class OrchestratorService extends TypertRemoteService {
   // 改单 interrupt 自身会产生一次 aborted turn/end，需要忽略，不能当成手动停止。
   private readonly revisionTurnEnds = new Map<string, number>()
   // 子会话 turn/end aborted/interrupted → 紧随其后的 subagent/end 是手动停止，不是任务失败。
-  private readonly abortedTurns = new Map<string, number>()
+  private readonly workerTurnEnds = new Map<string, WorkerTurnEnd>()
   private recoveryTimer: ReturnType<typeof setInterval> | undefined
 
   constructor(private readonly hostCtx: Context) {
@@ -128,30 +144,46 @@ export class OrchestratorService extends TypertRemoteService {
   private async start(): Promise<void> {
     const domain = await this.hostCtx.storageDomain.open(orchestratorDomain)
     this.domain = domain
+    try {
+      await this.registerPresets()
+      this.hostCtx.effect(() => {
+        const offEnd = this.hostCtx.on('subagent/end', (info) => {
+          void this.onSubagentEnd(String(info.id)).catch(error => {
+            this.hostCtx.logger.warn(`orchestrator: subagent/end handler failed: ${String(error)}`)
+          })
+        })
+        const offPreset = this.hostCtx.on('agent-preset/selected', (sessionId, preset) => {
+          if (preset !== LEAD_PRESET) return
+          const agent = this.hostCtx.agents.get(sessionId as SessionId)
+          if (agent) void this.configureLead(agent).catch(error => {
+            this.hostCtx.logger.warn(`orchestrator: configure lead failed: ${String(error)}`)
+          })
+        })
+        const offCreated = this.hostCtx.on('agent/created', async ({ agent }) => {
+          await this.configureAgent(agent).catch(error => {
+            this.hostCtx.logger.warn(`orchestrator: configure agent failed: ${String(error)}`)
+          })
+        })
+        this.recoveryTimer = setInterval(() => { void this.recoverDeliveries() }, RECOVERY_INTERVAL_MS)
+        this.recoveryTimer.unref()
+        return async () => {
+          offEnd()
+          offPreset()
+          offCreated()
+          if (this.recoveryTimer) clearInterval(this.recoveryTimer)
+          await this.chain.catch(() => undefined)
+          await domain.close()
+        }
+      }, 'may-orchestrator:lifecycle')
 
-    await this.registerPresets()
-    this.hostCtx.effect(() => {
-      const offEnd = this.hostCtx.on('subagent/end', (info) => { void this.onSubagentEnd(String(info.id)) })
-      const offPreset = this.hostCtx.on('agent-preset/selected', (sessionId, preset) => {
-        if (preset !== LEAD_PRESET) return
-        const agent = this.hostCtx.agents.get(sessionId as SessionId)
-        if (agent) this.configureLead(agent)
+      await this.recoverRuntimeState()
+      void this.recoverDeliveries()
+    } catch (error) {
+      await domain.close().catch(closeError => {
+        this.hostCtx.logger.warn(`orchestrator: close storage after failed startup: ${String(closeError)}`)
       })
-      const offCreated = this.hostCtx.on('agent/created', async ({ agent }) => { await this.configureAgent(agent) })
-      this.recoveryTimer = setInterval(() => { void this.recoverDeliveries() }, 15_000)
-      this.recoveryTimer.unref()
-      return async () => {
-        offEnd()
-        offPreset()
-        offCreated()
-        if (this.recoveryTimer) clearInterval(this.recoveryTimer)
-        await this.chain.catch(() => undefined)
-        await domain.close()
-      }
-    }, 'may-orchestrator:lifecycle')
-
-    await this.recoverRuntimeState()
-    void this.recoverDeliveries()
+      throw error
+    }
   }
 
   private serialize<T>(work: () => Promise<T>): Promise<T> {
@@ -210,8 +242,9 @@ export class OrchestratorService extends TypertRemoteService {
   }
 
   private async putPair(conv: ConversationRecord, task?: TaskRecord): Promise<void> {
-    await this.conversations().put(conv.id, conv)
+    // Write the task before the conversation that references it so a crash cannot leave activeTaskId dangling.
     if (task) await this.tasks().put(task.id, task)
+    await this.conversations().put(conv.id, conv)
     this.emitChanged()
   }
 
@@ -236,11 +269,11 @@ export class OrchestratorService extends TypertRemoteService {
       return
     }
     if (delegationDepthOf(agent) === 0 && this.composedPreset(agent) === LEAD_PRESET) {
-      this.configureLead(agent)
+      await this.configureLead(agent)
     }
   }
 
-  private resetInstalled(key: string): void {
+  private async resetInstalled(key: string): Promise<void> {
     const timer = this.todoTimers.get(key)
     if (timer) {
       clearTimeout(timer)
@@ -249,8 +282,11 @@ export class OrchestratorService extends TypertRemoteService {
     this.pendingTodoSteps.delete(key)
     const disposers = this.installed.get(key) ?? []
     this.installed.delete(key)
-    for (const dispose of disposers) {
-      try { void dispose() } catch { /* agent scope owns teardown failures */ }
+    const results = await Promise.allSettled(disposers.map(dispose => Promise.resolve().then(dispose)))
+    for (const result of results) {
+      if (result.status === 'rejected') {
+        this.hostCtx.logger.warn(`orchestrator: agent scope teardown failed: ${String(result.reason)}`)
+      }
     }
   }
 
@@ -261,8 +297,8 @@ export class OrchestratorService extends TypertRemoteService {
     this.installed.set(key, list)
   }
 
-  private configureLead(agent: Agent): void {
-    this.resetInstalled(String(agent.session.id))
+  private async configureLead(agent: Agent): Promise<void> {
+    await this.resetInstalled(String(agent.session.id))
     const scoped = agent.ctx
     this.installSettlementFilter(agent)
     this.keep(agent, scoped.systemPrompt.section({
@@ -317,7 +353,7 @@ export class OrchestratorService extends TypertRemoteService {
   }
 
   private async configureWorker(agent: Agent, conv: ConversationRecord): Promise<void> {
-    this.resetInstalled(String(agent.session.id))
+    await this.resetInstalled(String(agent.session.id))
     const wanted = WORKER_PRESET
     try {
       if (this.composedPreset(agent) !== wanted) await this.hostCtx.agentPresets.select(agent, wanted)
@@ -335,27 +371,28 @@ export class OrchestratorService extends TypertRemoteService {
     // 不做工具白名单裁剪：宿主与用户安装的其他工具（浏览器、MCP、技能等）对 Worker 全部可见；
     // 通用行为约束和 task_update 协议已固化在 WORKER_PRESET 的 persona 中。
     this.keep(agent, scoped.tools.guard(exec => isWorkerToolForbidden(exec.name)))
-    // 遮蔽与 Worker 任务无关的全局系统提示段（DSH 自举开发说明、Web GUI/HMR 说明），
-    // 每个子会话可省约 1.5k 字符；scoped 同名 section 只影响本子会话，主会话仍保留。
+    // 遮蔽与 Worker 任务无关的全局系统提示段（DSH 自举开发说明、Web GUI/HMR 说明、
+    // 面向终端用户的文件卡片/Markdown 链接指引），每个子会话可省约 2.2k 字符；
+    // scoped 同名 section 只影响本子会话，主会话仍保留。
     for (const sectionName of WORKER_SUPPRESSED_SECTIONS) {
       this.keep(agent, scoped.systemPrompt.section({ name: sectionName, order: 0, text: '', interpolate: false }))
     }
     this.keep(agent, scoped.on('session/event', (session, event) => {
       if (String(session.id) !== String(agent.session.id)) return
-      const ev = event as unknown as { type?: unknown; data?: { todos?: unknown; reason?: { kind?: string } } }
+      const ev = event as unknown as { type?: unknown; data?: { todos?: unknown; reason?: unknown } }
       if (ev.type === 'todo/write') {
         this.queueTodoProgress(String(agent.session.id), ev.data?.todos)
         return
       }
-      if (ev.type === 'turn/end' && (ev.data?.reason?.kind === 'aborted' || ev.data?.reason?.kind === 'interrupted')) {
+      if (ev.type === 'turn/end') {
         const childId = String(agent.session.id)
         const until = this.revisionTurnEnds.get(childId)
         if (until) {
           this.revisionTurnEnds.delete(childId)
           if (Date.now() <= until) return // 改单 interrupt 的预期内轮次结束，不是手动停止。
         }
-        // 用户在子会话里手动停止：120s 内的 subagent/end 按"中断"处理，而非失败。
-        this.abortedTurns.set(childId, Date.now() + 120_000)
+        const cause = classifyWorkerTurnEnd(ev.data?.reason)
+        if (cause) this.workerTurnEnds.set(childId, { until: Date.now() + REVISION_GUARD_MS, cause })
       }
     }))
     this.keep(agent, scoped.tools.register(defineTool({
@@ -390,18 +427,18 @@ export class OrchestratorService extends TypertRemoteService {
 
   private armRevisionEndGuard(childSessionId: string, oldTaskId: string): void {
     // interrupt 的取消效果异步到达：下一次 subagent/end 属于旧轮次，必须忽略。
-    // 120s 兜底防止 interrupt 未产生 end 时，令牌长期吞掉新任务真正的失败信号。
-    const until = Date.now() + 120_000
+    // 守卫过期后不再吞掉新任务真正的失败信号。
+    const until = Date.now() + REVISION_GUARD_MS
     this.revisionEndGuards.set(childSessionId, { until, oldTaskId })
     this.revisionTurnEnds.set(childSessionId, until)
   }
 
-  /** 取子会话最近一次 aborted/interrupted 轮次标记；120s 窗口外视为过期。 */
-  private consumeAbortedTurn(childSessionId: string): boolean {
-    const until = this.abortedTurns.get(childSessionId)
-    if (!until) return false
-    this.abortedTurns.delete(childSessionId)
-    return Date.now() <= until
+  /** 取子会话最近一次结束原因；时间窗口外视为过期，防止旧 turn 波及新任务。 */
+  private consumeWorkerTurnEnd(childSessionId: string): WorkerTurnEndCause | undefined {
+    const turn = this.workerTurnEnds.get(childSessionId)
+    if (!turn) return undefined
+    this.workerTurnEnds.delete(childSessionId)
+    return Date.now() <= turn.until ? turn.cause : undefined
   }
 
   /** 改单注入中断后，旧轮次结束属于预期事件：仅当活动任务确实已切到新任务时忽略一次。 */
@@ -421,7 +458,7 @@ export class OrchestratorService extends TypertRemoteService {
     const existing = this.todoTimers.get(childSessionId)
     if (existing) clearTimeout(existing)
     // todo_write 是整表覆盖，短时间内可能连续触发；合并后写入并立刻通知看板刷新。
-    const timer = setTimeout(() => { void this.flushTodoProgress(childSessionId) }, 350)
+    const timer = setTimeout(() => { void this.flushTodoProgress(childSessionId) }, TODO_FLUSH_DELAY_MS)
     timer.unref()
     this.todoTimers.set(childSessionId, timer)
   }
@@ -496,10 +533,12 @@ export class OrchestratorService extends TypertRemoteService {
         description: '根据新用户请求匹配可复用的工作流。强相关追问和改单应复用原会话。',
         parameters: { query: { type: 'string', required: true, description: '用户的新需求' } },
         output: sharedJsonOutput,
-        execute: async ({ query }: { query: string }) => {
+        execute: async (args: unknown) => {
+          const parsed = routeQueryInputSchema.safeParse(args)
+          if (!parsed.success) return toJson({ kind: 'error', error: parsed.error.issues[0]?.message ?? 'invalid orchestrator_route arguments' })
           // 改需求/追问可能发生在子任务仍在运行时，运行中的工作流也要作为候选。
           const conversations = this.snapshotFor(parentId()).conversations.filter(conv => conv.state !== 'failed')
-          const candidates = routeQuery(query, conversations, 6).map(candidate => ({
+          const candidates = routeQuery(parsed.data.query, conversations, 6).map(candidate => ({
             conversationId: candidate.conversation.id,
             title: candidate.conversation.title,
             state: candidate.conversation.state,
@@ -535,7 +574,10 @@ export class OrchestratorService extends TypertRemoteService {
         description: '读取一个工作流的路由卡摘要和任务列表，不读取子会话全文。',
         parameters: { conversationId: { type: 'string', required: true } },
         output: sharedJsonOutput,
-        execute: async ({ conversationId }: { conversationId: string }) => {
+        execute: async (args: unknown) => {
+          const parsed = conversationIdInputSchema.safeParse(args)
+          if (!parsed.success) return toJson({ error: 'conversation not found' })
+          const { conversationId } = parsed.data
           const conv = this.conversationById(conversationId)
           if (!conv || conv.parentSessionId !== parentId()) return toJson({ error: 'conversation not found' })
           const tasks = [...this.tasks().entries()]
@@ -572,7 +614,7 @@ export class OrchestratorService extends TypertRemoteService {
     const args: DispatchInput = parsed.data
     const parentSessionId = String(parent.session.id)
     const responseMode = args.responseMode
-    const timeout = args.waitTimeoutMs ?? 60_000
+    const timeout = args.waitTimeoutMs ?? DEFAULT_WAIT_TIMEOUT_MS
 
     // waitTask 必须在串行写锁外等待，否则 Worker 的 task_update 无法进入状态机。
     let provisioned: DispatchProvision
@@ -659,19 +701,19 @@ export class OrchestratorService extends TypertRemoteService {
           try {
             await steerHostSubagentPrompt(
               this.hostCtx.subagents, parent, conv.childSessionId as SessionId, blocks, source,
-              AbortSignal.timeout(120_000),
+              AbortSignal.timeout(LAUNCH_ACCEPT_TIMEOUT_MS),
             )
           } catch (steerError) {
             this.hostCtx.logger.warn(`orchestrator: steer failed, fallback to queue: ${String(steerError)}`)
             await queueHostSubagentPrompt(
               this.hostCtx.subagents, parent, conv.childSessionId as SessionId, blocks, source,
-              AbortSignal.timeout(120_000),
+              AbortSignal.timeout(LAUNCH_ACCEPT_TIMEOUT_MS),
             )
           }
         } else {
           await queueHostSubagentPrompt(
             this.hostCtx.subagents, parent, conv.childSessionId as SessionId, blocks, source,
-            AbortSignal.timeout(120_000),
+            AbortSignal.timeout(LAUNCH_ACCEPT_TIMEOUT_MS),
           )
         }
       } catch (error) {
@@ -706,7 +748,7 @@ export class OrchestratorService extends TypertRemoteService {
             // 创建窗口先继承 Lead preset；文件等工具要等 Worker preset recompose 后才可枚举。
             maxDepth: 1,
           },
-          signal: AbortSignal.timeout(120_000),
+          signal: AbortSignal.timeout(LAUNCH_ACCEPT_TIMEOUT_MS),
         })
       } catch (error) {
         return { ok: false, result: await this.failLaunch(conv, task, error) }
@@ -754,6 +796,8 @@ export class OrchestratorService extends TypertRemoteService {
             responseMode: 'background',
           })
           this.emitChanged()
+        }).catch(error => {
+          this.hostCtx.logger.warn(`orchestrator: wait timeout fallback for ${taskId} failed: ${String(error)}`)
         })
         resolve({ ok: true, status: 'background', conversationId: this.taskById(taskId)?.conversationId, reason: 'timeout' })
       }, timeoutMs)
@@ -810,13 +854,13 @@ export class OrchestratorService extends TypertRemoteService {
   private async onSubagentEnd(childSessionId: string): Promise<void> {
     let shouldDeliver = false
     let taskId: string | undefined
-    let outcome: 'ignored' | 'interrupted' | 'failed' | undefined
+    let outcome: 'ignored' | 'manual_stop' | 'revision' | 'failed' | undefined
     await this.serialize(async () => {
       const conv = this.conversationByChild(childSessionId)
       if (!conv?.activeTaskId) return
       if (this.consumeRevisionEnd(childSessionId, conv.activeTaskId)) {
-        // 改单注入产生的预期内旧轮次结束；手动停止标记也一并作废，避免波及新任务。
-        this.abortedTurns.delete(childSessionId)
+        // 改单注入产生的预期内旧轮次结束；同一事件原因令牌也作废，避免波及新任务。
+        this.workerTurnEnds.delete(childSessionId)
         this.revisionTurnEnds.delete(childSessionId)
         outcome = 'ignored'
         return
@@ -824,30 +868,40 @@ export class OrchestratorService extends TypertRemoteService {
       const previous = this.taskById(conv.activeTaskId)
       if (!previous || !(activeTaskStatuses as readonly string[]).includes(previous.status)) return
       const now = timestamp()
-      // 用户手动停止子会话：任务标 interrupted（无失败通知），工作流回到 idle，可直接继续派发新需求。
-      const manuallyStopped = this.consumeAbortedTurn(childSessionId)
-      let task = manuallyStopped
-        ? interruptTaskForRevision(previous, '子会话执行被手动停止；工作流已保留，可继续派发新需求', now)
-        : failTask(previous, previous.status === 'queued' ? '子会话在任务开始前结束' : '子会话结束前未提交终态 task_update', now)
-      // 手动停止也要通知主会话（background 模式挂起投递），Lead 据此告知用户并询问下一步。
-      if (manuallyStopped && task.responseMode === 'background') {
-        task = { ...task, delivery: { state: 'pending', attempts: 0 } }
+      const endCause = this.consumeWorkerTurnEnd(childSessionId)
+      let task: TaskRecord
+      let nextConv: ConversationRecord
+      if (endCause === 'manual_stop') {
+        task = interruptTaskForRevision(previous, '子会话执行被手动停止；工作流已保留，可继续派发新需求', now)
+        // 手动停止需要通知主会话；background 模式挂起投递，wait 模式直接解除等待。
+        if (task.responseMode === 'background') task = { ...task, delivery: { state: 'pending', attempts: 0 } }
+        nextConv = settleConversation(conv, task, now)
+        shouldDeliver = task.responseMode === 'background'
+        outcome = 'manual_stop'
+      } else if (endCause === 'revision') {
+        task = interruptTaskForRevision(previous, '旧轮次被新需求中断', now)
+        nextConv = settleConversation(conv, task, now)
+        outcome = 'revision'
+      } else {
+        task = failTask(previous, previous.status === 'queued' ? '子会话在任务开始前结束' : '子会话结束前未提交终态 task_update', now)
+        nextConv = failConversation(settleConversation(conv, task, now), now)
+        shouldDeliver = task.responseMode === 'background'
+        outcome = 'failed'
       }
-      const settled = settleConversation(conv, task, now)
-      const nextConv = manuallyStopped ? settled : failConversation(settled, now)
       await this.putPair(nextConv, task)
       this.waiters.get(task.id)?.resolve(task)
       this.waiters.delete(task.id)
-      outcome = manuallyStopped ? 'interrupted' : 'failed'
-      shouldDeliver = task.responseMode === 'background'
       taskId = task.id
     })
     if (outcome === 'ignored') {
       this.hostCtx.logger.info?.(`orchestrator: ignore expected subagent/end after revision: ${childSessionId}`)
       return
     }
-    if (outcome === 'interrupted') {
+    if (outcome === 'manual_stop') {
       this.hostCtx.logger.info?.(`orchestrator: task ${taskId} interrupted by manual stop: ${childSessionId}`)
+    }
+    if (outcome === 'revision') {
+      this.hostCtx.logger.info?.(`orchestrator: task ${taskId} interrupted by revision: ${childSessionId}`)
     }
     if (shouldDeliver && taskId) await this.deliverPendingTask(taskId)
   }
@@ -883,18 +937,22 @@ export class OrchestratorService extends TypertRemoteService {
         })
       })
     } catch (error) {
-      await this.serialize(async () => {
-        const current = this.taskById(taskId)
-        if (!current || current.delivery?.state !== 'pending') return
-        const attempts = current.delivery.attempts + 1
-        await this.tasks().put(taskId, {
-          ...current,
-          revision: current.revision + 1,
-          updatedAt: timestamp(),
-          delivery: { state: 'pending', attempts, lastError: String(error) },
+      try {
+        await this.serialize(async () => {
+          const current = this.taskById(taskId)
+          if (!current || current.delivery?.state !== 'pending') return
+          const attempts = current.delivery.attempts + 1
+          await this.tasks().put(taskId, {
+            ...current,
+            revision: current.revision + 1,
+            updatedAt: timestamp(),
+            delivery: { state: 'pending', attempts, lastError: String(error) },
+          })
+          this.emitChanged()
         })
-        this.emitChanged()
-      })
+      } catch (markError) {
+        this.hostCtx.logger.warn(`orchestrator: mark delivery failure ${taskId} failed: ${String(markError)}`)
+      }
       this.hostCtx.logger.warn(`orchestrator: deliver ${taskId} failed: ${String(error)}`)
     } finally {
       this.delivering.delete(taskId)
@@ -902,13 +960,17 @@ export class OrchestratorService extends TypertRemoteService {
   }
 
   private async recoverDeliveries(): Promise<void> {
-    await this.ready
-    const pending = [...this.tasks().entries()]
-      .map(([, task]) => task)
-      .filter(task => task.responseMode === 'background'
-        && task.delivery?.state === 'pending'
-        && (deliverableTaskStatuses as readonly string[]).includes(task.status))
-    for (const task of pending) await this.deliverPendingTask(task.id)
+    try {
+      await this.ready
+      const pending = [...this.tasks().entries()]
+        .map(([, task]) => task)
+        .filter(task => task.responseMode === 'background'
+          && task.delivery?.state === 'pending'
+          && (deliverableTaskStatuses as readonly string[]).includes(task.status))
+      for (const task of pending) await this.deliverPendingTask(task.id)
+    } catch (error) {
+      this.hostCtx.logger.warn(`orchestrator: recover deliveries failed: ${String(error)}`)
+    }
   }
 
   /** Recover provisioning records and tasks left live by a process restart. */
@@ -917,13 +979,31 @@ export class OrchestratorService extends TypertRemoteService {
       const now = timestamp()
       for (const [, conv] of this.conversations().entries()) {
         const active = conv.activeTaskId ? this.taskById(conv.activeTaskId) : undefined
-        if (!active) continue
+        if (!active) {
+          if (conv.activeTaskId) {
+            // Repair a dangling reference left by a crash between cross-table writes.
+            const failedConv = { ...failConversation(conv, now), activeTaskId: null }
+            await this.conversations().put(failedConv.id, failedConv)
+          }
+          continue
+        }
+        if (!(activeTaskStatuses as readonly string[]).includes(active.status)) {
+          // The task row can reach a terminal state before the conversation row is updated.
+          await this.putPair(settleConversation(conv, active, now), active)
+          continue
+        }
 
         if (conv.state === 'provisioning') {
+          let persistenceState: 'exists' | 'missing' | 'uncertain' = 'uncertain'
+          // Control-flow analysis does not track assignment from the Promise catch callback.
           const stat = await this.hostCtx.sessionPersistence
-            .stat(conv.childSessionId as SessionId, { signal: AbortSignal.timeout(5000) })
-            .catch(() => undefined)
-          if (stat && (activeTaskStatuses as readonly string[]).includes(active.status)) {
+            .stat(conv.childSessionId as SessionId, { signal: AbortSignal.timeout(PERSISTENCE_STAT_TIMEOUT_MS) })
+            .catch(error => {
+              persistenceState = isSessionNotFoundError(error) ? 'missing' : 'uncertain'
+              return undefined
+            })
+          if (stat) persistenceState = 'exists'
+          if ((persistenceState as string) === 'exists') {
             const nextConv = startConversation(conv, now)
             const nextTask = {
               ...active,
@@ -933,9 +1013,14 @@ export class OrchestratorService extends TypertRemoteService {
               startedAt: active.startedAt ?? now,
             }
             await this.putPair(nextConv, nextTask)
-          } else {
+          } else if ((persistenceState as string) === 'missing') {
             const reason = 'child session was not materialized before restart'
-            const nextTask = stat ? interruptTaskAfterRestart(active, now) : failTask(active, reason, now)
+            const nextTask = failTask(active, reason, now)
+            const nextConv = settleConversation(conv, nextTask, now)
+            await this.putPair(nextConv, nextTask)
+          } else {
+            // I/O timeout/permission errors are uncertain: do not mark a possibly live session failed.
+            const nextTask = interruptTaskAfterRestart(active, now)
             const nextConv = settleConversation(conv, nextTask, now)
             await this.putPair(nextConv, nextTask)
           }

@@ -18,10 +18,3 @@ export function normalizeProgressSteps(raw: unknown): ProgressStep[] {
   }
   return steps
 }
-
-export function progressSummary(steps: readonly ProgressStep[]): string {
-  if (steps.length === 0) return ''
-  const completed = steps.filter(step => step.status === 'completed').length
-  const active = steps.find(step => step.status === 'in_progress')
-  return active ? `${completed}/${steps.length} · 当前：${active.content}` : `${completed}/${steps.length}`
-}

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { createConversation, createTask } from '../src/types.ts'
 import {
-  StateError, activateConversation, applyOutlinePatch, assertRevision,
+  StateError, activateConversation, applyOutlinePatch, assertRevision, classifyWorkerTurnEnd,
   interruptTaskForRevision, reviseConversation, canTransition, failTask, interruptTaskAfterRestart,
   isTerminal, settleConversation, startConversation, transitionTask,
 } from '../src/state-machine.ts'
@@ -23,6 +23,19 @@ function bgTask() {
     subject: 's', prompt: 'p', responseMode: 'background',
   })
 }
+
+describe('Worker turn/end 原因分类', () => {
+  it('把用户手动停止和父级改单中断区分开', () => {
+    expect(classifyWorkerTurnEnd({ kind: 'aborted', reason: { kind: 'user' } })).toBe('manual_stop')
+    expect(classifyWorkerTurnEnd({ kind: 'aborted', reason: { kind: 'parent' } })).toBe('revision')
+  })
+
+  it('崩溃修复标记和空原因不应当作用户手动停止', () => {
+    expect(classifyWorkerTurnEnd({ kind: 'interrupted' })).toBeUndefined()
+    expect(classifyWorkerTurnEnd(undefined)).toBeUndefined()
+    expect(classifyWorkerTurnEnd({ kind: 'aborted', reason: { kind: 'disposed' } })).toBeUndefined()
+  })
+})
 
 describe('任务状态机', () => {
   it('completed 缺少 userAnswer 时拒绝', () => {

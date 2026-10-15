@@ -5,9 +5,29 @@ export const CSS = `
 .dsho-board{box-sizing:border-box;height:100%;overflow:auto;padding:14px;color:var(--dsw-alias-label-primary);background:var(--dsw-alias-bg-layer-1)}
 .dsho-title{font-size:15px;font-weight:650;margin:0 0 12px}
 .dsho-empty{color:var(--dsw-alias-label-tertiary);font-size:13px;line-height:1.6;border:.5px dashed var(--dsw-alias-border-l4);border-radius:12px;padding:18px;text-align:center}
-.dsho-conv{border:.5px solid var(--dsw-alias-border-l4);border-radius:14px;background:var(--dsw-alias-bg-layer-2);margin:0 0 12px;overflow:hidden}
-.dsho-convHead{display:flex;align-items:center;gap:8px;padding:12px 13px;border-bottom:.5px solid var(--dsw-alias-border-l2)}
+.dsho-conv{position:relative;border:.5px solid var(--dsw-alias-border-l4);border-radius:14px;background:var(--dsw-alias-bg-layer-2);margin:0 0 12px;overflow:hidden}
+.dsho-convHead{display:flex;align-items:center;gap:8px;padding:12px 13px;border-bottom:.5px solid var(--dsw-alias-border-l2);cursor:pointer;user-select:none;outline:none}
+.dsho-convHead:hover{background:var(--dsw-alias-interactive-bg-hover)}
+.dsho-convHead:focus-visible{box-shadow:inset 0 0 0 2px color-mix(in srgb,var(--dsw-alias-brand-primary,#1a73e8) 45%,transparent)}
+.dsho-conv-collapsed .dsho-convHead{border-bottom-color:transparent}
+.dsho-chevron{flex:none;width:7px;height:7px;margin:0 2px 0 1px;border-right:1.5px solid var(--dsw-alias-label-tertiary);border-bottom:1.5px solid var(--dsw-alias-label-tertiary);transform:rotate(45deg) translateY(-1px);transition:transform .22s ease}
+.dsho-conv-collapsed .dsho-chevron{transform:rotate(-45deg) translateY(-1px)}
 .dsho-convTitle{min-width:0;flex:1;font-size:13px;font-weight:620;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+/* 折叠态摘要行 */
+.dsho-strip{display:flex;align-items:center;gap:8px;padding:0 13px 11px 26px;min-width:0}
+.dsho-strip .dsho-badge{flex:none}
+.dsho-stripText{flex:1;min-width:0;font-size:11px;line-height:1.5;color:var(--dsw-alias-label-secondary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.dsho-stripTime{flex:none;font-size:10px;color:var(--dsw-alias-label-tertiary)}
+/* 高度折叠动画（grid 0fr/1fr） */
+.dsho-body{display:grid;grid-template-rows:1fr;transition:grid-template-rows .24s ease}
+.dsho-conv-collapsed .dsho-body{grid-template-rows:0fr}
+.dsho-body>div{min-height:0;overflow:hidden}
+/* 运行中：绿色描边 + 顶部扫光 */
+.dsho-conv-active{border-color:color-mix(in srgb,var(--dsw-alias-label-positive,#188038) 26%,transparent)}
+/* 顶部柔光扫过：低亮度绿色光带，入场/出场整体淡入淡出，避免边缘突变 */
+.dsho-conv-active::before{content:'';position:absolute;z-index:1;pointer-events:none;top:0;left:0;right:0;height:1.5px;background:linear-gradient(90deg,transparent 0%,color-mix(in srgb,var(--dsw-alias-label-positive,#188038) 55%,transparent) 50%,transparent 100%);background-size:55% 100%;background-repeat:no-repeat;opacity:0;animation:dsho-sweep 2.6s ease-in-out infinite}
+@keyframes dsho-sweep{0%{background-position:-45% 0;opacity:0}20%{opacity:.9}80%{opacity:.9}100%{background-position:145% 0;opacity:0}}
+@media (prefers-reduced-motion:reduce){.dsho-conv-active::before,.dsho-chevron{animation:none;transition:none}.dsho-body{transition:none}}
 .dsho-badge{flex:none;display:inline-flex;align-items:center;gap:5px;border-radius:999px;padding:2px 9px;font-size:11px;font-weight:600;line-height:16px;background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-secondary);white-space:nowrap}
 .dsho-badge-queued,.dsho-badge-provisioning{background:color-mix(in srgb,var(--dsw-alias-brand-primary,#1a73e8) 13%,transparent);color:color-mix(in srgb,var(--dsw-alias-brand-primary,#1a73e8) 82%,#000 8%)}
 .dsho-badge-running{background:color-mix(in srgb,var(--dsw-alias-label-positive,#188038) 15%,transparent);color:color-mix(in srgb,var(--dsw-alias-label-positive,#188038) 85%,#000 5%);padding-left:7px}
@@ -22,7 +42,9 @@ export const CSS = `
 .dsho-taskMuted{opacity:.7}
 .dsho-taskMuted .dsho-taskSubject{text-decoration:line-through}
 .dsho-meta{padding:10px 13px;color:var(--dsw-alias-label-tertiary);font-size:11px;line-height:1.6}
-.dsho-open{font:inherit;border:0;background:none;color:var(--dsw-alias-brand-primary);cursor:pointer;padding:0;font-size:12px;flex:none}
+.dsho-open{font:inherit;flex:none;cursor:pointer;font-size:11px;font-weight:600;line-height:16px;padding:3px 11px;border-radius:999px;border:.5px solid color-mix(in srgb,var(--dsw-alias-brand-primary,#1a73e8) 45%,transparent);background:color-mix(in srgb,var(--dsw-alias-brand-primary,#1a73e8) 12%,transparent);color:color-mix(in srgb,var(--dsw-alias-brand-primary,#1a73e8) 85%,#000 6%);transition:background .15s ease,border-color .15s ease}
+.dsho-open:hover{background:color-mix(in srgb,var(--dsw-alias-brand-primary,#1a73e8) 20%,transparent);border-color:color-mix(in srgb,var(--dsw-alias-brand-primary,#1a73e8) 70%,transparent)}
+.dsho-open:active{background:color-mix(in srgb,var(--dsw-alias-brand-primary,#1a73e8) 28%,transparent)}
 .dsho-tasks{list-style:none;margin:0;padding:0}
 .dsho-task{border-top:.5px solid var(--dsw-alias-border-l2);padding:10px 13px;display:flex;flex-direction:column;gap:5px}
 .dsho-taskHead{display:flex;align-items:center;gap:8px;font-size:12px}

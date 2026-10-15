@@ -11,7 +11,7 @@ export const terminalTaskStatuses = ['input_required', 'completed', 'failed', 'c
 export const deliverableTaskStatuses = ['input_required', 'completed', 'failed', 'interrupted'] as const
 
 const trimmed = z.string().trim().min(1)
-const trimmedList = z.array(trimmed)
+const trimmedList = z.array(trimmed).max(50)
 const now = () => new Date().toISOString()
 
 export const progressStepSchema = z.object({
@@ -43,8 +43,8 @@ export const deliverySchema = z.discriminatedUnion('state', [
 ])
 
 export const outlinePatchSchema = z.object({
-  title: trimmed.optional(),
-  summary: trimmed.optional(),
+  title: trimmed.max(200).optional(),
+  summary: trimmed.max(2_000).optional(),
   keyFacts: trimmedList.optional(),
   entities: trimmedList.optional(),
   tags: trimmedList.optional(),
@@ -181,23 +181,31 @@ export function createTask(input: {
   }
 }
 
+export const routeQueryInputSchema = z.object({
+  query: trimmed.max(10_000),
+}).strict()
+
+export const conversationIdInputSchema = z.object({
+  conversationId: trimmed,
+}).strict()
+
 export const dispatchInputSchema = z.object({
-  subject: z.string().trim().min(1),
-  prompt: z.string().trim().min(1),
+  subject: z.string().trim().min(1).max(200),
+  prompt: z.string().trim().min(1).max(100_000),
   conversationId: z.string().trim().min(1).optional(),
   // 默认后台执行，不阻塞主对话；wait 仅用于需要同轮拿结果的短任务。
   responseMode: z.enum(['wait', 'background']).default('background'),
-  acceptanceCriteria: z.string().trim().min(1).optional(),
+  acceptanceCriteria: z.string().trim().min(1).max(10_000).optional(),
   waitTimeoutMs: z.number().int().positive().max(600_000).optional(),
 }).strict()
 
 export const taskUpdateInputSchema = z.object({
   status: z.enum(['running', 'input_required', 'completed', 'failed']),
-  progressNote: trimmed.optional(),
-  userAnswer: trimmed.optional(),
-  resultSummary: trimmed.optional(),
-  error: trimmed.optional(),
-  question: trimmed.optional(),
+  progressNote: trimmed.max(5_000).optional(),
+  userAnswer: trimmed.max(50_000).optional(),
+  resultSummary: trimmed.max(1_000).optional(),
+  error: trimmed.max(10_000).optional(),
+  question: trimmed.max(5_000).optional(),
   outlinePatch: outlinePatchSchema.optional(),
 }).strict().superRefine((value, ctx) => {
   if (value.status === 'completed' && !value.userAnswer) {

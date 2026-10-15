@@ -19,22 +19,22 @@ Worker 的任务上报协议、安全红线（支付/删除等不可逆操作先
 - Worker 不能直接向用户提问：需要用户选择或补充时调用 `task_update({status:'input_required', question})`，由 Lead 向用户提问，并把答复作为新 TaskRun 派发回同一子会话。
 - Worker 多步骤任务继续使用内置 `todo_write`；Host 监听子会话的 `todo/write` 事件（约 350ms 合并）并自动同步到 TaskRun 的步骤进度，任务看板会实时显示 `✓/▶/○` 与 `已完成/总数`。Worker 不需要为每个 todo 变化调用 `task_update`，todo 全完成也不会自动结束任务，终态仍以 `task_update` 为准。
 - `dispatch` 默认 `background`，不阻塞主对话；`wait` 仅用于需要同轮结果的短任务，超过 60 秒自动转后台。
-- `background` 完成、待补充或失败后通过持久 outbox 唤醒 Lead；改单中断与手动停止不产生通知。
+- `background` 完成、待补充、失败或被用户手动停止后通过持久 outbox 唤醒 Lead；改单接管的旧任务不产生通知。
 - 子会话框架自带的 settled 通知会被过滤，避免与 `task_update` 重复；Lead 只以 Worker 的 `userAnswer` 为权威结果。
 - 重启后恢复看板；未完成任务标记 input_required，未投递的后台终态会重试唤醒 Lead。
 
 ## Web 看板
 
-在主会话 header 点击“任务看板”。右侧栏按工作流展示状态、轻量路由卡摘要、TaskRun 时间线、实时步骤进度、错误、结果和同步状态；点击“打开子会话”可查看完整子会话。V1 看板只读。
+在主会话 header 点击“任务看板”。右侧栏按子会话展示状态、轻量路由卡摘要、任务时间线（支持折叠，运行中的子会话高亮）、实时步骤进度、错误、结果和同步状态；点击“打开子会话”可查看完整子会话。V1 看板只读。
 
 ## 分发安装
 
 要求接收方已安装 DSH `0.2.1-alpha.1`，并且使用 Web profile。
 
-把 `may-dsh-orchestrator-0.2.6.tgz` 发给对方后执行：
+把 `may-dsh-orchestrator-0.2.7.tgz` 发给对方后执行：
 
 ```sh
-dsh plugin --profile web add /path/to/may-dsh-orchestrator-0.2.6.tgz
+dsh plugin --profile web add /path/to/may-dsh-orchestrator-0.2.7.tgz
 dsh web --no-open --host 127.0.0.1 --port 3080
 ```
 
@@ -42,7 +42,7 @@ dsh web --no-open --host 127.0.0.1 --port 3080
 
 ```sh
 dsh plugin --profile web remove @may/dsh-orchestrator
-dsh plugin --profile web add /path/to/may-dsh-orchestrator-0.2.6.tgz
+dsh plugin --profile web add /path/to/may-dsh-orchestrator-0.2.7.tgz
 ```
 
 重新生成分发包：
@@ -68,7 +68,7 @@ pnpm pack:dry
 安装到本地 Web profile：
 
 ```sh
-dsh plugin --profile web add /Users/may/Documents/ChatGPT/dsh-orchestrator
+dsh plugin --profile web add /path/to/dsh-orchestrator
 ```
 
 移除：
@@ -80,7 +80,7 @@ dsh plugin --profile web remove @may/dsh-orchestrator
 启动：
 
 ```sh
-dsh web --no-open --host 127.0.0.1 --port 3080
+/Users/lixuchuan/work/harness/start-dsh-web.sh
 ```
 
 ## 存储

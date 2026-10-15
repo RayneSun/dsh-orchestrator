@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { MAX_PROGRESS_STEPS, normalizeProgressSteps, progressSummary } from '../src/progress.ts'
+import { MAX_PROGRESS_STEPS, normalizeProgressSteps } from '../src/progress.ts'
 
 describe('todo_write 到 TaskRun 步骤进度的桥接', () => {
   it('规范化合法 todo 列表', () => {
@@ -32,14 +32,5 @@ describe('todo_write 到 TaskRun 步骤进度的桥接', () => {
     expect(normalized).toHaveLength(MAX_PROGRESS_STEPS)
     const long = normalizeProgressSteps([{ content: 'a'.repeat(400), status: 'pending' }])
     expect(long[0]!.content).toHaveLength(300)
-  })
-
-  it('生成完成数和当前步骤摘要', () => {
-    expect(progressSummary([
-      { content: 'a', status: 'completed' },
-      { content: 'b', status: 'in_progress' },
-      { content: 'c', status: 'pending' },
-    ])).toBe('1/3 · 当前：b')
-    expect(progressSummary([])).toBe('')
   })
 })

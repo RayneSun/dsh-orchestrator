@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react'
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { ProgressStep, Snapshot, TaskRecord } from '../types.ts'
 
 interface BoardProps {
@@ -49,8 +49,40 @@ const taskStatusLabels: Record<string, string> = {
   queued: '排队中', running: '进行中', input_required: '待补充', completed: '已完成',
   failed: '失败', cancelled: '已取消', interrupted: '已中断',
 }
+const modeLabels: Record<string, string> = { background: '后台', wait: '等待' }
 const convStateLabels: Record<string, string> = {
   provisioning: '启动中', running: '进行中', idle: '空闲', input_required: '待补充', failed: '失败',
+}
+
+
+const ACTIVE_TASK_STATUSES = ['queued', 'running']
+
+function stepProgress(steps: ProgressStep[] | undefined): string {
+  if (!steps || steps.length === 0) return ''
+  const done = steps.filter(step => step.status === 'completed').length
+  return `步骤 ${done}/${steps.length}`
+}
+
+/** 折叠态展示的一行最新状态摘要。 */
+function taskHeadline(task: TaskRecord): string {
+  switch (task.status) {
+    case 'running':
+      return task.progressNote || stepProgress(task.progressSteps)
+    case 'input_required':
+      return task.question || task.progressNote || '等待用户补充信息'
+    case 'completed':
+      return task.userAnswer || task.resultSummary || '已完成'
+    case 'failed':
+      return task.error || '执行失败'
+    case 'interrupted':
+      return task.cancelledReason || '已中断'
+    case 'cancelled':
+      return task.cancelledReason || '已取消'
+    case 'queued':
+      return '排队等待执行'
+    default:
+      return ''
+  }
 }
 
 function TaskLine({ task }: { task: TaskRecord }): React.ReactElement {
@@ -75,7 +107,7 @@ function TaskLine({ task }: { task: TaskRecord }): React.ReactElement {
     <div className="dsho-taskHead">
       <span className={`dsho-badge dsho-badge-${task.status}`}>{taskStatusLabels[task.status] ?? task.status}</span>
       <span className="dsho-taskSubject" title={task.subject}>{task.subject}</span>
-      <span className="dsho-mode">{task.responseMode}</span>
+      <span className="dsho-mode">{modeLabels[task.responseMode] ?? task.responseMode}</span>
     </div>
     {task.acceptanceCriteria && <p className="dsho-subtle">验收：{task.acceptanceCriteria}</p>}
     <ProgressSteps steps={task.progressSteps ?? []} />
@@ -99,31 +131,41 @@ export function Board({ sessionId: propSessionId, useTabInfo, orchestrator, remo
   const tabSession = tabSessionId(useTabInfo)
   const sessionId = propSessionId ?? tabSession
   const [snapshot, setSnapshot] = useState<Snapshot | undefined>()
+  const requestSeq = useRef(0)
+  // 用户手动折叠/展开覆盖默认行为；默认活动子会话展开、结束的折叠。
+  const [collapsedOverride, setCollapsedOverride] = useState<Record<string, boolean>>({})
   const [error, setError] = useState<string>()
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (seq: number) => {
     if (!sessionId) return
     try {
       const result = await orchestrator.snapshot({ parentSessionId: sessionId })
-      if (result.ok === true) setSnapshot(result.value)
-      else setError(result.error?.message ?? '读取任务看板失败')
+      if (requestSeq.current !== seq) return
+      if (result.ok === true) {
+        setSnapshot(result.value)
+        setError(undefined)
+      } else {
+        setError(result.error?.message ?? '读取任务看板失败')
+      }
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err))
+      if (requestSeq.current === seq) setError(err instanceof Error ? err.message : String(err))
     }
   }, [orchestrator, sessionId])
 
   useEffect(() => {
+    const seq = ++requestSeq.current
     setSnapshot(undefined)
     setError(undefined)
-    void load()
-    const timer = setInterval(() => { void load() }, 5000)
+    void load(seq)
+    const timer = setInterval(() => { void load(++requestSeq.current) }, 5000)
     let disposeEvent: (() => void) | undefined
     try {
-      disposeEvent = remoteEvents.$on('commands/change', () => { void load() })
+      disposeEvent = remoteEvents.$on('commands/change', () => { void load(++requestSeq.current) })
     } catch {
       // 轮询仍是重连和事件不可用时的兜底。
     }
     return () => {
+      requestSeq.current += 1
       clearInterval(timer)
       disposeEvent?.()
     }
@@ -144,33 +186,67 @@ export function Board({ sessionId: propSessionId, useTabInfo, orchestrator, remo
   if (snapshot.conversations.length === 0) {
     return <div className="dsho-board">
       <h2 className="dsho-title">任务看板</h2>
-      <div className="dsho-empty">还没有子会话。向主控助理提出需要执行的任务后，这里会显示 Conversation 与 TaskRun。</div>
+      <div className="dsho-empty">还没有子会话。向主控助理提出需要执行的任务后，这里会显示每个子会话的状态和任务进度。</div>
     </div>
   }
 
   return <div className="dsho-board">
-    <h2 className="dsho-title">任务看板 · {snapshot.conversations.length} 个工作流</h2>
+    <h2 className="dsho-title">任务看板 · {snapshot.conversations.length} 个子会话</h2>
     {snapshot.conversations.map(conv => {
       const tasks = tasksByConversation.get(conv.id) ?? []
-      return <section className="dsho-conv" key={conv.id}>
-        <header className="dsho-convHead">
+      const latest = tasks[tasks.length - 1]
+      const active = conv.state === 'running' || conv.state === 'provisioning'
+        || tasks.some(task => (ACTIVE_TASK_STATUSES as string[]).includes(task.status))
+      const collapsed = collapsedOverride[conv.id] ?? !active
+      const headline = latest ? taskHeadline(latest) : ''
+      const toggle = (): void => setCollapsedOverride(prev => ({ ...prev, [conv.id]: !collapsed }))
+      return <section
+        className={`dsho-conv${active ? ' dsho-conv-active' : ''}${collapsed ? ' dsho-conv-collapsed' : ''}`}
+        key={conv.id}
+      >
+        <header
+          className="dsho-convHead"
+          role="button"
+          tabIndex={0}
+          aria-expanded={!collapsed}
+          onClick={toggle}
+          onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); toggle() } }}
+        >
+          <span className="dsho-chevron" aria-hidden />
           <span className="dsho-convTitle" title={conv.title}>{conv.title}</span>
           <span className={`dsho-badge dsho-badge-${conv.state}`}>{convStateLabels[conv.state] ?? conv.state}</span>
-          <button className="dsho-open" type="button" onClick={() => uiWorkspace.openSession({
-            parentSessionId: sessionId,
-            childSessionId: conv.childSessionId,
-            mode: 'continuable',
-          })}>打开子会话</button>
+          <button className="dsho-open" type="button" onClick={event => {
+            event.stopPropagation()
+            try {
+              const opened = uiWorkspace.openSession({
+                parentSessionId: sessionId,
+                childSessionId: conv.childSessionId,
+                mode: 'continuable',
+              })
+              Promise.resolve(opened).catch(err => {
+                setError(err instanceof Error ? err.message : String(err))
+              })
+            } catch (err) {
+              setError(err instanceof Error ? err.message : String(err))
+            }
+          }}>打开子会话</button>
         </header>
-        <div className="dsho-meta">
-          <div>更新 {time(conv.updatedAt)}</div>
-          {conv.outline.summary && <div>摘要：{conv.outline.summary}</div>}
-          {conv.outline.openQuestions.length > 0 && <div>未决：{conv.outline.openQuestions.join('；')}</div>}
-        </div>
-        <ul className="dsho-tasks">
-          {tasks.length === 0 && <li className="dsho-task"><p className="dsho-note">暂无 TaskRun</p></li>}
-          {tasks.map(task => <TaskLine key={task.id} task={task} />)}
-        </ul>
+        {collapsed && headline && <div className="dsho-strip" title={headline}>
+          {latest && <span className={`dsho-badge dsho-badge-${latest.status}`}>{taskStatusLabels[latest.status] ?? latest.status}</span>}
+          <span className="dsho-stripText">{headline}</span>
+          <span className="dsho-stripTime">{time(latest?.updatedAt ?? conv.updatedAt)}</span>
+        </div>}
+        <div className="dsho-body"><div>
+          <div className="dsho-meta">
+            <div>更新 {time(conv.updatedAt)}</div>
+            {conv.outline.summary && <div>摘要：{conv.outline.summary}</div>}
+            {conv.outline.openQuestions.length > 0 && <div>未决：{conv.outline.openQuestions.join('；')}</div>}
+          </div>
+          <ul className="dsho-tasks">
+            {tasks.length === 0 && <li className="dsho-task"><p className="dsho-note">暂无任务</p></li>}
+            {tasks.map(task => <TaskLine key={task.id} task={task} />)}
+          </ul>
+        </div></div>
       </section>
     })}
   </div>

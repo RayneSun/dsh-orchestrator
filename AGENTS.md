@@ -48,8 +48,8 @@ dsh plugin --profile web add <tgz 绝对路径>
 
 - Task 状态：`queued / running / input_required / completed / failed / cancelled / interrupted`。
   - `input_required`：Worker 需要用户补充信息或做选择（原 `blocked`，0.2.5 重命名）。
-  - `interrupted`：被改单接管或用户手动停止。**终态、不投递任何主会话通知**，工作流回 `idle` 可继续派发。
-  - 只有 `input_required / completed / failed` 是需要向 Lead 投递通知的终态（`deliverableTaskStatuses`）。
+  - `interrupted`：被改单接管或用户手动停止。改单接管不投递；用户手动停止需要投递一条非失败通知，工作流回 `idle` 可继续派发。
+  - `input_required / completed / failed / interrupted` 都允许带 delivery；interrupted 是否挂起由具体路径决定（`deliverableTaskStatuses`）。
 - Conversation 状态：`provisioning / running / idle / input_required / failed`。
 - 终态投递（delivery outbox）由状态机在迁移时统一挂起，**不要**在创建任务或别处预挂 `delivery: pending`（否则看板对运行中任务误报"同步中"）。
 - 所有状态修改走 `service.serialize()` 串行链；涉及改单必须"旧任务 interrupted + reviseConversation 原子切 activeTaskId"先落盘，再做外部调用。
@@ -63,7 +63,7 @@ dsh plugin --profile web add <tgz 绝对路径>
 3. `subagents.interrupt()`（fire-and-return，单独 try/catch，失败不拖垮新任务）。
 4. `steerHostSubagentPrompt` 注入 `revisionPrompt(task)`（一句短通知 + 任务正文）；steer 不接受则 fallback `queueHostSubagentPrompt`。
 5. interrupt 必然异步带来一次 `turn/end aborted` 和 `subagent/end`：前者由 revisionTurnEnds 吞掉（防止误判为手动停止），后者由 revisionEndGuards 按 oldTaskId 核对吞掉（防止误判 failed）。
-6. 子会话 `turn/end` reason 为 aborted/interrupted 且非改单预期内的，是**用户手动停止**：任务标 interrupted、工作流回 idle、不投递。
+6. 子会话 `turn/end` 的 `aborted.reason.kind=user` 是**用户手动停止**：任务标 interrupted、工作流回 idle、投递非失败通知；`aborted.reason.kind=parent` 且改单守卫缺失时按改单中断幂等处理，不投递。
 
 ### 工具权限
 
@@ -120,4 +120,4 @@ dsh plugin --profile web add <tgz 绝对路径>
 ## 背景材料
 
 - README.zh.md：用户面说明，发版时随版本号更新。
-- git log：0.2.0（background/单 Worker 预设）→ 0.2.1（路由追问兜底/改单 steer/blocked 提问）→ 0.2.2（todo 进度桥接看板）→ 0.2.3（interrupted 改单语义）→ 0.2.4（手动停止捕获、看板与话术精简）→ 0.2.5（白名单、input_required、上下文瘦身、鲁棒性）。
+- git log：0.2.0（background/单 Worker 预设）→ 0.2.1（路由追问兜底/改单 steer/blocked 提问）→ 0.2.2（todo 进度桥接看板）→ 0.2.3（interrupted 改单语义）→ 0.2.4（手动停止捕获、看板与话术精简）→ 0.2.5（白名单、input_required、上下文瘦身、鲁棒性）→ 0.2.6（手动中断通知、状态配色、Worker 提示词瘦身）→ 0.2.7（子会话折叠、柔光动效、按钮突出、提示词/恢复加固）。

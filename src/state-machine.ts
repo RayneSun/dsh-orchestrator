@@ -26,6 +26,22 @@ export function isTerminal(status: TaskStatus): boolean {
   return (terminalTaskStatuses as readonly TaskStatus[]).includes(status)
 }
 
+export type WorkerTurnEndCause = 'manual_stop' | 'revision'
+
+/**
+ * Distinguish durable cancellation causes recorded on turn/end. A user stop
+ * must notify Lead; an ancestor cancellation is an orchestrator revision.
+ */
+export function classifyWorkerTurnEnd(reason: unknown): WorkerTurnEndCause | undefined {
+  if (!reason || typeof reason !== 'object') return undefined
+  const aborted = reason as { kind?: unknown; reason?: unknown }
+  if (aborted.kind !== 'aborted' || !aborted.reason || typeof aborted.reason !== 'object') return undefined
+  const cause = (aborted.reason as { kind?: unknown }).kind
+  if (cause === 'user') return 'manual_stop'
+  if (cause === 'parent') return 'revision'
+  return undefined
+}
+
 function touch<T extends { revision: number; updatedAt: string }>(value: T, at: string): T {
   return { ...value, revision: value.revision + 1, updatedAt: at }
 }
@@ -103,7 +119,7 @@ export function applyOutlinePatch(
   }
 }
 
-/** 后台任务进入可投递终态时自动挂起投递；interrupted/cancelled 明确不投递。 */
+/** Worker 上报的后台终态自动挂起投递；interrupted 的投递策略由调用路径决定。 */
 function withTerminalDelivery(task: TaskRecord, status: TaskStatus): TaskRecord['delivery'] {
   if (task.responseMode !== 'background') return undefined
   return (deliverableTaskStatuses as readonly TaskStatus[]).includes(status)
@@ -184,7 +200,7 @@ export function interruptTaskAfterRestart(task: TaskRecord, at = new Date().toIS
   }
 }
 
-/** 用户改单/补充需求/手动停止时：旧任务进入 interrupted，且不触发后台失败通知。 */
+/** 改单/补充需求时旧任务进入 interrupted；手动停止若需通知，由调用方补 delivery。 */
 export function interruptTaskForRevision(task: TaskRecord, reason: string, at = new Date().toISOString()): TaskRecord {
   if (isTerminal(task.status)) return task
   return {

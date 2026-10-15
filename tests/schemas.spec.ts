@@ -3,7 +3,9 @@ import {
   conversationSchema,
   createConversation,
   createTask,
+  conversationIdInputSchema,
   dispatchInputSchema,
+  routeQueryInputSchema,
   taskSchema,
   taskUpdateInputSchema,
 } from '../src/types.ts'
@@ -85,8 +87,32 @@ describe('工具输入 Zod 校验', () => {
     expect(task.progressSteps).toEqual([])
     expect(task.delivery).toBeUndefined()
   })
-})
 
+
+  it('route query 拒绝空值和超长查询', () => {
+    expect(routeQueryInputSchema.safeParse({ query: ' ' }).success).toBe(false)
+    expect(routeQueryInputSchema.safeParse({ query: 'a'.repeat(10_001) }).success).toBe(false)
+    expect(routeQueryInputSchema.safeParse({ query: '不要星空', extra: 1 }).success).toBe(false)
+  })
+
+  it('conversationId 查询拒绝空值和多余字段', () => {
+    expect(conversationIdInputSchema.safeParse({ conversationId: ' ' }).success).toBe(false)
+    expect(conversationIdInputSchema.safeParse({ conversationId: 'conv_1', extra: 1 }).success).toBe(false)
+    expect(conversationIdInputSchema.safeParse({ conversationId: 'conv_1' }).success).toBe(true)
+  })
+
+  it('dispatch 限制主题、需求和验收标准长度，outline 列表最多 50 项', () => {
+    expect(dispatchInputSchema.safeParse({ subject: 'a'.repeat(201), prompt: 'p' }).success).toBe(false)
+    expect(dispatchInputSchema.safeParse({ subject: 's', prompt: 'a'.repeat(100_001) }).success).toBe(false)
+    expect(dispatchInputSchema.safeParse({
+      subject: 's', prompt: 'p', acceptanceCriteria: 'a'.repeat(10_001),
+    }).success).toBe(false)
+    expect(taskUpdateInputSchema.safeParse({
+      status: 'running', outlinePatch: { tags: Array.from({ length: 51 }, (_, i) => `t${i}`) },
+    }).success).toBe(false)
+  })
+
+})
 
 describe('0.2.x 存储记录迁移', () => {
   const baseTask = {

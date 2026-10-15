@@ -56,7 +56,6 @@ export function buildPresetDefinitions(): PresetDefinition[] {
           config: { prefix: LEAD_PROMPT },
         },
         ...basics,
-        { id: 'tool-web', name: '@deepseek-ai/dsh-tool-web', config: { fetch: true, searchTimeoutMs: 60_000 } },
         { id: 'tool-ask-user', name: '@deepseek-ai/dsh-tool-ask-user' },
         compaction,
       ],
