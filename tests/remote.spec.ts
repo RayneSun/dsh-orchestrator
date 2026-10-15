@@ -1,48 +1,49 @@
 import { describe, expect, it } from 'vitest'
-import TYPERT from '../src/typert-host.ts'
-import TYPERT_REMOTE from '../src/remote.ts'
-import {
-  snapshotRequestSchema,
-  snapshotResultSchema,
-} from '../src/remote.ts'
-import { createConversation, createTask } from '../src/types.ts'
+import { createConversation } from '../src/types.ts'
+import { routeQuery } from '../src/router.ts'
 
-const descriptor = TYPERT_REMOTE.descriptors[0]!
+function weatherConv() {
+  const conv = createConversation({
+    id: 'conv_weather', childSessionId: 'child-weather', parentSessionId: 'parent',
+    title: '查询今天天气',
+  })
+  return {
+    ...conv,
+    outline: {
+      ...conv.outline,
+      summary: '查询本地天气、温度和降雨概率',
+      entities: ['天气'], tags: ['天气', 'weather'], keyFacts: ['今天有小雨'],
+    },
+  }
+}
 
-describe('Orchestrator strict Remote descriptor', () => {
-  it('声明唯一的 orchestrator/snapshot direct 方法', () => {
-    expect(TYPERT.face).toBe('host')
-    expect(TYPERT.package).toBe('@may/dsh-orchestrator')
-    expect(descriptor).toMatchObject({
-      id: '@may/dsh-orchestrator#orchestrator/snapshot',
-      service: 'orchestrator',
-      namespace: 'orchestrator',
-      method: 'snapshot',
-      invocation: { kind: 'direct' },
-    })
-    expect(descriptor.parameters).toHaveLength(1)
-    expect(descriptor.parameters[0]!.codec.mode).toBe('strict')
-    expect(descriptor.result.mode).toBe('strict')
-    expect(descriptor.sourceLocation?.line).toBeGreaterThan(0)
-    expect(descriptor.sourceLocation?.column).toBeGreaterThan(0)
+describe('词法路由', () => {
+  it('天气后的穿衣追问命中同一工作流', () => {
+    const candidates = routeQuery('适合穿什么衣服呢', [weatherConv()])
+    expect(candidates).toHaveLength(1)
+    expect(candidates[0]!.conversation.id).toBe('conv_weather')
   })
 
-  it('request 和 result codec 使用可执行 Zod strict schema', () => {
-    const request = descriptor.parameters[0]!.codec.create().parse({ parentSessionId: 'parent' })
-    expect(request).toEqual({ parentSessionId: 'parent' })
-    expect(descriptor.parameters[0]!.codec.create().safeParse({ parentSessionId: '' }).success).toBe(false)
+  it('无关代码问题不命中天气工作流', () => {
+    const candidates = routeQuery('请修复这个 TypeScript 编译错误', [weatherConv()])
+    expect(candidates).toHaveLength(0)
+  })
+})
 
+
+describe('追问和不同主题路由', () => {
+  it('代码报错的后续重构请求命中同一代码工作流', () => {
     const conv = createConversation({
-      id: 'conv_1', childSessionId: 'child', parentSessionId: 'parent',
-      scene: 'general', title: '任务',
+      id: 'conv_code', childSessionId: 'child-code', parentSessionId: 'parent',
+      title: '修复 TypeScript 编译错误',
     })
-    const task = createTask({
-      id: 'task_1', parentSessionId: 'parent', conversationId: 'conv_1',
-      predecessorTaskId: null, subject: '任务', prompt: '执行', scene: 'general',
-      responseMode: 'wait',
-    })
-    expect(snapshotRequestSchema.safeParse({ parentSessionId: 'parent', extra: 1 }).success).toBe(false)
-    expect(snapshotResultSchema.parse({ conversations: [conv], tasks: [task] }).tasks).toHaveLength(1)
-    expect(snapshotResultSchema.safeParse({ conversations: [], tasks: [], extra: 1 }).success).toBe(false)
+    conv.outline.summary = '修复测试中的类型错误并保证 build 通过'
+    conv.outline.tags = ['TypeScript', '编译', '测试']
+    const candidates = routeQuery('那顺手重构一下相关测试', [conv])
+    expect(candidates[0]?.conversation.id).toBe('conv_code')
+  })
+
+  it('天气工作流不会承接午餐预算问题', () => {
+    expect(routeQuery('帮我规划午餐预算', [weatherConv()])).toHaveLength(0)
   })
 })

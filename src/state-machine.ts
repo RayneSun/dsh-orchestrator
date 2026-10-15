@@ -9,12 +9,13 @@ export class StateError extends Error {
 }
 
 const transitions: Record<TaskStatus, readonly TaskStatus[]> = {
-  queued: ['running', 'blocked', 'completed', 'failed', 'cancelled'],
-  running: ['running', 'blocked', 'completed', 'failed', 'cancelled'],
+  queued: ['running', 'blocked', 'completed', 'failed', 'cancelled', 'interrupted'],
+  running: ['running', 'blocked', 'completed', 'failed', 'cancelled', 'interrupted'],
   blocked: [],
   completed: [],
   failed: [],
   cancelled: [],
+  interrupted: [],
 }
 
 export function canTransition(from: TaskStatus, to: TaskStatus): boolean {
@@ -105,6 +106,7 @@ export interface TaskTransitionInput {
   userAnswer?: string
   resultSummary?: string
   error?: string
+  question?: string
   outlinePatch?: OutlinePatch
 }
 
@@ -120,8 +122,8 @@ export function transitionTask(task: TaskRecord, input: TaskTransitionInput, at 
   if (input.status === 'failed' && !error?.trim()) {
     throw new StateError('missing_error', 'failed task_update requires error')
   }
-  if (input.status === 'blocked' && !(error ?? input.progressNote ?? task.progressNote)?.trim()) {
-    throw new StateError('missing_blocked_reason', 'blocked task_update requires error or progressNote')
+  if (input.status === 'blocked' && !(error ?? input.question ?? input.progressNote ?? task.progressNote)?.trim()) {
+    throw new StateError('missing_blocked_reason', 'blocked task_update requires error, question or progressNote')
   }
   const terminal = isTerminal(input.status)
   return {
@@ -135,6 +137,11 @@ export function transitionTask(task: TaskRecord, input: TaskTransitionInput, at 
         ? { resultSummary: userAnswer.slice(0, 180) }
         : {},
     ...input.error !== undefined ? { error: input.error } : {},
+    ...input.question !== undefined
+      ? { blockedQuestion: input.question }
+      : input.status === 'blocked' && task.blockedQuestion
+        ? {}
+        : { blockedQuestion: undefined },
     ...input.outlinePatch !== undefined ? { outlinePatch: input.outlinePatch } : {},
     ...terminal ? { endedAt: at } : { startedAt: task.startedAt ?? at },
   }
@@ -164,5 +171,32 @@ export function interruptTaskAfterRestart(task: TaskRecord, at = new Date().toIS
     error: '进程重启中断了未完成任务，且未收到终态上报',
     endedAt: at,
     ...task.responseMode === 'background' ? { delivery: { state: 'pending', attempts: 0 } } : {},
+  }
+}
+
+/** 用户改单/补充需求时原子切换：旧任务进入 interrupted，且不触发后台失败通知。 */
+export function interruptTaskForRevision(task: TaskRecord, reason: string, at = new Date().toISOString()): TaskRecord {
+  if (isTerminal(task.status)) return task
+  return {
+    ...touch(task, at),
+    status: 'interrupted',
+    cancelledReason: reason,
+    delivery: undefined,
+    endedAt: at,
+  }
+}
+
+/** 把 Conversation 从旧活动任务原子切换到改单后的新任务；不能走普通 activate 的 busy 校验。 */
+export function reviseConversation(
+  conv: ConversationRecord,
+  nextTaskId: string,
+  at = new Date().toISOString(),
+): ConversationRecord {
+  if (conv.state === 'failed') throw new StateError('conversation_failed', `conversation ${conv.id} has failed`)
+  return {
+    ...touch(conv, at),
+    state: 'running',
+    activeTaskId: nextTaskId,
+    lastTaskId: nextTaskId,
   }
 }

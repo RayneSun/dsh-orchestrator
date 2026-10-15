@@ -1,17 +1,9 @@
 import type { PresetDefinition } from '@deepseek-ai/dsh-agent-preset-registry'
-import { LEAD_PROMPT } from './messages.ts'
-import { sceneDefinitions } from './scenes.ts'
-import { scenes, type Scene } from './types.ts'
+import { LEAD_PROMPT, WORKER_PROMPT } from './messages.ts'
 
 export const LEAD_PRESET = 'may-orchestrator-lead'
+export const WORKER_PRESET = 'may-orchestrator-worker'
 export const LEAD_TOOL_DENY = ['web_search', 'web_fetch'] as const
-
-export const WORKER_PRESET: Record<Scene, string> = {
-  code: 'may-orchestrator-worker-code',
-  general: 'may-orchestrator-worker-general',
-  research: 'may-orchestrator-worker-research',
-  review: 'may-orchestrator-worker-review',
-}
 
 type PluginRow = PresetDefinition['plugins'][number]
 
@@ -51,7 +43,7 @@ export function buildPresetDefinitions(): PresetDefinition[] {
       id: LEAD_PRESET,
       name: '主控助理',
       order: 8,
-      description: '只负责路由和编排，把执行工作分发给持久子会话',
+      description: '只负责路由和编排，把执行工作分发给持久执行 Worker',
       plugins: [
         {
           id: 'persona',
@@ -64,26 +56,40 @@ export function buildPresetDefinitions(): PresetDefinition[] {
         compaction,
       ],
     },
-    ...scenes.map((scene): PresetDefinition => {
-      const definition = sceneDefinitions[scene]
-      return {
-        id: WORKER_PRESET[scene],
-        name: definition.label,
-        order: 20 + scenes.indexOf(scene),
-        description: definition.description,
-        plugins: [
-          ...basics,
-          ...(scene === 'code' || scene === 'general' ? [bash, pwsh] : []),
-          { id: 'tool-fs', name: '@deepseek-ai/dsh-tool-fs' },
-          {
-            id: 'tool-fs-search',
-            name: '@deepseek-ai/dsh-tool-fs-search',
-            config: { sampleOverCapGlobResults: false },
+    {
+      id: WORKER_PRESET,
+      name: '执行 Worker',
+      order: 20,
+      description: '可使用宿主与用户安装的全部工具执行任务；禁止再派生子 Agent，通过 task_update 上报状态',
+      plugins: [
+        {
+          id: 'persona',
+          name: '@deepseek-ai/dsh-persona',
+          config: {
+            prefix: WORKER_PROMPT,
+            suffix: '你的工作目录是 {{cwd}}；产物和临时文件都留在工作区内，任务结束清理中间文件。',
           },
-          { id: 'tool-web', name: '@deepseek-ai/dsh-tool-web', config: { fetch: true, searchTimeoutMs: 60_000 } },
-          compaction,
-        ],
-      }
-    }),
+        },
+        ...basics,
+        bash,
+        pwsh,
+        { id: 'tool-fs', name: '@deepseek-ai/dsh-tool-fs' },
+        {
+          id: 'tool-fs-search',
+          name: '@deepseek-ai/dsh-tool-fs-search',
+          config: { sampleOverCapGlobResults: false },
+        },
+        { id: 'tool-jobs', name: '@deepseek-ai/dsh-tool-jobs' },
+        { id: 'skill-filesystem', name: '@deepseek-ai/dsh-skill-filesystem' },
+        { id: 'tool-skill', name: '@deepseek-ai/dsh-tool-skill' },
+        { id: 'command-goal', name: '@deepseek-ai/dsh-command-goal' },
+        { id: 'tool-goal', name: '@deepseek-ai/dsh-tool-goal' },
+        { id: 'tool-todo', name: '@deepseek-ai/dsh-tool-todo', config: { allowParallelInProgress: true } },
+        { id: 'tool-web', name: '@deepseek-ai/dsh-tool-web', config: { fetch: true, searchTimeoutMs: 60_000 } },
+        { id: 'tool-ask-user', name: '@deepseek-ai/dsh-tool-ask-user' },
+        { id: 'present', name: '@deepseek-ai/dsh-tool-present' },
+        compaction,
+      ],
+    },
   ]
 }

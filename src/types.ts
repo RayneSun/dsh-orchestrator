@@ -1,17 +1,25 @@
 import { z } from 'zod'
 
-export const scenes = ['code', 'general', 'research', 'review'] as const
-export const sceneSchema = z.enum(scenes)
-export type Scene = z.infer<typeof sceneSchema>
+export const WORKER_SCENE = 'worker'
+export const scenes = [WORKER_SCENE] as const
+export type Scene = (typeof scenes)[number]
+// 旧版四类 Worker 记录仍可能留在存储中，读取时需要兼容；新任务一律为 worker。
+export const sceneSchema = z.enum(['worker', 'code', 'general', 'research', 'review'])
 
 export const conversationStates = ['provisioning', 'running', 'idle', 'blocked', 'failed'] as const
-export const taskStatuses = ['queued', 'running', 'blocked', 'completed', 'failed', 'cancelled'] as const
+export const taskStatuses = ['queued', 'running', 'blocked', 'completed', 'failed', 'cancelled', 'interrupted'] as const
 export const activeTaskStatuses = ['queued', 'running'] as const
-export const terminalTaskStatuses = ['blocked', 'completed', 'failed', 'cancelled'] as const
+export const terminalTaskStatuses = ['blocked', 'completed', 'failed', 'cancelled', 'interrupted'] as const
 
 const trimmed = z.string().trim().min(1)
 const trimmedList = z.array(trimmed)
 const now = () => new Date().toISOString()
+
+export const progressStepSchema = z.object({
+  content: z.string().trim().min(1).max(300),
+  status: z.enum(['pending', 'in_progress', 'completed']),
+}).strict()
+export type ProgressStep = z.infer<typeof progressStepSchema>
 
 export const outlineSchema = z.object({
   summary: z.string().default(''),
@@ -75,7 +83,10 @@ export const taskSchema = z.object({
   userAnswer: z.string().optional(),
   resultSummary: z.string().optional(),
   error: z.string().optional(),
+  blockedQuestion: z.string().optional(),
+  cancelledReason: z.string().optional(),
   outlinePatch: outlinePatchSchema.optional(),
+  progressSteps: z.array(progressStepSchema).default([]),
   delivery: deliverySchema.optional(),
   revision: z.number().int().nonnegative().default(0),
   createdAt: z.string(),
@@ -113,11 +124,20 @@ export function createConversation(input: {
   id: string
   childSessionId: string
   parentSessionId: string
-  scene: Scene
   title: string
 }): ConversationRecord {
   const ts = timestamp()
-  return { ...input, outline: emptyOutline(), activeTaskId: null, lastTaskId: null, state: 'provisioning', revision: 0, createdAt: ts, updatedAt: ts }
+  return {
+    ...input,
+    scene: WORKER_SCENE,
+    outline: emptyOutline(),
+    activeTaskId: null,
+    lastTaskId: null,
+    state: 'provisioning',
+    revision: 0,
+    createdAt: ts,
+    updatedAt: ts,
+  }
 }
 
 export function createTask(input: {
@@ -127,7 +147,6 @@ export function createTask(input: {
   predecessorTaskId: string | null
   subject: string
   prompt: string
-  scene: Scene
   acceptanceCriteria?: string
   responseMode: 'wait' | 'background'
 }): TaskRecord {
@@ -137,12 +156,13 @@ export function createTask(input: {
     parentSessionId: input.parentSessionId,
     conversationId: input.conversationId,
     predecessorTaskId: input.predecessorTaskId,
-    scene: input.scene,
+    scene: WORKER_SCENE,
     subject: input.subject,
     prompt: input.prompt,
     ...input.acceptanceCriteria ? { acceptanceCriteria: input.acceptanceCriteria } : {},
     responseMode: input.responseMode,
     status: 'queued',
+    progressSteps: [],
     ...input.responseMode === 'background' ? { delivery: { state: 'pending', attempts: 0 } } : {},
     revision: 0,
     createdAt: ts,
@@ -153,9 +173,9 @@ export function createTask(input: {
 export const dispatchInputSchema = z.object({
   subject: z.string().trim().min(1),
   prompt: z.string().trim().min(1),
-  scene: sceneSchema,
   conversationId: z.string().trim().min(1).optional(),
-  responseMode: z.enum(['wait', 'background']),
+  // 默认后台执行，不阻塞主对话；wait 仅用于需要同轮拿结果的短任务。
+  responseMode: z.enum(['wait', 'background']).default('background'),
   acceptanceCriteria: z.string().trim().min(1).optional(),
   waitTimeoutMs: z.number().int().positive().max(600_000).optional(),
 }).strict()
@@ -166,6 +186,7 @@ export const taskUpdateInputSchema = z.object({
   userAnswer: trimmed.optional(),
   resultSummary: trimmed.optional(),
   error: trimmed.optional(),
+  question: trimmed.optional(),
   outlinePatch: outlinePatchSchema.optional(),
 }).strict().superRefine((value, ctx) => {
   if (value.status === 'completed' && !value.userAnswer) {
@@ -174,8 +195,8 @@ export const taskUpdateInputSchema = z.object({
   if (value.status === 'failed' && !value.error) {
     ctx.addIssue({ code: 'custom', path: ['error'], message: 'failed task_update requires error' })
   }
-  if (value.status === 'blocked' && !value.error && !value.progressNote) {
-    ctx.addIssue({ code: 'custom', path: ['progressNote'], message: 'blocked task_update requires error or progressNote' })
+  if (value.status === 'blocked' && !value.error && !value.progressNote && !value.question) {
+    ctx.addIssue({ code: 'custom', path: ['progressNote'], message: 'blocked task_update requires error, question or progressNote' })
   }
 })
 

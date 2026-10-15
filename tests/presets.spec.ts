@@ -5,17 +5,11 @@ describe('Orchestrator agent presets', () => {
   const presets = buildPresetDefinitions()
   const byId = new Map(presets.map(preset => [preset.id, preset]))
 
-  it('注册 Lead 和四个 Worker 预设', () => {
-    expect(presets.map(preset => preset.id)).toEqual([
-      LEAD_PRESET,
-      WORKER_PRESET.code,
-      WORKER_PRESET.general,
-      WORKER_PRESET.research,
-      WORKER_PRESET.review,
-    ])
+  it('注册 Lead 和唯一的统一 Worker 预设', () => {
+    expect(presets.map(preset => preset.id)).toEqual([LEAD_PRESET, WORKER_PRESET])
   })
 
-  it('Lead 隐藏直接网页工具，强制通过 research Worker 联网', () => {
+  it('Lead 隐藏直接网页工具，强制通过 Worker 联网', () => {
     expect([...LEAD_TOOL_DENY]).toEqual(['web_search', 'web_fetch'])
   })
 
@@ -39,11 +33,41 @@ describe('Orchestrator agent presets', () => {
     }
   })
 
-  it('只读 Worker 不组合 shell，执行 Worker 才组合 bash/pwsh', () => {
-    const names = (id: string) => new Set(byId.get(id)!.plugins.map(row => row.name))
-    expect(names(WORKER_PRESET.research)).not.toContain('@deepseek-ai/dsh-tool-bash')
-    expect(names(WORKER_PRESET.review)).not.toContain('@deepseek-ai/dsh-tool-pwsh')
-    expect(names(WORKER_PRESET.code)).toContain('@deepseek-ai/dsh-tool-fs')
-    expect(names(WORKER_PRESET.general)).toContain('@deepseek-ai/dsh-tool-web')
+  it('统一 Worker 组合完整执行工具集，且不组合任何派生/编排插件', () => {
+    const names = new Set(byId.get(WORKER_PRESET)!.plugins.map(row => row.name))
+    for (const name of [
+      '@deepseek-ai/dsh-tool-bash',
+      '@deepseek-ai/dsh-tool-fs',
+      '@deepseek-ai/dsh-tool-fs-search',
+      '@deepseek-ai/dsh-tool-jobs',
+      '@deepseek-ai/dsh-tool-skill',
+      '@deepseek-ai/dsh-skill-filesystem',
+      '@deepseek-ai/dsh-tool-goal',
+      '@deepseek-ai/dsh-command-goal',
+      '@deepseek-ai/dsh-tool-todo',
+      '@deepseek-ai/dsh-tool-web',
+      '@deepseek-ai/dsh-tool-ask-user',
+      '@deepseek-ai/dsh-tool-present',
+      '@deepseek-ai/dsh-persona',
+    ]) {
+      expect(names.has(name)).toBe(true)
+    }
+    for (const name of [
+      '@deepseek-ai/dsh-tool-subagent',
+      '@deepseek-ai/dsh-tool-subagent-control',
+      '@deepseek-ai/dsh-tool-workflow',
+      '@deepseek-ai/dsh-tool-ralph',
+      '@deepseek-ai/dsh-workflow-ptc',
+    ]) {
+      expect(names.has(name)).toBe(false)
+    }
+  })
+
+  it('Worker persona 固化了 task_update 协议和通用约束', () => {
+    const persona = byId.get(WORKER_PRESET)!.plugins.find(row => row.id === 'persona')
+    const prefix = String((persona!.config as { prefix: string }).prefix)
+    expect(prefix).toContain('task_update')
+    expect(prefix).toContain('completed')
+    expect(prefix).toContain('工作区')
   })
 })

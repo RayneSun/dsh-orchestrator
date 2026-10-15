@@ -2,15 +2,15 @@ import { describe, expect, it } from 'vitest'
 import { createConversation, createTask } from '../src/types.ts'
 import {
   StateError, activateConversation, applyOutlinePatch, assertRevision,
-  canTransition, failTask, failTaskWithoutTerminalReport, interruptTaskAfterRestart,
-  settleConversation, startConversation, transitionTask,
+  interruptTaskForRevision, reviseConversation, canTransition, failTask, failTaskWithoutTerminalReport, interruptTaskAfterRestart,
+  isTerminal, settleConversation, startConversation, transitionTask,
 } from '../src/state-machine.ts'
 
 function pair() {
-  let conv = createConversation({ id: 'c1', childSessionId: 'child', parentSessionId: 'p', scene: 'code', title: 't' })
+  let conv = createConversation({ id: 'c1', childSessionId: 'child', parentSessionId: 'p', title: 't' })
   let task = createTask({
     id: 't1', parentSessionId: 'p', conversationId: 'c1', predecessorTaskId: null,
-    subject: 's', prompt: 'do', scene: 'code', responseMode: 'wait',
+    subject: 's', prompt: 'do', responseMode: 'wait',
   })
   conv = activateConversation(conv, task.id)
   task = { ...task, status: 'running' }
@@ -63,7 +63,7 @@ describe('状态迁移和修订号', () => {
   it('blocked 必须说明原因，failed 必须带 error', () => {
     const queued = createTask({
       id: 't', parentSessionId: 'p', conversationId: 'c', predecessorTaskId: null,
-      subject: 's', prompt: 'p', scene: 'general', responseMode: 'wait',
+      subject: 's', prompt: 'p', responseMode: 'wait',
     })
     expect(() => transitionTask(queued, { status: 'blocked' })).toThrow(/blocked/)
     expect(() => transitionTask(queued, { status: 'failed' })).toThrow(/failed/)
@@ -73,7 +73,7 @@ describe('状态迁移和修订号', () => {
   it('queued 可直接完成，完成后修订号递增且不能继续迁移', () => {
     const task = createTask({
       id: 't', parentSessionId: 'p', conversationId: 'c', predecessorTaskId: null,
-      subject: 's', prompt: 'p', scene: 'general', responseMode: 'wait',
+      subject: 's', prompt: 'p', responseMode: 'wait',
     })
     const done = transitionTask(task, { status: 'completed', userAnswer: '答案' })
     expect(done.revision).toBe(1)
@@ -90,7 +90,7 @@ describe('状态迁移和修订号', () => {
   it('expected revision 不一致时拒绝乐观更新', () => {
     const conv = createConversation({
       id: 'c', childSessionId: 'child', parentSessionId: 'p',
-      scene: 'code', title: 't',
+      title: 't',
     })
     expect(() => assertRevision(conv, 3)).toThrowError(StateError)
     expect(() => assertRevision(conv, 0)).not.toThrow()
@@ -100,10 +100,47 @@ describe('状态迁移和修订号', () => {
   it('重启恢复会把后台活动任务转 blocked 并保留待投递 outbox', () => {
     const task = createTask({
       id: 't', parentSessionId: 'p', conversationId: 'c', predecessorTaskId: null,
-      subject: 's', prompt: 'p', scene: 'code', responseMode: 'background',
+      subject: 's', prompt: 'p', responseMode: 'background',
     })
     const blocked = interruptTaskAfterRestart(task)
     expect(blocked.status).toBe('blocked')
     expect(blocked.delivery).toEqual({ state: 'pending', attempts: 0 })
+  })
+})
+
+describe('改单中断与 Worker 提问', () => {
+  it('活动任务可被新需求中断并记录原因，且不保留后台失败投递', () => {
+    const { task, conv } = pair()
+    const interrupted = interruptTaskForRevision(task, '被新需求取代')
+    expect(interrupted.status).toBe('interrupted')
+    expect(interrupted.cancelledReason).toContain('新需求')
+    expect(interrupted.delivery).toBeUndefined()
+    expect(isTerminal(interrupted.status)).toBe(true)
+    const revised = reviseConversation(conv, 'task_new')
+    expect(revised.state).toBe('running')
+    expect(revised.activeTaskId).toBe('task_new')
+    // interrupted 是终态：不可再迁移，也不能在失败会话上改单
+    expect(canTransition('interrupted', 'running')).toBe(false)
+    expect(() => reviseConversation({ ...revised, state: 'failed' }, 'task_x')).toThrow()
+    // 终态任务重复中断保持幂等
+    const again = interruptTaskForRevision(interrupted, '再次中断')
+    expect(again).toBe(interrupted)
+  })
+
+  it('blocked 可携带给用户的问题', () => {
+    const task = createTask({
+      id: 't', parentSessionId: 'p', conversationId: 'c', predecessorTaskId: null,
+      subject: 's', prompt: 'p', responseMode: 'background',
+    })
+    const blocked = transitionTask(task, { status: 'blocked', question: '要做 PvP 还是 PvE？' })
+    expect(blocked.blockedQuestion).toBe('要做 PvP 还是 PvE？')
+  })
+
+  it('blocked 只有问题没有 error/progressNote 也合法', () => {
+    const task = createTask({
+      id: 't', parentSessionId: 'p', conversationId: 'c', predecessorTaskId: null,
+      subject: 's', prompt: 'p', responseMode: 'background',
+    })
+    expect(() => transitionTask(task, { status: 'blocked', question: 'q?' })).not.toThrow()
   })
 })

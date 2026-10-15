@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react'
-import type { Snapshot, TaskRecord } from '../types.ts'
+import type { ProgressStep, Snapshot, TaskRecord } from '../types.ts'
 
 interface BoardProps {
   sessionId?: string
@@ -28,17 +28,51 @@ function tabSessionId(useTabInfo?: BoardProps['useTabInfo']): string | undefined
   }
 }
 
+
+function ProgressSteps({ steps }: { steps: ProgressStep[] }): React.ReactElement | null {
+  if (steps.length === 0) return null
+  const completed = steps.filter(step => step.status === 'completed').length
+  const active = steps.some(step => step.status === 'in_progress')
+  return <div className="dsho-steps">
+    <div className="dsho-stepsHead">
+      <span>执行步骤</span>
+      <span className={active ? 'dsho-stepsActive' : ''}>{completed}/{steps.length}</span>
+    </div>
+    <ul>
+      {steps.map((step, index) => <li key={`${index}-${step.content}`} className={`dsho-step dsho-step-${step.status}`}>
+        <span className="dsho-stepIcon">
+          {step.status === 'completed' ? '✓' : step.status === 'in_progress' ? '▶' : '○'}
+        </span>
+        <span>{step.content}</span>
+      </li>)}
+    </ul>
+  </div>
+}
+
+const taskStatusLabels: Record<string, string> = {
+  queued: '排队中', running: '进行中', blocked: '待用户', completed: '已完成',
+  failed: '失败', cancelled: '已取消', interrupted: '已中断',
+}
+const convStateLabels: Record<string, string> = {
+  provisioning: '启动中', running: '进行中', idle: '空闲', blocked: '待用户', failed: '失败',
+}
+
 function TaskLine({ task }: { task: TaskRecord }): React.ReactElement {
   return <li className="dsho-task">
     <div className="dsho-taskHead">
-      <span className={`dsho-badge dsho-badge-${task.status}`}>{task.status}</span>
+      <span className={`dsho-badge dsho-badge-${task.status}`}>{taskStatusLabels[task.status] ?? task.status}</span>
       <span className="dsho-taskSubject" title={task.subject}>{task.subject}</span>
       <span className="dsho-mode">{task.responseMode}</span>
     </div>
     {task.acceptanceCriteria && <p className="dsho-subtle">验收：{task.acceptanceCriteria}</p>}
+    <ProgressSteps steps={task.progressSteps ?? []} />
     {task.progressNote && <p className="dsho-note">{task.progressNote}</p>}
     {task.resultSummary && <p className="dsho-subtle">摘要：{task.resultSummary}</p>}
     {task.userAnswer && <p className="dsho-answer" title={task.userAnswer}>{task.userAnswer}</p>}
+    {task.blockedQuestion && <p className="dsho-note">❓ 向用户提问：{task.blockedQuestion}</p>}
+    {task.status === 'interrupted'
+      ? <p className="dsho-subtle dsho-interrupted">已中断（改单中）：{task.cancelledReason}</p>
+      : task.cancelledReason && <p className="dsho-subtle">已取消：{task.cancelledReason}</p>}
     {task.error && <p className="dsho-note dsho-error">{task.error}</p>}
     {task.delivery?.state === 'pending' && <p className="dsho-subtle">
       后台投递待重试 · 第 {task.delivery.attempts} 次{task.delivery.lastError ? ` · ${task.delivery.lastError}` : ''}
@@ -108,7 +142,7 @@ export function Board({ sessionId: propSessionId, useTabInfo, orchestrator, remo
       return <section className="dsho-conv" key={conv.id}>
         <header className="dsho-convHead">
           <span className="dsho-convTitle" title={conv.title}>{conv.title}</span>
-          <span className={`dsho-badge dsho-badge-${conv.state}`}>{conv.state}</span>
+          <span className={`dsho-badge dsho-badge-${conv.state}`}>{convStateLabels[conv.state] ?? conv.state}</span>
           <button className="dsho-open" type="button" onClick={() => uiWorkspace.openSession({
             parentSessionId: sessionId,
             childSessionId: conv.childSessionId,
@@ -116,7 +150,7 @@ export function Board({ sessionId: propSessionId, useTabInfo, orchestrator, remo
           })}>打开子会话</button>
         </header>
         <div className="dsho-meta">
-          <div><b>{conv.scene}</b> · {short(conv.id)} · 更新 {time(conv.updatedAt)}</div>
+          <div>{short(conv.id)} · 更新 {time(conv.updatedAt)}</div>
           <div>标签：{conv.outline.tags.join(' / ') || '—'}</div>
           <div>实体：{conv.outline.entities.join(' / ') || '—'}</div>
           {conv.outline.summary && <div>摘要：{conv.outline.summary}</div>}

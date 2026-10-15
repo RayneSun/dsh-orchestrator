@@ -20,6 +20,12 @@ const topicGroups: TopicGroup[] = [
   { topic: 'finance', terms: /钱|价格|账单|股票|基金|预算|money|price|bill|stock|budget|finance/i },
 ]
 
+const FOLLOW_UP_CUES = /改成|改为|换成|不要|别用|不是|我要|继续|还是|顺便|刚刚|刚才|上面|调成|调为|新增|加个|加一|去掉|删掉|放大|缩小|背景|颜色|风格|能不能|可以吗|怎么样|呢$|吧$|吗$/
+
+/** 短查询是否像对当前产物的追问或改单，而非一个全新独立话题。 */
+export function looksLikeFollowUp(query: string): boolean {
+  return FOLLOW_UP_CUES.test(query.trim())
+}
 const LATIN = /[a-z0-9][a-z0-9+#.-]{1,}/gi
 const CJK = /[\u4e00-\u9fff]+/g
 
@@ -41,7 +47,6 @@ export function inferTopics(text: string): string[] {
 function conversationText(conv: ConversationRecord): string {
   return [
     conv.title,
-    conv.scene,
     conv.outline.summary,
     conv.outline.keyFacts.join(' '),
     conv.outline.entities.join(' '),
@@ -81,8 +86,21 @@ export function routeQuery(
   conversations: readonly ConversationRecord[],
   threshold = 8,
 ): RouteCandidate[] {
-  return conversations
+  const scored = conversations
     .map(conv => scoreConversation(query, conv))
-    .filter(candidate => candidate.score >= threshold)
     .sort((a, b) => b.score - a.score || b.conversation.updatedAt.localeCompare(a.conversation.updatedAt))
+  const hits = scored.filter(candidate => candidate.score >= threshold)
+  if (hits.length > 0) return hits
+
+  // 兜底：追问/改需求通常很短（如“改成白天背景”“不要星空”），纯词法打分会 0 命中。
+  // 只有一个工作流、且查询呈现改单/追问语气（指示代词、否定修改、祈使动词等）时才兜底，
+  // 避免把“帮我规划午餐预算”这类全新话题错误并入旧工作流。
+  if (conversations.length === 1 && conversations[0]!.state !== 'failed' && looksLikeFollowUp(query)) {
+    return [{
+      conversation: conversations[0]!,
+      score: 0,
+      reasons: ['唯一工作流兜底：检测到追问/改单语气，默认复用当前唯一子会话'],
+    }]
+  }
+  return []
 }

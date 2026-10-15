@@ -12,6 +12,7 @@ export const CSS = `
 .dsho-badge-running,.dsho-badge-queued,.dsho-badge-provisioning{color:var(--dsw-alias-brand-primary)}
 .dsho-badge-completed,.dsho-badge-idle{color:var(--dsw-alias-label-positive,#34a853)}
 .dsho-badge-blocked{color:#b26b00}
+.dsho-badge-interrupted,.dsho-badge-cancelled{color:#7a7a7a}
 .dsho-badge-failed{color:var(--dsw-alias-label-error,#d93025)}
 .dsho-meta{padding:10px 13px;color:var(--dsw-alias-label-tertiary);font-size:11px;line-height:1.6}
 .dsho-open{font:inherit;border:0;background:none;color:var(--dsw-alias-brand-primary);cursor:pointer;padding:0;font-size:12px;flex:none}
@@ -25,6 +26,16 @@ export const CSS = `
 .dsho-answer{margin:0;color:var(--dsw-alias-label-primary);font-size:12px;line-height:1.55;display:-webkit-box;-webkit-line-clamp:5;-webkit-box-orient:vertical;overflow:hidden}
 .dsho-times{color:var(--dsw-alias-label-tertiary);font-size:10px}
 .dsho-error{color:var(--dsw-alias-label-error,#d93025)}
+
+.dsho-steps{border:.5px solid var(--dsw-alias-border-l4);border-radius:10px;padding:8px 9px;background:var(--dsw-alias-bg-layer-3)}
+.dsho-stepsHead{display:flex;justify-content:space-between;align-items:center;color:var(--dsw-alias-label-secondary);font-size:11px;font-weight:620;margin-bottom:5px}
+.dsho-stepsActive{color:var(--dsw-alias-brand-primary)}
+.dsho-steps ul{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:3px;max-height:150px;overflow:auto}
+.dsho-step{display:flex;align-items:flex-start;gap:6px;color:var(--dsw-alias-label-tertiary);font-size:11px;line-height:1.4}
+.dsho-stepIcon{flex:none;width:16px;text-align:center}
+.dsho-step-in_progress{color:var(--dsw-alias-brand-primary)}
+.dsho-step-completed{color:var(--dsw-alias-label-secondary)}
+.dsho-step-completed span:last-child{text-decoration:line-through;text-decoration-color:var(--dsw-alias-border-l4)}
 `
 export function adoptStyles(): void {
   if (typeof document === 'undefined' || document.getElementById(STYLE_ID)) return
