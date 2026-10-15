@@ -67,7 +67,10 @@ export function settleConversation(
       ? 'blocked'
       : task.status === 'failed'
         ? 'failed'
-        : conv.state
+        : task.status === 'interrupted'
+          // 手动停止/改单都保留可继续的工作流，不能进入 failed。
+          ? 'idle'
+          : conv.state
   return { ...touch(conv, at), state, activeTaskId: null, lastTaskId: task.id }
 }
 

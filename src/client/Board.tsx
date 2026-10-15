@@ -9,10 +9,6 @@ interface BoardProps {
   uiWorkspace: any
 }
 
-function short(id: string): string {
-  return id.length > 18 ? `${id.slice(0, 8)}…${id.slice(-6)}` : id
-}
-
 function time(value?: string): string {
   if (!value) return '—'
   const date = new Date(value)
@@ -58,6 +54,17 @@ const convStateLabels: Record<string, string> = {
 }
 
 function TaskLine({ task }: { task: TaskRecord }): React.ReactElement {
+  // 被改单/手动停止的任务只保留一行历史，不展示旧的步骤清单和过程信息，避免看板杂乱。
+  if (task.status === 'interrupted') {
+    return <li className="dsho-task dsho-taskMuted">
+      <div className="dsho-taskHead">
+        <span className="dsho-badge dsho-badge-interrupted">已中断</span>
+        <span className="dsho-taskSubject" title={task.subject}>{task.subject}</span>
+      </div>
+      {task.cancelledReason && <p className="dsho-subtle">{task.cancelledReason}</p>}
+      <div className="dsho-times">更新 {time(task.updatedAt)}</div>
+    </li>
+  }
   return <li className="dsho-task">
     <div className="dsho-taskHead">
       <span className={`dsho-badge dsho-badge-${task.status}`}>{taskStatusLabels[task.status] ?? task.status}</span>
@@ -70,15 +77,15 @@ function TaskLine({ task }: { task: TaskRecord }): React.ReactElement {
     {task.resultSummary && <p className="dsho-subtle">摘要：{task.resultSummary}</p>}
     {task.userAnswer && <p className="dsho-answer" title={task.userAnswer}>{task.userAnswer}</p>}
     {task.blockedQuestion && <p className="dsho-note">❓ 向用户提问：{task.blockedQuestion}</p>}
-    {task.status === 'interrupted'
-      ? <p className="dsho-subtle dsho-interrupted">已中断（改单中）：{task.cancelledReason}</p>
-      : task.cancelledReason && <p className="dsho-subtle">已取消：{task.cancelledReason}</p>}
+    {task.status === 'cancelled' && task.cancelledReason && <p className="dsho-subtle">已取消：{task.cancelledReason}</p>}
     {task.error && <p className="dsho-note dsho-error">{task.error}</p>}
     {task.delivery?.state === 'pending' && <p className="dsho-subtle">
-      后台投递待重试 · 第 {task.delivery.attempts} 次{task.delivery.lastError ? ` · ${task.delivery.lastError}` : ''}
+      {task.delivery.attempts === 0
+        ? '正在把结果同步回主会话…'
+        : <>同步回主会话未成功（已重试 {task.delivery.attempts} 次，将自动继续）{task.delivery.lastError ? ` · ${task.delivery.lastError}` : ''}</>}
     </p>}
-    {task.delivery?.state === 'delivered' && <p className="dsho-subtle">已投递回主会话 · {time(task.delivery.deliveredAt)}</p>}
-    <div className="dsho-times">{short(task.id)} · 更新 {time(task.updatedAt)}</div>
+    {task.delivery?.state === 'delivered' && <p className="dsho-subtle">已同步回主会话 · {time(task.delivery.deliveredAt)}</p>}
+    <div className="dsho-times">更新 {time(task.updatedAt)}</div>
   </li>
 }
 
@@ -150,9 +157,7 @@ export function Board({ sessionId: propSessionId, useTabInfo, orchestrator, remo
           })}>打开子会话</button>
         </header>
         <div className="dsho-meta">
-          <div>{short(conv.id)} · 更新 {time(conv.updatedAt)}</div>
-          <div>标签：{conv.outline.tags.join(' / ') || '—'}</div>
-          <div>实体：{conv.outline.entities.join(' / ') || '—'}</div>
+          <div>更新 {time(conv.updatedAt)}</div>
           {conv.outline.summary && <div>摘要：{conv.outline.summary}</div>}
           {conv.outline.openQuestions.length > 0 && <div>未决：{conv.outline.openQuestions.join('；')}</div>}
         </div>

@@ -127,6 +127,19 @@ describe('改单中断与 Worker 提问', () => {
     expect(again).toBe(interrupted)
   })
 
+  it('手动停止的任务进入 interrupted，工作流回到 idle 可继续派发', () => {
+    let { conv, task } = pair()
+    const stopped = interruptTaskForRevision(task, '子会话执行被手动停止')
+    expect(stopped.delivery).toBeUndefined()
+    conv = settleConversation(conv, stopped)
+    expect(conv.state).toBe('idle')
+    expect(conv.activeTaskId).toBeNull()
+    // idle 工作流可以接收新任务（不撞 busy / failed 校验）
+    const revived = activateConversation(conv, 't2')
+    expect(revived.state).toBe('running')
+    expect(revived.activeTaskId).toBe('t2')
+  })
+
   it('blocked 可携带给用户的问题', () => {
     const task = createTask({
       id: 't', parentSessionId: 'p', conversationId: 'c', predecessorTaskId: null,

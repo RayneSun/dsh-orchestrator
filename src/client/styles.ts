@@ -13,6 +13,8 @@ export const CSS = `
 .dsho-badge-completed,.dsho-badge-idle{color:var(--dsw-alias-label-positive,#34a853)}
 .dsho-badge-blocked{color:#b26b00}
 .dsho-badge-interrupted,.dsho-badge-cancelled{color:#7a7a7a}
+.dsho-taskMuted{opacity:.62}
+.dsho-taskMuted .dsho-taskSubject{text-decoration:line-through}
 .dsho-badge-failed{color:var(--dsw-alias-label-error,#d93025)}
 .dsho-meta{padding:10px 13px;color:var(--dsw-alias-label-tertiary);font-size:11px;line-height:1.6}
 .dsho-open{font:inherit;border:0;background:none;color:var(--dsw-alias-brand-primary);cursor:pointer;padding:0;font-size:12px;flex:none}

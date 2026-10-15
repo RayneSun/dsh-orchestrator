@@ -90,6 +90,8 @@ export class OrchestratorService extends TypertRemoteService {
   private readonly pendingTodoSteps = new Map<string, { taskId: string; steps: ProgressStep[] }>()
   private readonly todoTimers = new Map<string, ReturnType<typeof setTimeout>>()
   private readonly revisionEndGuards = new Map<string, { until: number; oldTaskId: string }>()
+  // 子会话 turn/end aborted/interrupted → 紧随其后的 subagent/end 是手动停止，不是任务失败。
+  private readonly abortedTurns = new Map<string, number>()
   private recoveryTimer: ReturnType<typeof setInterval> | undefined
 
   constructor(private readonly hostCtx: Context) {
@@ -320,9 +322,15 @@ export class OrchestratorService extends TypertRemoteService {
     this.keep(agent, scoped.tools.guard(exec => isWorkerToolForbidden(exec.name)))
     this.keep(agent, scoped.on('session/event', (session, event) => {
       if (String(session.id) !== String(agent.session.id)) return
-      const todoEvent = event as unknown as { type?: unknown; data?: { todos?: unknown } }
-      if (todoEvent.type !== 'todo/write') return
-      this.queueTodoProgress(String(agent.session.id), todoEvent.data?.todos)
+      const ev = event as unknown as { type?: unknown; data?: { todos?: unknown; reason?: { kind?: string } } }
+      if (ev.type === 'todo/write') {
+        this.queueTodoProgress(String(agent.session.id), ev.data?.todos)
+        return
+      }
+      if (ev.type === 'turn/end' && (ev.data?.reason?.kind === 'aborted' || ev.data?.reason?.kind === 'interrupted')) {
+        // 用户在子会话里手动停止（或轮次被中断）：120s 内的 subagent/end 按"中断"处理，而非失败。
+        this.abortedTurns.set(String(agent.session.id), Date.now() + 120_000)
+      }
     }))
     this.keep(agent, scoped.tools.register(defineTool({
       name: 'task_update',
@@ -357,6 +365,14 @@ export class OrchestratorService extends TypertRemoteService {
     // interrupt 的取消效果异步到达：下一次 subagent/end 属于旧轮次，必须忽略。
     // 120s 兜底防止 interrupt 未产生 end 时，令牌长期吞掉新任务真正的失败信号。
     this.revisionEndGuards.set(childSessionId, { until: Date.now() + 120_000, oldTaskId })
+  }
+
+  /** 取子会话最近一次 aborted/interrupted 轮次标记；120s 窗口外视为过期。 */
+  private consumeAbortedTurn(childSessionId: string): boolean {
+    const until = this.abortedTurns.get(childSessionId)
+    if (!until) return false
+    this.abortedTurns.delete(childSessionId)
+    return Date.now() <= until
   }
 
   /** 改单注入中断后，旧轮次结束属于预期事件：仅当活动任务确实已切到新任务时忽略一次。 */
@@ -534,7 +550,7 @@ export class OrchestratorService extends TypertRemoteService {
       if (interruptedTaskId) {
         const active = this.taskById(interruptedTaskId)
         if (active) {
-          const interruptedTask = interruptTaskForRevision(active, `用户改单：被新需求「${args.subject}」中断`, at)
+          const interruptedTask = interruptTaskForRevision(active, `用户提出新需求「${args.subject}」，旧任务已由新任务接管`, at)
           await this.tasks().put(interruptedTaskId, interruptedTask)
           this.waiters.get(interruptedTaskId)?.resolve(interruptedTask)
           this.waiters.delete(interruptedTaskId)
@@ -740,27 +756,39 @@ export class OrchestratorService extends TypertRemoteService {
   private async onSubagentEnd(childSessionId: string): Promise<void> {
     let shouldDeliver = false
     let taskId: string | undefined
-    let ignoredRevisionEnd = false
+    let outcome: 'ignored' | 'interrupted' | 'failed' | undefined
     await this.serialize(async () => {
       const conv = this.conversationByChild(childSessionId)
       if (!conv?.activeTaskId) return
       if (this.consumeRevisionEnd(childSessionId, conv.activeTaskId)) {
-        ignoredRevisionEnd = true
+        // 改单注入产生的预期内旧轮次结束；手动停止标记也一并作废，避免波及新任务。
+        this.abortedTurns.delete(childSessionId)
+        outcome = 'ignored'
         return
       }
       const previous = this.taskById(conv.activeTaskId)
       if (!previous || !['queued', 'running'].includes(previous.status)) return
       const now = timestamp()
-      const task = failTask(previous, previous.status === 'queued' ? '子会话在任务开始前结束' : '子会话结束前未提交终态 task_update', now)
-      const nextConv = failConversation(settleConversation(conv, task, now), now)
+      // 用户手动停止子会话：任务标 interrupted（无失败通知），工作流回到 idle，可直接继续派发新需求。
+      const manuallyStopped = this.consumeAbortedTurn(childSessionId)
+      const task = manuallyStopped
+        ? interruptTaskForRevision(previous, '子会话执行被手动停止；工作流已保留，可继续派发新需求', now)
+        : failTask(previous, previous.status === 'queued' ? '子会话在任务开始前结束' : '子会话结束前未提交终态 task_update', now)
+      const settled = settleConversation(conv, task, now)
+      const nextConv = manuallyStopped ? settled : failConversation(settled, now)
       await this.putPair(nextConv, task)
       this.waiters.get(task.id)?.resolve(task)
       this.waiters.delete(task.id)
-      shouldDeliver = task.responseMode === 'background'
+      outcome = manuallyStopped ? 'interrupted' : 'failed'
+      shouldDeliver = !manuallyStopped && task.responseMode === 'background'
       taskId = task.id
     })
-    if (ignoredRevisionEnd) {
+    if (outcome === 'ignored') {
       this.hostCtx.logger.info?.(`orchestrator: ignore expected subagent/end after revision: ${childSessionId}`)
+      return
+    }
+    if (outcome === 'interrupted') {
+      this.hostCtx.logger.info?.(`orchestrator: task ${taskId} interrupted by manual stop: ${childSessionId}`)
       return
     }
     if (shouldDeliver && taskId) await this.deliverPendingTask(taskId)
