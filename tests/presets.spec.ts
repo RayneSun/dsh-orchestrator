@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { buildPresetDefinitions, LEAD_PRESET, LEAD_TOOL_DENY, WORKER_PRESET } from '../src/presets.ts'
+import { buildPresetDefinitions, LEAD_PRESET, LEAD_TOOL_ALLOW, WORKER_PRESET } from '../src/presets.ts'
 
 describe('Orchestrator agent presets', () => {
   const presets = buildPresetDefinitions()
@@ -9,8 +9,8 @@ describe('Orchestrator agent presets', () => {
     expect(presets.map(preset => preset.id)).toEqual([LEAD_PRESET, WORKER_PRESET])
   })
 
-  it('Lead 隐藏直接网页工具，强制通过 Worker 联网', () => {
-    expect([...LEAD_TOOL_DENY]).toEqual(['web_search', 'web_fetch'])
+  it('Lead 全局工具白名单只保留向用户提问', () => {
+    expect(LEAD_TOOL_ALLOW).toContain('ask_user_question')
   })
 
   it('每个 agent-instructions 行都提供必需的 maxBytes', () => {
@@ -46,12 +46,12 @@ describe('Orchestrator agent presets', () => {
       '@deepseek-ai/dsh-command-goal',
       '@deepseek-ai/dsh-tool-todo',
       '@deepseek-ai/dsh-tool-web',
-      '@deepseek-ai/dsh-tool-ask-user',
       '@deepseek-ai/dsh-tool-present',
       '@deepseek-ai/dsh-persona',
     ]) {
       expect(names.has(name)).toBe(true)
     }
+    expect(names.has('@deepseek-ai/dsh-tool-ask-user')).toBe(false)
     for (const name of [
       '@deepseek-ai/dsh-tool-subagent',
       '@deepseek-ai/dsh-tool-subagent-control',

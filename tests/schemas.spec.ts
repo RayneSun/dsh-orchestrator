@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import {
+  conversationSchema,
   createConversation,
   createTask,
   dispatchInputSchema,
+  taskSchema,
   taskUpdateInputSchema,
 } from '../src/types.ts'
 
@@ -41,16 +43,18 @@ describe('工具输入 Zod 校验', () => {
     }).success).toBe(false)
   })
 
-  it('completed 必须带 userAnswer，failed 必须带 error', () => {
+  it('completed 必须带 userAnswer，failed 必须带 error，input_required 必须带说明', () => {
     expect(taskUpdateInputSchema.safeParse({ status: 'completed' }).success).toBe(false)
     expect(taskUpdateInputSchema.safeParse({ status: 'failed' }).success).toBe(false)
-    expect(taskUpdateInputSchema.safeParse({ status: 'blocked' }).success).toBe(false)
+    expect(taskUpdateInputSchema.safeParse({ status: 'input_required' }).success).toBe(false)
     expect(taskUpdateInputSchema.safeParse({
-      status: 'blocked', progressNote: '等待用户选择城市',
+      status: 'input_required', progressNote: '等待用户选择城市',
     }).success).toBe(true)
     expect(taskUpdateInputSchema.safeParse({
-      status: 'blocked', question: '要蓝色还是红色？',
+      status: 'input_required', question: '要蓝色还是红色？',
     }).success).toBe(true)
+    // 旧状态名不再被工具接受
+    expect(taskUpdateInputSchema.safeParse({ status: 'blocked', question: 'q' }).success).toBe(false)
   })
 
   it('outlinePatch 拒绝空字符串但允许空数组清空未决问题', () => {
@@ -66,7 +70,7 @@ describe('工具输入 Zod 校验', () => {
     expect(parsed.outlinePatch?.openQuestions).toEqual([])
   })
 
-  it('持久化工厂会初始化 provisioning、worker scene 和后台投递 outbox', () => {
+  it('持久化工厂初始化 provisioning；新建任务不预挂投递（终态时才挂起）', () => {
     const conv = createConversation({
       id: 'conv_1', childSessionId: 'child', parentSessionId: 'parent', title: '天气',
     })
@@ -76,9 +80,39 @@ describe('工具输入 Zod 校验', () => {
       responseMode: 'background',
     })
     expect(conv.state).toBe('provisioning')
-    expect(conv.scene).toBe('worker')
-    expect(task.scene).toBe('worker')
+    expect(conv.activeTaskId).toBeNull()
+    expect(task.status).toBe('queued')
     expect(task.progressSteps).toEqual([])
-    expect(task.delivery).toEqual({ state: 'pending', attempts: 0 })
+    expect(task.delivery).toBeUndefined()
+  })
+})
+
+
+describe('0.2.x 存储记录迁移', () => {
+  const baseTask = {
+    id: 'task_1', parentSessionId: 'p', conversationId: 'c', predecessorTaskId: null,
+    subject: 's', prompt: 'p', responseMode: 'background',
+    revision: 0, createdAt: '2026-10-14T00:00:00.000Z', updatedAt: '2026-10-14T00:00:00.000Z',
+    progressSteps: [],
+  }
+  const baseConv = {
+    id: 'c', childSessionId: 'child', parentSessionId: 'p', title: 't',
+    outline: { summary: '', keyFacts: [], entities: [], tags: [], artifacts: [], openQuestions: [] },
+    activeTaskId: null, lastTaskId: null,
+    revision: 0, createdAt: '2026-10-14T00:00:00.000Z', updatedAt: '2026-10-14T00:00:00.000Z',
+  }
+
+  it('blocked 迁移为 input_required，blockedQuestion 迁移为 question', () => {
+    const task = taskSchema.parse({ ...baseTask, status: 'blocked', blockedQuestion: '选哪个？', scene: 'code' })
+    expect(task.status).toBe('input_required')
+    expect(task.question).toBe('选哪个？')
+    expect('blockedQuestion' in task).toBe(false)
+    expect('scene' in task).toBe(false)
+  })
+
+  it('会话 blocked 状态迁移为 input_required', () => {
+    const conv = conversationSchema.parse({ ...baseConv, state: 'blocked', scene: 'worker' })
+    expect(conv.state).toBe('input_required')
+    expect('scene' in conv).toBe(false)
   })
 })

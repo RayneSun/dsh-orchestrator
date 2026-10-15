@@ -1,15 +1,12 @@
 import { z } from 'zod'
 
-export const WORKER_SCENE = 'worker'
-export const scenes = [WORKER_SCENE] as const
-export type Scene = (typeof scenes)[number]
-// 旧版四类 Worker 记录仍可能留在存储中，读取时需要兼容；新任务一律为 worker。
-export const sceneSchema = z.enum(['worker', 'code', 'general', 'research', 'review'])
-
-export const conversationStates = ['provisioning', 'running', 'idle', 'blocked', 'failed'] as const
-export const taskStatuses = ['queued', 'running', 'blocked', 'completed', 'failed', 'cancelled', 'interrupted'] as const
+export const conversationStates = ['provisioning', 'running', 'idle', 'input_required', 'failed'] as const
+export const taskStatuses = ['queued', 'running', 'input_required', 'completed', 'failed', 'cancelled', 'interrupted'] as const
 export const activeTaskStatuses = ['queued', 'running'] as const
-export const terminalTaskStatuses = ['blocked', 'completed', 'failed', 'cancelled', 'interrupted'] as const
+/** 终态：任务不再推进（input_required 等待 Lead 带着答复派发新 TaskRun）。 */
+export const terminalTaskStatuses = ['input_required', 'completed', 'failed', 'cancelled', 'interrupted'] as const
+/** 需要向主会话投递通知的终态。 */
+export const deliverableTaskStatuses = ['input_required', 'completed', 'failed'] as const
 
 const trimmed = z.string().trim().min(1)
 const trimmedList = z.array(trimmed)
@@ -28,21 +25,6 @@ export const outlineSchema = z.object({
   tags: trimmedList.default([]),
   artifacts: trimmedList.default([]),
   openQuestions: trimmedList.default([]),
-}).strict()
-
-export const conversationSchema = z.object({
-  id: trimmed,
-  childSessionId: trimmed,
-  parentSessionId: trimmed,
-  scene: sceneSchema,
-  title: trimmed,
-  outline: outlineSchema,
-  activeTaskId: z.string().nullable().default(null),
-  lastTaskId: z.string().nullable().default(null),
-  state: z.enum(conversationStates).default('provisioning'),
-  revision: z.number().int().nonnegative().default(0),
-  createdAt: z.string(),
-  updatedAt: z.string(),
 }).strict()
 
 export const deliverySchema = z.discriminatedUnion('state', [
@@ -68,12 +50,25 @@ export const outlinePatchSchema = z.object({
   openQuestions: trimmedList.optional(),
 }).strict()
 
-export const taskSchema = z.object({
+const baseConversationSchema = z.object({
+  id: trimmed,
+  childSessionId: trimmed,
+  parentSessionId: trimmed,
+  title: trimmed,
+  outline: outlineSchema,
+  activeTaskId: z.string().nullable().default(null),
+  lastTaskId: z.string().nullable().default(null),
+  state: z.enum(conversationStates).default('provisioning'),
+  revision: z.number().int().nonnegative().default(0),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+}).strict()
+
+const baseTaskSchema = z.object({
   id: trimmed,
   parentSessionId: trimmed,
   conversationId: trimmed,
   predecessorTaskId: z.string().nullable().default(null),
-  scene: sceneSchema,
   subject: trimmed,
   prompt: trimmed,
   acceptanceCriteria: z.string().optional(),
@@ -83,7 +78,7 @@ export const taskSchema = z.object({
   userAnswer: z.string().optional(),
   resultSummary: z.string().optional(),
   error: z.string().optional(),
-  blockedQuestion: z.string().optional(),
+  question: z.string().optional(),
   cancelledReason: z.string().optional(),
   outlinePatch: outlinePatchSchema.optional(),
   progressSteps: z.array(progressStepSchema).default([]),
@@ -95,9 +90,26 @@ export const taskSchema = z.object({
   endedAt: z.string().optional(),
 }).strict()
 
+/** 兼容 0.2.x 存储记录：blocked→input_required、blockedQuestion→question、丢弃已废弃的 scene。 */
+function migrateRecord<T>(raw: unknown): unknown {
+  if (!raw || typeof raw !== 'object') return raw
+  const record = { ...(raw as Record<string, unknown>) }
+  delete record.scene
+  if (record.status === 'blocked') record.status = 'input_required'
+  if (record.state === 'blocked') record.state = 'input_required'
+  if (record.blockedQuestion !== undefined) {
+    if (record.question === undefined) record.question = record.blockedQuestion
+    delete record.blockedQuestion
+  }
+  return record
+}
+
+export const conversationSchema = z.preprocess(migrateRecord, baseConversationSchema)
+export const taskSchema = z.preprocess(migrateRecord, baseTaskSchema)
+
 export type Outline = z.infer<typeof outlineSchema>
-export type ConversationRecord = z.infer<typeof conversationSchema>
-export type TaskRecord = z.infer<typeof taskSchema>
+export type ConversationRecord = z.infer<typeof baseConversationSchema>
+export type TaskRecord = z.infer<typeof baseTaskSchema>
 export type TaskStatus = TaskRecord['status']
 export type ConversationState = ConversationRecord['state']
 export type Delivery = z.infer<typeof deliverySchema>
@@ -129,7 +141,6 @@ export function createConversation(input: {
   const ts = timestamp()
   return {
     ...input,
-    scene: WORKER_SCENE,
     outline: emptyOutline(),
     activeTaskId: null,
     lastTaskId: null,
@@ -156,14 +167,12 @@ export function createTask(input: {
     parentSessionId: input.parentSessionId,
     conversationId: input.conversationId,
     predecessorTaskId: input.predecessorTaskId,
-    scene: WORKER_SCENE,
     subject: input.subject,
     prompt: input.prompt,
     ...input.acceptanceCriteria ? { acceptanceCriteria: input.acceptanceCriteria } : {},
     responseMode: input.responseMode,
     status: 'queued',
     progressSteps: [],
-    ...input.responseMode === 'background' ? { delivery: { state: 'pending', attempts: 0 } } : {},
     revision: 0,
     createdAt: ts,
     updatedAt: ts,
@@ -181,7 +190,7 @@ export const dispatchInputSchema = z.object({
 }).strict()
 
 export const taskUpdateInputSchema = z.object({
-  status: z.enum(['running', 'blocked', 'completed', 'failed']),
+  status: z.enum(['running', 'input_required', 'completed', 'failed']),
   progressNote: trimmed.optional(),
   userAnswer: trimmed.optional(),
   resultSummary: trimmed.optional(),
@@ -195,8 +204,8 @@ export const taskUpdateInputSchema = z.object({
   if (value.status === 'failed' && !value.error) {
     ctx.addIssue({ code: 'custom', path: ['error'], message: 'failed task_update requires error' })
   }
-  if (value.status === 'blocked' && !value.error && !value.progressNote && !value.question) {
-    ctx.addIssue({ code: 'custom', path: ['progressNote'], message: 'blocked task_update requires error, question or progressNote' })
+  if (value.status === 'input_required' && !value.error && !value.progressNote && !value.question) {
+    ctx.addIssue({ code: 'custom', path: ['question'], message: 'input_required task_update requires question, error or progressNote' })
   }
 })
 

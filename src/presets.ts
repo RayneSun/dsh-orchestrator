@@ -3,7 +3,12 @@ import { LEAD_PROMPT, WORKER_PROMPT } from './messages.ts'
 
 export const LEAD_PRESET = 'may-orchestrator-lead'
 export const WORKER_PRESET = 'may-orchestrator-worker'
-export const LEAD_TOOL_DENY = ['web_search', 'web_fetch'] as const
+/**
+ * Lead 只保留"向用户提问"这一个全局执行工具；其余全局工具（含用户后安装的
+ * MCP/插件工具）对白名单不可见，避免无关工具干扰主控的路由决策。
+ * orchestrator_* 在 scope 内注册，restrict 的 allow 不影响它们。
+ */
+export const LEAD_TOOL_ALLOW = ['ask_user_question', 'ask_user'] as const
 
 type PluginRow = PresetDefinition['plugins'][number]
 
@@ -48,7 +53,7 @@ export function buildPresetDefinitions(): PresetDefinition[] {
         {
           id: 'persona',
           name: '@deepseek-ai/dsh-persona',
-          config: { prefix: LEAD_PROMPT, suffix: '你的工作目录是 {{cwd}}。' },
+          config: { prefix: LEAD_PROMPT },
         },
         ...basics,
         { id: 'tool-web', name: '@deepseek-ai/dsh-tool-web', config: { fetch: true, searchTimeoutMs: 60_000 } },
@@ -67,7 +72,7 @@ export function buildPresetDefinitions(): PresetDefinition[] {
           name: '@deepseek-ai/dsh-persona',
           config: {
             prefix: WORKER_PROMPT,
-            suffix: '你的工作目录是 {{cwd}}；产物和临时文件都留在工作区内，任务结束清理中间文件。',
+            suffix: '你的工作目录是 {{cwd}}。',
           },
         },
         ...basics,
@@ -86,7 +91,6 @@ export function buildPresetDefinitions(): PresetDefinition[] {
         { id: 'tool-goal', name: '@deepseek-ai/dsh-tool-goal' },
         { id: 'tool-todo', name: '@deepseek-ai/dsh-tool-todo', config: { allowParallelInProgress: true } },
         { id: 'tool-web', name: '@deepseek-ai/dsh-tool-web', config: { fetch: true, searchTimeoutMs: 60_000 } },
-        { id: 'tool-ask-user', name: '@deepseek-ai/dsh-tool-ask-user' },
         { id: 'present', name: '@deepseek-ai/dsh-tool-present' },
         compaction,
       ],

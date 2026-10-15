@@ -1,5 +1,5 @@
 import type { ConversationRecord, OutlinePatch, TaskRecord, TaskStatus } from './types.ts'
-import { terminalTaskStatuses } from './types.ts'
+import { deliverableTaskStatuses, terminalTaskStatuses } from './types.ts'
 
 export class StateError extends Error {
   constructor(public code: string, message: string) {
@@ -9,9 +9,9 @@ export class StateError extends Error {
 }
 
 const transitions: Record<TaskStatus, readonly TaskStatus[]> = {
-  queued: ['running', 'blocked', 'completed', 'failed', 'cancelled', 'interrupted'],
-  running: ['running', 'blocked', 'completed', 'failed', 'cancelled', 'interrupted'],
-  blocked: [],
+  queued: ['running', 'input_required', 'completed', 'failed', 'cancelled', 'interrupted'],
+  running: ['running', 'input_required', 'completed', 'failed', 'cancelled', 'interrupted'],
+  input_required: [],
   completed: [],
   failed: [],
   cancelled: [],
@@ -63,8 +63,8 @@ export function settleConversation(
 ): ConversationRecord {
   const state = task.status === 'completed'
     ? 'idle'
-    : task.status === 'blocked'
-      ? 'blocked'
+    : task.status === 'input_required'
+      ? 'input_required'
       : task.status === 'failed'
         ? 'failed'
         : task.status === 'interrupted'
@@ -103,8 +103,16 @@ export function applyOutlinePatch(
   }
 }
 
+/** 后台任务进入可投递终态时自动挂起投递；interrupted/cancelled 明确不投递。 */
+function withTerminalDelivery(task: TaskRecord, status: TaskStatus): TaskRecord['delivery'] {
+  if (task.responseMode !== 'background') return undefined
+  return (deliverableTaskStatuses as readonly TaskStatus[]).includes(status)
+    ? { state: 'pending', attempts: 0 }
+    : undefined
+}
+
 export interface TaskTransitionInput {
-  status: Extract<TaskStatus, 'running' | 'blocked' | 'completed' | 'failed'>
+  status: Extract<TaskStatus, 'running' | 'input_required' | 'completed' | 'failed'>
   progressNote?: string
   userAnswer?: string
   resultSummary?: string
@@ -125,8 +133,8 @@ export function transitionTask(task: TaskRecord, input: TaskTransitionInput, at 
   if (input.status === 'failed' && !error?.trim()) {
     throw new StateError('missing_error', 'failed task_update requires error')
   }
-  if (input.status === 'blocked' && !(error ?? input.question ?? input.progressNote ?? task.progressNote)?.trim()) {
-    throw new StateError('missing_blocked_reason', 'blocked task_update requires error, question or progressNote')
+  if (input.status === 'input_required' && !(error ?? input.question ?? input.progressNote ?? task.progressNote)?.trim()) {
+    throw new StateError('missing_question', 'input_required task_update requires question, error or progressNote')
   }
   const terminal = isTerminal(input.status)
   return {
@@ -141,12 +149,14 @@ export function transitionTask(task: TaskRecord, input: TaskTransitionInput, at 
         : {},
     ...input.error !== undefined ? { error: input.error } : {},
     ...input.question !== undefined
-      ? { blockedQuestion: input.question }
-      : input.status === 'blocked' && task.blockedQuestion
+      ? { question: input.question }
+      : input.status === 'input_required' && task.question
         ? {}
-        : { blockedQuestion: undefined },
+        : { question: undefined },
     ...input.outlinePatch !== undefined ? { outlinePatch: input.outlinePatch } : {},
-    ...terminal ? { endedAt: at } : { startedAt: task.startedAt ?? at },
+    ...terminal
+      ? { endedAt: at, delivery: withTerminalDelivery(task, input.status) }
+      : { startedAt: task.startedAt ?? at },
   }
 }
 
@@ -161,15 +171,12 @@ export function failTask(task: TaskRecord, error: string, at = new Date().toISOS
   }
 }
 
-export function failTaskWithoutTerminalReport(task: TaskRecord, at = new Date().toISOString()): TaskRecord {
-  return failTask(task, '子会话结束前未提交终态 task_update', at)
-}
-
+/** 进程重启时任务仍在运行：标为待用户/Lead 决定，附带原因等待重新派发。 */
 export function interruptTaskAfterRestart(task: TaskRecord, at = new Date().toISOString()): TaskRecord {
   if (isTerminal(task.status)) return task
   return {
     ...touch(task, at),
-    status: 'blocked',
+    status: 'input_required',
     progressNote: '重启时任务仍在运行，已暂停等待 Lead 决定是否重新派发',
     error: '进程重启中断了未完成任务，且未收到终态上报',
     endedAt: at,
@@ -177,7 +184,7 @@ export function interruptTaskAfterRestart(task: TaskRecord, at = new Date().toIS
   }
 }
 
-/** 用户改单/补充需求时原子切换：旧任务进入 interrupted，且不触发后台失败通知。 */
+/** 用户改单/补充需求/手动停止时：旧任务进入 interrupted，且不触发后台失败通知。 */
 export function interruptTaskForRevision(task: TaskRecord, reason: string, at = new Date().toISOString()): TaskRecord {
   if (isTerminal(task.status)) return task
   return {

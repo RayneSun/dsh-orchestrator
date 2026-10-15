@@ -46,11 +46,11 @@ function ProgressSteps({ steps }: { steps: ProgressStep[] }): React.ReactElement
 }
 
 const taskStatusLabels: Record<string, string> = {
-  queued: '排队中', running: '进行中', blocked: '待用户', completed: '已完成',
+  queued: '排队中', running: '进行中', input_required: '待补充', completed: '已完成',
   failed: '失败', cancelled: '已取消', interrupted: '已中断',
 }
 const convStateLabels: Record<string, string> = {
-  provisioning: '启动中', running: '进行中', idle: '空闲', blocked: '待用户', failed: '失败',
+  provisioning: '启动中', running: '进行中', idle: '空闲', input_required: '待补充', failed: '失败',
 }
 
 function TaskLine({ task }: { task: TaskRecord }): React.ReactElement {
@@ -76,7 +76,7 @@ function TaskLine({ task }: { task: TaskRecord }): React.ReactElement {
     {task.progressNote && <p className="dsho-note">{task.progressNote}</p>}
     {task.resultSummary && <p className="dsho-subtle">摘要：{task.resultSummary}</p>}
     {task.userAnswer && <p className="dsho-answer" title={task.userAnswer}>{task.userAnswer}</p>}
-    {task.blockedQuestion && <p className="dsho-note">❓ 向用户提问：{task.blockedQuestion}</p>}
+    {task.question && <p className="dsho-note">❓ 待用户回复：{task.question}</p>}
     {task.status === 'cancelled' && task.cancelledReason && <p className="dsho-subtle">已取消：{task.cancelledReason}</p>}
     {task.error && <p className="dsho-note dsho-error">{task.error}</p>}
     {task.delivery?.state === 'pending' && <p className="dsho-subtle">

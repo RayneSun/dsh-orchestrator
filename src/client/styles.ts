@@ -11,7 +11,7 @@ export const CSS = `
 .dsho-badge{flex:none;border-radius:999px;padding:1px 8px;font-size:11px;line-height:18px;background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-secondary)}
 .dsho-badge-running,.dsho-badge-queued,.dsho-badge-provisioning{color:var(--dsw-alias-brand-primary)}
 .dsho-badge-completed,.dsho-badge-idle{color:var(--dsw-alias-label-positive,#34a853)}
-.dsho-badge-blocked{color:#b26b00}
+.dsho-badge-input_required{color:#b26b00}
 .dsho-badge-interrupted,.dsho-badge-cancelled{color:#7a7a7a}
 .dsho-taskMuted{opacity:.62}
 .dsho-taskMuted .dsho-taskSubject{text-decoration:line-through}

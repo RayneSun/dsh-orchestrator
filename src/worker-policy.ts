@@ -37,7 +37,7 @@ function matchesAny(name: string, patterns: readonly string[]): boolean {
 export function isWorkerToolForbidden(toolName: string): string | undefined {
   const canonical = canonicalToolName(toolName)
   if (matchesAny(toolName, questionPatterns)) {
-    return `Worker 不能直接向用户提问；请改用 task_update({status:'blocked', question:'需要向用户确认的问题'}) 由 Lead 转达`
+    return `Worker 不能直接向用户提问；请改用 task_update({status:'input_required', question:'需要向用户确认的问题'}) 由 Lead 转达`
   }
   if (matchesAny(toolName, workerForbiddenPatterns)) {
     return `执行 Worker 禁止使用编排/派生工具 ${canonical}`
