@@ -46,12 +46,15 @@ function ProgressSteps({ steps }: { steps: ProgressStep[] }): React.ReactElement
 }
 
 const taskStatusLabels: Record<string, string> = {
-  queued: '排队中', running: '进行中', input_required: '待补充', completed: '已完成',
+  queued: '排队中', running: '进行中', input_required: '待操作', blocked: '已受阻', completed: '已完成',
   failed: '失败', cancelled: '已取消', interrupted: '已中断',
 }
-const modeLabels: Record<string, string> = { background: '后台', wait: '等待' }
+const blockReasonLabels: Record<string, string> = {
+  permission_denied: '权限', configuration: '配置', dependency: '依赖',
+  network: '网络', resource: '资源', runtime: '运行时',
+}
 const convStateLabels: Record<string, string> = {
-  provisioning: '启动中', running: '进行中', idle: '空闲', input_required: '待补充', failed: '失败',
+  provisioning: '启动中', running: '进行中', idle: '空闲', input_required: '待操作', blocked: '已受阻', failed: '失败',
 }
 
 
@@ -69,7 +72,9 @@ function taskHeadline(task: TaskRecord): string {
     case 'running':
       return task.progressNote || stepProgress(task.progressSteps)
     case 'input_required':
-      return task.question || task.progressNote || '等待用户补充信息'
+      return task.question || '等待用户操作或补充信息'
+    case 'blocked':
+      return task.remediation || task.error || '任务被系统环境阻碍'
     case 'completed':
       return task.userAnswer || task.resultSummary || '已完成'
     case 'failed':
@@ -106,17 +111,19 @@ function TaskLine({ task }: { task: TaskRecord }): React.ReactElement {
   return <li className="dsho-task">
     <div className="dsho-taskHead">
       <span className={`dsho-badge dsho-badge-${task.status}`}>{taskStatusLabels[task.status] ?? task.status}</span>
+      {task.silent && <span className="dsho-badge dsho-badge-silent">静默</span>}
       <span className="dsho-taskSubject" title={task.subject}>{task.subject}</span>
-      <span className="dsho-mode">{modeLabels[task.responseMode] ?? task.responseMode}</span>
     </div>
     {task.acceptanceCriteria && <p className="dsho-subtle">验收：{task.acceptanceCriteria}</p>}
     <ProgressSteps steps={task.progressSteps ?? []} />
     {task.progressNote && <p className="dsho-note">{task.progressNote}</p>}
     {task.resultSummary && <p className="dsho-subtle">摘要：{task.resultSummary}</p>}
     {task.userAnswer && <p className="dsho-answer" title={task.userAnswer}>{task.userAnswer}</p>}
-    {task.question && <p className="dsho-note">❓ 待用户回复：{task.question}</p>}
+    {task.question && <p className="dsho-note">❓ 待用户操作：{task.question}</p>}
+    {task.status === 'blocked' && task.reasonCode && <p className="dsho-note dsho-blocked">阻碍类型：{blockReasonLabels[task.reasonCode] ?? task.reasonCode}</p>}
+    {task.status === 'blocked' && task.remediation && <p className="dsho-note dsho-blocked">建议操作：{task.remediation}</p>}
     {task.status === 'cancelled' && task.cancelledReason && <p className="dsho-subtle">已取消：{task.cancelledReason}</p>}
-    {task.error && <p className="dsho-note dsho-error">{task.error}</p>}
+    {task.error && <p className={task.status === 'blocked' ? 'dsho-note dsho-blocked' : 'dsho-note dsho-error'}>{task.error}</p>}
     {task.delivery?.state === 'pending' && <p className="dsho-subtle">
       {task.delivery.attempts === 0
         ? '正在把结果同步回主会话…'
@@ -190,18 +197,26 @@ export function Board({ sessionId: propSessionId, useTabInfo, orchestrator, remo
     </div>
   }
 
+  const isSilentConversation = (convId: string): boolean => {
+    const convTasks = tasksByConversation.get(convId) ?? []
+    return convTasks[convTasks.length - 1]?.silent === true
+  }
+  const silentCount = snapshot.conversations.filter(conv => isSilentConversation(conv.id)).length
+
   return <div className="dsho-board">
-    <h2 className="dsho-title">任务看板 · {snapshot.conversations.length} 个子会话</h2>
+    <h2 className="dsho-title">任务看板 · {snapshot.conversations.length} 个子会话{silentCount > 0 ? ` · ${silentCount} 个静默` : ''}</h2>
     {snapshot.conversations.map(conv => {
       const tasks = tasksByConversation.get(conv.id) ?? []
       const latest = tasks[tasks.length - 1]
+      const silentConv = latest?.silent === true
       const active = conv.state === 'running' || conv.state === 'provisioning'
         || tasks.some(task => (ACTIVE_TASK_STATUSES as string[]).includes(task.status))
+      const displayState = conv.state === 'idle' && latest?.status === 'blocked' ? 'blocked' : conv.state
       const collapsed = collapsedOverride[conv.id] ?? !active
       const headline = latest ? taskHeadline(latest) : ''
       const toggle = (): void => setCollapsedOverride(prev => ({ ...prev, [conv.id]: !collapsed }))
       return <section
-        className={`dsho-conv${active ? ' dsho-conv-active' : ''}${collapsed ? ' dsho-conv-collapsed' : ''}`}
+        className={`dsho-conv${active ? ' dsho-conv-active' : ''}${collapsed ? ' dsho-conv-collapsed' : ''}${silentConv ? ' dsho-conv-silent' : ''}`}
         key={conv.id}
       >
         <header
@@ -213,8 +228,9 @@ export function Board({ sessionId: propSessionId, useTabInfo, orchestrator, remo
           onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); toggle() } }}
         >
           <span className="dsho-chevron" aria-hidden />
+          {silentConv && <span className="dsho-mute" title="静默工作流：终态不会通知主会话" aria-label="静默">🔇</span>}
           <span className="dsho-convTitle" title={conv.title}>{conv.title}</span>
-          <span className={`dsho-badge dsho-badge-${conv.state}`}>{convStateLabels[conv.state] ?? conv.state}</span>
+          <span className={`dsho-badge dsho-badge-${displayState}`}>{convStateLabels[displayState] ?? displayState}</span>
           <button className="dsho-open" type="button" onClick={event => {
             event.stopPropagation()
             try {
@@ -239,6 +255,7 @@ export function Board({ sessionId: propSessionId, useTabInfo, orchestrator, remo
         <div className="dsho-body"><div>
           <div className="dsho-meta">
             <div>更新 {time(conv.updatedAt)}</div>
+            {conv.workspaceName && <div>工作区：{conv.workspaceName}</div>}
             {conv.outline.summary && <div>摘要：{conv.outline.summary}</div>}
             {conv.outline.openQuestions.length > 0 && <div>未决：{conv.outline.openQuestions.join('；')}</div>}
           </div>

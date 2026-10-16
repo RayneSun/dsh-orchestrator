@@ -4,13 +4,11 @@ import { LEAD_PROMPT, WORKER_PROMPT } from './messages.ts'
 export const LEAD_PRESET = 'may-orchestrator-lead'
 export const WORKER_PRESET = 'may-orchestrator-worker'
 /**
- * Lead 只保留"向用户提问"这一个全局执行工具；其余全局工具（含用户后安装的
- * MCP/插件工具）对白名单不可见，避免无关工具干扰主控的路由决策。
+ * Lead 的全局工具白名单：向用户提问、长期记忆（meow-memory 全局注册）、
+ * 只读轻量查询（网页检索与文件读取）。写文件、跑命令、浏览器/桌面/邮件等有副作用
+ * 或多步骤的执行工具不在此列：由 Worker 子会话持有，避免主控绕过编排直接执行。
+ * 其余全局工具（含用户后安装的 MCP/插件工具）对白名单不可见；
  * orchestrator_* 在 scope 内注册，restrict 的 allow 不影响它们。
- */
-/**
- * Lead 的全局工具白名单：向用户提问 + 长期记忆的检索/记录（meow-memory 全局注册）。
- * 浏览器/桌面/邮件等执行工具不在此列：由 Worker 子会话持有，避免主控绕过编排直接执行。
  */
 export const LEAD_TOOL_ALLOW = [
   'ask_user_question',
@@ -18,6 +16,11 @@ export const LEAD_TOOL_ALLOW = [
   'memory_search',
   'memory_project',
   'memory_remember',
+  'web_search',
+  'web_fetch',
+  'read',
+  'glob',
+  'grep',
 ] as const
 
 type PluginRow = PresetDefinition['plugins'][number]

@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { createConversation, createTask } from '../src/types.ts'
 import {
   StateError, activateConversation, applyOutlinePatch, assertRevision, classifyWorkerTurnEnd,
-  interruptTaskForRevision, reviseConversation, canTransition, failTask, interruptTaskAfterRestart,
+  failConversation, interruptTaskForRevision, reviseConversation, canTransition, blockTask, failTask, interruptTaskAfterRestart,
   isTerminal, settleConversation, startConversation, transitionTask,
 } from '../src/state-machine.ts'
 
@@ -10,7 +10,7 @@ function pair() {
   let conv = createConversation({ id: 'c1', childSessionId: 'child', parentSessionId: 'p', title: 't' })
   let task = createTask({
     id: 't1', parentSessionId: 'p', conversationId: 'c1', predecessorTaskId: null,
-    subject: 's', prompt: 'do', responseMode: 'wait',
+    subject: 's', prompt: 'do',
   })
   conv = activateConversation(conv, task.id)
   task = { ...task, status: 'running' }
@@ -20,7 +20,7 @@ function pair() {
 function bgTask() {
   return createTask({
     id: 't', parentSessionId: 'p', conversationId: 'c', predecessorTaskId: null,
-    subject: 's', prompt: 'p', responseMode: 'background',
+    subject: 's', prompt: 'p',
   })
 }
 
@@ -57,12 +57,17 @@ describe('任务状态机', () => {
     expect(conv.activeTaskId).toBeNull()
   })
 
-  it('缺少终态上报时 failTask 把任务和工作流标记失败', () => {
+  it('Worker/任务失败后持久工作流仍可复用；Host 致命错误才标记会话失败', () => {
     let { conv, task } = pair()
-    task = failTask(task, '子会话结束前未提交终态 task_update')
+    task = transitionTask(task, { status: 'failed', error: '构建失败' })
     conv = settleConversation(conv, task)
     expect(task.status).toBe('failed')
-    expect(conv.state).toBe('failed')
+    expect(conv.state).toBe('idle')
+    const fatalTask = failTask(bgTask(), '子会话启动失败')
+    const fatalConv = failConversation(settleConversation(createConversation({
+      id: 'c2', childSessionId: 'child2', parentSessionId: 'p', title: 't',
+    }), fatalTask))
+    expect(fatalConv.state).toBe('failed')
   })
 
   it('同一工作流同时只能有一个活动任务', () => {
@@ -79,11 +84,35 @@ describe('任务状态机', () => {
 })
 
 describe('状态迁移和修订号', () => {
-  it('input_required 必须说明原因，failed 必须带 error', () => {
+  it('input_required 必须带问题，failed/blocked 必须带 error', () => {
     const queued = bgTask()
-    expect(() => transitionTask(queued, { status: 'input_required' })).toThrow(/input_required/)
+    expect(() => transitionTask(queued, { status: 'input_required' })).toThrow(/question/)
     expect(() => transitionTask(queued, { status: 'failed' })).toThrow(/failed/)
+    expect(() => transitionTask(queued, { status: 'blocked' })).toThrow(/blocked/)
+    expect(() => transitionTask(queued, {
+      status: 'input_required', question: 'q?', error: '权限不足',
+    })).toThrow(/not allowed/)
     expect(transitionTask(queued, { status: 'failed', error: 'boom' }).status).toBe('failed')
+  })
+
+  it('状态迁移会清理不属于新状态的上下文字段', () => {
+    const blocked = transitionTask({ ...bgTask(), status: 'running', question: '旧问题' }, {
+      status: 'blocked',
+      error: '权限不足',
+      remediation: '请授权后继续',
+    })
+    expect(blocked.question).toBeUndefined()
+    expect(blocked.error).toBe('权限不足')
+
+    const completed = transitionTask({ ...bgTask(), status: 'running', error: '旧错误' }, {
+      status: 'completed',
+      userAnswer: '已完成',
+    })
+    expect(completed.error).toBeUndefined()
+    expect(completed.userAnswer).toBe('已完成')
+
+    expect(() => transitionTask(bgTask(), { status: 'running', question: 'q?' })).toThrow(/not allowed/)
+    expect(() => transitionTask(bgTask(), { status: 'completed', userAnswer: 'ok', error: 'x' })).toThrow(/not allowed/)
   })
 
   it('queued 可直接完成，完成后修订号递增且不能继续迁移', () => {
@@ -99,10 +128,24 @@ describe('状态迁移和修订号', () => {
       .toEqual({ state: 'pending', attempts: 0 })
     expect(transitionTask(bgTask(), { status: 'input_required', question: 'q?' }).delivery)
       .toEqual({ state: 'pending', attempts: 0 })
+    expect(transitionTask(bgTask(), {
+      status: 'blocked',
+      reasonCode: 'permission_denied',
+      error: '权限被拒绝',
+      remediation: '请授权后继续',
+    }).delivery).toEqual({ state: 'pending', attempts: 0 })
     expect(interruptTaskForRevision(bgTask(), '改单').delivery).toBeUndefined()
-    // wait 模式从不投递
-    const { task } = pair()
-    expect(transitionTask(task, { status: 'completed', userAnswer: 'ok' }).delivery).toBeUndefined()
+  })
+
+  it('静默任务进入任何终态都不挂投递', () => {
+    const silent = { ...bgTask(), silent: true }
+    expect(transitionTask(silent, { status: 'completed', userAnswer: 'ok' }).delivery).toBeUndefined()
+    expect(transitionTask(silent, { status: 'input_required', question: 'q?' }).delivery).toBeUndefined()
+    expect(transitionTask(silent, {
+      status: 'blocked', reasonCode: 'permission_denied', error: 'e',
+    }).delivery).toBeUndefined()
+    expect(failTask(silent, 'boom').delivery).toBeUndefined()
+    expect(blockTask(silent, 'boom', { reasonCode: 'network' }).delivery).toBeUndefined()
   })
 
   it('终态任务再次失败时保持原记录不变', () => {
@@ -121,10 +164,15 @@ describe('状态迁移和修订号', () => {
     expect(startConversation(conv).state).toBe('running')
   })
 
-  it('重启恢复会把后台活动任务转 input_required 并保留待投递 outbox', () => {
+  it('重启恢复把后台活动任务标记 interrupted 且不主动投递；不确定持久化状态可 blocked', () => {
     const paused = interruptTaskAfterRestart(bgTask())
-    expect(paused.status).toBe('input_required')
-    expect(paused.delivery).toEqual({ state: 'pending', attempts: 0 })
+    expect(paused.status).toBe('interrupted')
+    expect(paused.cancelledReason).toContain('重启')
+    expect(paused.delivery).toBeUndefined()
+    const blocked = blockTask(bgTask(), '存储状态不确定', { reasonCode: 'runtime' })
+    expect(blocked.status).toBe('blocked')
+    expect(blocked.reasonCode).toBe('runtime')
+    expect(blocked.delivery).toEqual({ state: 'pending', attempts: 0 })
   })
 })
 
@@ -169,7 +217,12 @@ describe('改单中断与 Worker 提问', () => {
     expect(conv.state).toBe('input_required')
   })
 
-  it('input_required 只有问题没有 error/progressNote 也合法', () => {
-    expect(() => transitionTask(bgTask(), { status: 'input_required', question: 'q?' })).not.toThrow()
+  it('input_required 只有问题也合法；blocked 会把工作流置为 idle', () => {
+    let { conv } = pair()
+    const waiting = transitionTask(bgTask(), { status: 'input_required', question: 'q?' })
+    expect(waiting.question).toBe('q?')
+    const blocked = transitionTask(bgTask(), { status: 'blocked', error: '缺少 bsk' })
+    conv = settleConversation(conv, blocked)
+    expect(conv.state).toBe('idle')
   })
 })

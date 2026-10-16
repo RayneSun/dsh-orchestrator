@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto'
-import { Context, Service } from '@deepseek-ai/cordis'
+import { mkdir, rmdir } from 'node:fs/promises'
+import { Context, Service, symbols } from '@deepseek-ai/cordis'
 import { createUserMessage, type ContextFormed } from '@deepseek-ai/dsh-llm'
 import { queueHostSubagentPrompt, steerHostSubagentPrompt } from '@deepseek-ai/dsh-subagent/internal'
 import { delegationDepthOf } from '@deepseek-ai/dsh-subagent'
@@ -13,9 +14,9 @@ import type {} from '@deepseek-ai/dsh-api-session-controller'
 import type {} from '@deepseek-ai/dsh-session-persistence'
 import { WORKER_PROMPT, deliveryNotice, revisionPrompt, workerPrompt } from './messages.ts'
 import { toJson } from './json.ts'
-import { routeQuery } from './router.ts'
 import { isWorkerToolForbidden } from './worker-policy.ts'
 import { normalizeProgressSteps } from './progress.ts'
+import { buildChildWorkspace, wrapAgentCreateWithCwd } from './workspaces.ts'
 import { orchestratorDomain } from './storage.ts'
 import { buildPresetDefinitions, LEAD_PRESET, LEAD_TOOL_ALLOW, WORKER_PRESET } from './presets.ts'
 import {
@@ -24,6 +25,7 @@ import {
   interruptTaskForRevision,
   reviseConversation,
   failConversation,
+  blockTask,
   failTask,
   interruptTaskAfterRestart,
   settleConversation,
@@ -43,9 +45,10 @@ import {
   type Snapshot,
   type TaskRecord,
   activeTaskStatuses,
+  blockReasonCodes,
   deliverableTaskStatuses,
+  taskUpdateStatuses,
   dispatchInputSchema,
-  routeQueryInputSchema,
   conversationIdInputSchema,
   taskUpdateInputSchema,
   type DispatchInput,
@@ -67,7 +70,6 @@ declare module '@deepseek-ai/cordis' {
 }
 
 type DomainType = Domain<typeof orchestratorDomain>
-type Waiter = { resolve: (task: TaskRecord) => void }
 type DispatchProvision =
   | { ok: true; conv: ConversationRecord; task: TaskRecord }
   | { ok: false; result: unknown }
@@ -79,7 +81,6 @@ const LEAD_SUPPRESSED_SECTIONS = ['plugin:dsh-qqmail'] as const
 const RECOVERY_INTERVAL_MS = 15_000
 const REVISION_GUARD_MS = 120_000
 const TODO_FLUSH_DELAY_MS = 350
-const DEFAULT_WAIT_TIMEOUT_MS = 60_000
 const LAUNCH_ACCEPT_TIMEOUT_MS = 120_000
 const PERSISTENCE_STAT_TIMEOUT_MS = 5_000
 
@@ -98,6 +99,18 @@ const sharedJsonOutput = {
   render: (_args: unknown, value: unknown) => [{ type: 'text' as const, text: JSON.stringify(value) }],
 }
 
+function formatRosterTime(value: string): string {
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return value
+  const now = new Date()
+  const sameYear = date.getFullYear() === now.getFullYear()
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+  const day = String(date.getDate()).padStart(2, '0')
+  const hour = String(date.getHours()).padStart(2, '0')
+  const minute = String(date.getMinutes()).padStart(2, '0')
+  return `${sameYear ? '' : `${date.getFullYear()}/`}${month}/${day} ${hour}:${minute}`
+}
+
 export class OrchestratorService extends TypertRemoteService {
   static inject = [
     'agents', 'sessions', 'subagents', 'storageDomain',
@@ -107,7 +120,6 @@ export class OrchestratorService extends TypertRemoteService {
   private ready: Promise<void>
   private domain: DomainType | undefined
   private chain: Promise<unknown> = Promise.resolve()
-  private readonly waiters = new Map<string, Waiter>()
   private readonly installed = new Map<string, Array<() => unknown>>()
   private readonly delivering = new Set<string>()
   private readonly pendingTodoSteps = new Map<string, { taskId: string; steps: ProgressStep[] }>()
@@ -404,12 +416,14 @@ export class OrchestratorService extends TypertRemoteService {
       name: 'task_update',
       description: '向 Orchestrator Host 上报当前子会话活动 TaskRun 的状态。不接受 task id，Host 根据会话身份反查。',
       parameters: {
-        status: { type: 'string', required: true, enum: ['running', 'input_required', 'completed', 'failed'] },
+        status: { type: 'string', required: true, enum: [...taskUpdateStatuses] },
         progressNote: { type: 'string', description: '进展说明' },
         userAnswer: { type: 'string', description: 'completed 时必填：给 Lead 转述给用户的权威最终答案' },
         resultSummary: { type: 'string', description: '一句话结果摘要' },
-        error: { type: 'string', description: 'failed 的错误，或 input_required 的外部阻塞原因' },
-        question: { type: 'string', description: 'input_required 时给用户的问题，需自包含、一次问清' },
+        error: { type: 'string', description: 'failed/blocked 时必填：失败原因或系统阻碍' },
+        question: { type: 'string', description: 'input_required 时必填：可直接转达给用户的问题/接管提示，需自包含、一次问清' },
+        reasonCode: { type: 'string', enum: [...blockReasonCodes], description: 'blocked 的阻碍类别' },
+        remediation: { type: 'string', description: 'blocked 时建议用户执行的补救动作' },
         outlinePatch: {
           type: 'object',
           additionalProperties: false,
@@ -507,9 +521,9 @@ export class OrchestratorService extends TypertRemoteService {
         : last?.resultSummary || last?.userAnswer
           ? `｜最近结果：${(last.resultSummary || last.userAnswer)!.slice(0, 80)}`
           : ''
-      return `- ${conv.id} [${conv.state}] ${conv.title}${tail}`
+      return `- ${conv.id} [${conv.state}] ${conv.title}｜创建 ${formatRosterTime(conv.createdAt)}｜更新 ${formatRosterTime(conv.updatedAt)}${tail}`
     })
-    return `Orchestrator roster（route 复用 id；get 看详情）：\n${lines.join('\n')}`
+    return `Orchestrator roster（dispatch 用 conversationId 复用子会话；get 看详情）：\n${lines.join('\n')}`
   }
   /** list 工具的精简投影：只给模型决策所需字段，避免内部 ID 和大段文本污染上下文。 */
   private listWorkflows(parentSessionId: string) {
@@ -524,6 +538,8 @@ export class OrchestratorService extends TypertRemoteService {
         conversationId: conv.id,
         title: conv.title,
         state: conv.state,
+        createdAt: conv.createdAt,
+        updatedAt: conv.updatedAt,
         ...active ? { active: active.subject } : {},
         ...last && !active ? { lastStatus: last.status, lastResult: last.resultSummary ?? last.userAnswer } : {},
       }
@@ -534,35 +550,15 @@ export class OrchestratorService extends TypertRemoteService {
     const parentId = () => String(agent.session.id)
     return [
       defineTool({
-        name: 'orchestrator_route',
-        description: '根据新用户请求匹配可复用的工作流。强相关追问和改单应复用原会话。',
-        parameters: { query: { type: 'string', required: true, description: '用户的新需求' } },
-        output: sharedJsonOutput,
-        execute: async (args: unknown) => {
-          const parsed = routeQueryInputSchema.safeParse(args)
-          if (!parsed.success) return toJson({ kind: 'error', error: parsed.error.issues[0]?.message ?? 'invalid orchestrator_route arguments' })
-          // 改需求/追问可能发生在子任务仍在运行时，运行中的工作流也要作为候选。
-          const conversations = this.snapshotFor(parentId()).conversations.filter(conv => conv.state !== 'failed')
-          const candidates = routeQuery(parsed.data.query, conversations, 6).map(candidate => ({
-            conversationId: candidate.conversation.id,
-            title: candidate.conversation.title,
-            state: candidate.conversation.state,
-            score: candidate.score,
-            reasons: candidate.reasons,
-          }))
-          return toJson({ candidates })
-        },
-      }),
-      defineTool({
         name: 'orchestrator_dispatch',
         description: '新建工作流，或把新需求派发给已有持久子会话；目标会话正忙时会自动中断旧任务并把新需求注入同一子会话。',
         parameters: {
           subject: { type: 'string', required: true, description: '短主题' },
+          workspaceName: { type: 'string', description: '新建子会话时的工作区目录名，简短可文件系统使用；复用已有子会话时忽略；缺省由 subject 生成' },
           prompt: { type: 'string', required: true, description: '需求本身和验收点。Worker 与你共享同一工作区，不要重复工作目录、路径等环境声明，不要粘贴内部 ID' },
           conversationId: { type: 'string', description: '复用已有工作流时提供' },
-          responseMode: { type: 'string', enum: ['wait', 'background'], description: '默认 background，不阻塞主对话；wait 仅用于需要同轮结果的短任务' },
           acceptanceCriteria: { type: 'string', description: '可选验收标准' },
-          waitTimeoutMs: { type: 'integer', description: 'wait 超时，默认 60000；超时自动转后台' },
+          silent: { type: 'boolean', description: '静默模式：记忆整理等后台维护任务使用；终态不会向主会话投递任何消息，看板仍可见状态' },
         },
         output: sharedJsonOutput,
         execute: async (args: any) => toJson(await this.dispatch(args, agent)),
@@ -594,12 +590,16 @@ export class OrchestratorService extends TypertRemoteService {
               ...task.progressNote ? { progressNote: task.progressNote } : {},
               ...task.question ? { question: task.question } : {},
               ...task.userAnswer ? { answer: task.userAnswer } : {},
+              ...task.reasonCode ? { reasonCode: task.reasonCode } : {},
+              ...task.remediation ? { remediation: task.remediation } : {},
               ...task.error ? { error: task.error } : {},
               updatedAt: task.updatedAt,
             }))
           return toJson({
             title: conv.title,
             state: conv.state,
+            createdAt: conv.createdAt,
+            updatedAt: conv.updatedAt,
             outline: {
               summary: conv.outline.summary,
               keyFacts: conv.outline.keyFacts.slice(-5),
@@ -618,10 +618,7 @@ export class OrchestratorService extends TypertRemoteService {
     if (!parsed.success) return { kind: 'error', error: parsed.error.issues[0]?.message ?? 'invalid orchestrator_dispatch arguments' }
     const args: DispatchInput = parsed.data
     const parentSessionId = String(parent.session.id)
-    const responseMode = args.responseMode
-    const timeout = args.waitTimeoutMs ?? DEFAULT_WAIT_TIMEOUT_MS
 
-    // waitTask 必须在串行写锁外等待，否则 Worker 的 task_update 无法进入状态机。
     let provisioned: DispatchProvision
     try {
       provisioned = await this.serialize(() => this.provisionDispatch(args, parent, parentSessionId))
@@ -629,11 +626,7 @@ export class OrchestratorService extends TypertRemoteService {
       return { kind: 'error', error: String(error instanceof Error ? error.message : error) }
     }
     if (provisioned.ok === false) return provisioned.result
-    const { conv, task } = provisioned
-    if (responseMode === 'background') {
-      return { ok: true, status: 'background', conversationId: conv.id }
-    }
-    return await this.waitTask(task.id, timeout)
+    return { ok: true, status: 'background', conversationId: provisioned.conv.id }
   }
 
   private async provisionDispatch(
@@ -666,8 +659,8 @@ export class OrchestratorService extends TypertRemoteService {
         predecessorTaskId: existing.lastTaskId,
         subject: args.subject,
         prompt: args.prompt,
-        responseMode: args.responseMode,
         ...args.acceptanceCriteria ? { acceptanceCriteria: args.acceptanceCriteria } : {},
+        ...args.silent ? { silent: true } : {},
       })
       conv = interruptedTaskId
         ? reviseConversation(existing, task.id, at)
@@ -677,8 +670,6 @@ export class OrchestratorService extends TypertRemoteService {
         if (active) {
           const interruptedTask = interruptTaskForRevision(active, `被新需求「${args.subject}」接管`, at)
           await this.tasks().put(interruptedTaskId, interruptedTask)
-          this.waiters.get(interruptedTaskId)?.resolve(interruptedTask)
-          this.waiters.delete(interruptedTaskId)
           // interrupt 会异步带来一次 subagent/end；那是改单的预期结果，不是任务失败。
           this.armRevisionEndGuard(existing.childSessionId, interruptedTaskId)
         }
@@ -728,7 +719,18 @@ export class OrchestratorService extends TypertRemoteService {
       const conversationId = createId('conv')
       const taskId = createId('task')
       const childSessionId = randomUUID()
-      const provisional = createConversation({ id: conversationId, childSessionId, parentSessionId, title: args.subject })
+      const parentCwd = parent.session.header.cwd
+      if (!parentCwd) throw new Error('当前主会话缺少工作区，无法创建子会话工作区')
+      const workspace = await buildChildWorkspace(parentCwd, args.workspaceName ?? args.subject)
+      await mkdir(workspace.dir, { recursive: true })
+      const provisional = createConversation({
+        id: conversationId,
+        childSessionId,
+        parentSessionId,
+        title: args.subject,
+        workspaceName: workspace.name,
+        workspaceDir: workspace.dir,
+      })
       conv = { ...provisional, activeTaskId: taskId, lastTaskId: taskId }
       task = createTask({
         id: taskId,
@@ -737,12 +739,12 @@ export class OrchestratorService extends TypertRemoteService {
         predecessorTaskId: null,
         subject: args.subject,
         prompt: args.prompt,
-        responseMode: args.responseMode,
         ...args.acceptanceCriteria ? { acceptanceCriteria: args.acceptanceCriteria } : {},
+        ...args.silent ? { silent: true } : {},
       })
       await this.putPair(conv, task)
       try {
-        await this.hostCtx.subagents.startContinuable({
+        await this.withChildWorkspaceCwd(childSessionId, workspace.dir, () => this.hostCtx.subagents.startContinuable({
           provider: 'spawn',
           label: args.subject,
           childId: childSessionId as SessionId,
@@ -754,7 +756,7 @@ export class OrchestratorService extends TypertRemoteService {
             maxDepth: 1,
           },
           signal: AbortSignal.timeout(LAUNCH_ACCEPT_TIMEOUT_MS),
-        })
+        }))
       } catch (error) {
         return { ok: false, result: await this.failLaunch(conv, task, error) }
       }
@@ -776,53 +778,45 @@ export class OrchestratorService extends TypertRemoteService {
     return { ok: true, conv, task }
   }
 
+  /**
+   * startContinuable 的公开契约不支持每次启动指定 cwd：内部固定从 parent header 继承。
+   * 这里仅在本次创建窗口替换 agents.create，按预分配 childId 注入 meta.cwd；
+   * 持久子会话之后由自己的 session header 保留独立工作区，冷恢复也继续使用该目录。
+   */
+  private async withChildWorkspaceCwd<T>(childSessionId: string, cwd: string, work: () => Promise<T>): Promise<T> {
+    const proxied = this.hostCtx.agents as unknown as Record<PropertyKey, unknown> & {
+      create(options: Record<string, unknown>): Promise<unknown>
+    }
+    // ctx.agents 是 Cordis tracing proxy：每次读方法都会包一层新代理，身份比较恒不相等；
+    // 必须先用 symbols.original 解包到真实服务实例，再往实例上遮蔽 create。
+    const real = (proxied[symbols.original] ?? proxied) as {
+      create(options: Record<string, unknown>): Promise<unknown>
+    }
+    const original = real.create
+    const hadOwn = Object.prototype.hasOwnProperty.call(real, 'create')
+    const wrapped = wrapAgentCreateWithCwd(original.bind(real), childSessionId, cwd)
+    real.create = wrapped
+    // 严格模式下不可写会直接抛 TypeError；再防一层奇异对象静默吞掉赋值。
+    if (real.create !== wrapped) throw new Error('无法为子会话注入独立工作区：agents.create 不可重写')
+    try {
+      return await work()
+    } finally {
+      // 恢复原状：原来没有自有属性时删除遮蔽属性，还原原型方法。
+      if (hadOwn) real.create = original
+      else delete (real as Partial<typeof real>).create
+    }
+  }
+
   private async failLaunch(conv: ConversationRecord, task: TaskRecord, error: unknown): Promise<unknown> {
     const now = timestamp()
+    if (conv.workspaceDir) await rmdir(conv.workspaceDir).catch(() => undefined)
     const failedTask = failTask(task, String(error), now)
     const failedConv = failConversation(settleConversation(conv, failedTask, now), now)
     await this.putPair(failedConv, failedTask)
-    this.waiters.get(failedTask.id)?.resolve(failedTask)
-    this.waiters.delete(failedTask.id)
-    if (failedTask.responseMode === 'background') void this.deliverPendingTask(failedTask.id)
+    if (!failedTask.silent) void this.deliverPendingTask(failedTask.id)
     return { kind: 'error', error: String(error) }
   }
 
-  private waitTask(taskId: string, timeoutMs: number): Promise<unknown> {
-    return new Promise((resolve) => {
-      const timer = setTimeout(() => {
-        this.waiters.delete(taskId)
-        void this.serialize(async () => {
-          const task = this.taskById(taskId)
-          if (!task || !(activeTaskStatuses as readonly string[]).includes(task.status)) return
-          await this.tasks().put(taskId, {
-            ...task,
-            revision: task.revision + 1,
-            updatedAt: timestamp(),
-            responseMode: 'background',
-          })
-          this.emitChanged()
-        }).catch(error => {
-          this.hostCtx.logger.warn(`orchestrator: wait timeout fallback for ${taskId} failed: ${String(error)}`)
-        })
-        resolve({ ok: true, status: 'background', conversationId: this.taskById(taskId)?.conversationId, reason: 'timeout' })
-      }, timeoutMs)
-      timer.unref()
-      this.waiters.set(taskId, {
-        resolve: task => {
-          clearTimeout(timer)
-          resolve({
-            ok: true,
-            status: task.status,
-            conversationId: task.conversationId,
-            answer: task.userAnswer,
-            question: task.question,
-            error: task.error,
-            progressNote: task.progressNote,
-          })
-        },
-      })
-    })
-  }
 
   private async updateFromWorker(rawArgs: unknown, childSessionId: string): Promise<any> {
     const parsed = taskUpdateInputSchema.safeParse(rawArgs)
@@ -845,10 +839,8 @@ export class OrchestratorService extends TypertRemoteService {
       const nextConv = terminal ? settleConversation(patched, task) : patched
       await this.putPair(nextConv, task)
       if (terminal) {
-        this.waiters.get(task.id)?.resolve(task)
-        this.waiters.delete(task.id)
         terminalTaskId = task.id
-        shouldDeliver = task.responseMode === 'background' && task.delivery?.state === 'pending'
+        shouldDeliver = task.delivery?.state === 'pending'
       }
       return { ok: true as const, status: task.status }
     })
@@ -878,10 +870,12 @@ export class OrchestratorService extends TypertRemoteService {
       let nextConv: ConversationRecord
       if (endCause === 'manual_stop') {
         task = interruptTaskForRevision(previous, '子会话执行被手动停止；工作流已保留，可继续派发新需求', now)
-        // 手动停止需要通知主会话；background 模式挂起投递，wait 模式直接解除等待。
-        if (task.responseMode === 'background') task = { ...task, delivery: { state: 'pending', attempts: 0 } }
+        // 手动停止需要通知主会话：挂起投递，由 deliverPendingTask 发通知；静默任务除外。
+        if (!task.silent) {
+          task = { ...task, delivery: { state: 'pending', attempts: 0 } }
+          shouldDeliver = true
+        }
         nextConv = settleConversation(conv, task, now)
-        shouldDeliver = task.responseMode === 'background'
         outcome = 'manual_stop'
       } else if (endCause === 'revision') {
         task = interruptTaskForRevision(previous, '旧轮次被新需求中断', now)
@@ -890,12 +884,10 @@ export class OrchestratorService extends TypertRemoteService {
       } else {
         task = failTask(previous, previous.status === 'queued' ? '子会话在任务开始前结束' : '子会话结束前未提交终态 task_update', now)
         nextConv = failConversation(settleConversation(conv, task, now), now)
-        shouldDeliver = task.responseMode === 'background'
+        shouldDeliver = true
         outcome = 'failed'
       }
       await this.putPair(nextConv, task)
-      this.waiters.get(task.id)?.resolve(task)
-      this.waiters.delete(task.id)
       taskId = task.id
     })
     if (outcome === 'ignored') {
@@ -914,7 +906,7 @@ export class OrchestratorService extends TypertRemoteService {
   private async deliverPendingTask(taskId: string): Promise<void> {
     if (this.delivering.has(taskId)) return
     const task = this.taskById(taskId)
-    if (!task || task.responseMode !== 'background' || task.delivery?.state !== 'pending') return
+    if (!task || task.silent || task.delivery?.state !== 'pending') return
     if (!(deliverableTaskStatuses as readonly string[]).includes(task.status)) return
     this.delivering.add(taskId)
     try {
@@ -969,7 +961,7 @@ export class OrchestratorService extends TypertRemoteService {
       await this.ready
       const pending = [...this.tasks().entries()]
         .map(([, task]) => task)
-        .filter(task => task.responseMode === 'background'
+        .filter(task => !task.silent
           && task.delivery?.state === 'pending'
           && (deliverableTaskStatuses as readonly string[]).includes(task.status))
       for (const task of pending) await this.deliverPendingTask(task.id)
@@ -1021,11 +1013,16 @@ export class OrchestratorService extends TypertRemoteService {
           } else if ((persistenceState as string) === 'missing') {
             const reason = 'child session was not materialized before restart'
             const nextTask = failTask(active, reason, now)
-            const nextConv = settleConversation(conv, nextTask, now)
+            const nextConv = failConversation(settleConversation(conv, nextTask, now), now)
             await this.putPair(nextConv, nextTask)
           } else {
-            // I/O timeout/permission errors are uncertain: do not mark a possibly live session failed.
-            const nextTask = interruptTaskAfterRestart(active, now)
+            // I/O timeout/permission errors are system obstacles: do not ask a model question, and do not mark a possibly live session failed.
+            const nextTask = blockTask(
+              active,
+              '重启后无法确认子会话持久化状态，可能是存储权限或运行时 I/O 暂时不可用',
+              { reasonCode: 'runtime', remediation: '请稍后让我继续重试；若反复出现，请重启 Web 后再恢复任务' },
+              now,
+            )
             const nextConv = settleConversation(conv, nextTask, now)
             await this.putPair(nextConv, nextTask)
           }

@@ -1,16 +1,28 @@
 import { z } from 'zod'
 
 export const conversationStates = ['provisioning', 'running', 'idle', 'input_required', 'failed'] as const
-export const taskStatuses = ['queued', 'running', 'input_required', 'completed', 'failed', 'cancelled', 'interrupted'] as const
+export const taskStatuses = ['queued', 'running', 'input_required', 'blocked', 'completed', 'failed', 'cancelled', 'interrupted'] as const
 export const activeTaskStatuses = ['queued', 'running'] as const
-/** 终态：任务不再推进（input_required 等待 Lead 带着答复派发新 TaskRun）。 */
-export const terminalTaskStatuses = ['input_required', 'completed', 'failed', 'cancelled', 'interrupted'] as const
+/** 单条 TaskRun 的终态；input_required/blocked 结束本次执行，等待 Lead 后续派发新的 TaskRun。 */
+export const terminalTaskStatuses = ['input_required', 'blocked', 'completed', 'failed', 'cancelled', 'interrupted'] as const
 /** 需要向主会话投递通知的终态。 */
-// interrupted 是否投递取决于产生路径：改单接管不投递（新任务立即接续），手动停止投递通知。
+// interrupted 是否投递取决于产生路径：改单/重启不投递，手动停止才投递通知。
 // 因此该表只表示"允许带 delivery"，pending 由具体路径挂起。
-export const deliverableTaskStatuses = ['input_required', 'completed', 'failed', 'interrupted'] as const
+export const deliverableTaskStatuses = ['input_required', 'blocked', 'completed', 'failed', 'interrupted'] as const
+export const blockReasonCodes = ['permission_denied', 'configuration', 'dependency', 'network', 'resource', 'runtime'] as const
 
 const trimmed = z.string().trim().min(1)
+
+export const taskUpdateStatuses = ['running', 'input_required', 'blocked', 'completed', 'failed'] as const
+
+export const taskUpdateFieldAllowList: Record<(typeof taskUpdateStatuses)[number], readonly string[]> = {
+  running: ['progressNote', 'outlinePatch'],
+  input_required: ['progressNote', 'question', 'outlinePatch'],
+  blocked: ['progressNote', 'error', 'reasonCode', 'remediation', 'outlinePatch'],
+  completed: ['progressNote', 'userAnswer', 'resultSummary', 'outlinePatch'],
+  failed: ['progressNote', 'error', 'outlinePatch'],
+}
+
 const trimmedList = z.array(trimmed).max(50)
 const now = () => new Date().toISOString()
 
@@ -57,6 +69,8 @@ const baseConversationSchema = z.object({
   childSessionId: trimmed,
   parentSessionId: trimmed,
   title: trimmed,
+  workspaceName: z.string().trim().min(1).max(100).optional(),
+  workspaceDir: z.string().trim().min(1).optional(),
   outline: outlineSchema,
   activeTaskId: z.string().nullable().default(null),
   lastTaskId: z.string().nullable().default(null),
@@ -74,16 +88,18 @@ const baseTaskSchema = z.object({
   subject: trimmed,
   prompt: trimmed,
   acceptanceCriteria: z.string().optional(),
-  responseMode: z.enum(['wait', 'background']),
   status: z.enum(taskStatuses).default('queued'),
   progressNote: z.string().optional(),
   userAnswer: z.string().optional(),
   resultSummary: z.string().optional(),
   error: z.string().optional(),
   question: z.string().optional(),
+  reasonCode: z.enum(blockReasonCodes).optional(),
+  remediation: z.string().optional(),
   cancelledReason: z.string().optional(),
   outlinePatch: outlinePatchSchema.optional(),
   progressSteps: z.array(progressStepSchema).default([]),
+  silent: z.boolean().default(false),
   delivery: deliverySchema.optional(),
   revision: z.number().int().nonnegative().default(0),
   createdAt: z.string(),
@@ -92,13 +108,16 @@ const baseTaskSchema = z.object({
   endedAt: z.string().optional(),
 }).strict()
 
-/** 兼容 0.2.x 存储记录：blocked→input_required、blockedQuestion→question、丢弃已废弃的 scene。 */
+/** 兼容 0.2.x 存储记录：旧 blocked(+scene/blockedQuestion)→input_required，并丢弃废弃 scene。0.3.1 的 blocked 无 scene，必须保留。 */
 function migrateRecord<T>(raw: unknown): unknown {
   if (!raw || typeof raw !== 'object') return raw
   const record = { ...(raw as Record<string, unknown>) }
-  delete record.scene
-  if (record.status === 'blocked') record.status = 'input_required'
+  const legacyTaskBlocked = record.status === 'blocked'
+    && (record.scene !== undefined || record.blockedQuestion !== undefined)
+  if (legacyTaskBlocked) record.status = 'input_required'
   if (record.state === 'blocked') record.state = 'input_required'
+  delete record.scene
+  delete record.responseMode
   if (record.blockedQuestion !== undefined) {
     if (record.question === undefined) record.question = record.blockedQuestion
     delete record.blockedQuestion
@@ -113,6 +132,7 @@ export type Outline = z.infer<typeof outlineSchema>
 export type ConversationRecord = z.infer<typeof baseConversationSchema>
 export type TaskRecord = z.infer<typeof baseTaskSchema>
 export type TaskStatus = TaskRecord['status']
+export type BlockReasonCode = NonNullable<TaskRecord['reasonCode']>
 export type ConversationState = ConversationRecord['state']
 export type Delivery = z.infer<typeof deliverySchema>
 export type OutlinePatch = z.infer<typeof outlinePatchSchema>
@@ -139,6 +159,8 @@ export function createConversation(input: {
   childSessionId: string
   parentSessionId: string
   title: string
+  workspaceName?: string
+  workspaceDir?: string
 }): ConversationRecord {
   const ts = timestamp()
   return {
@@ -161,7 +183,7 @@ export function createTask(input: {
   subject: string
   prompt: string
   acceptanceCriteria?: string
-  responseMode: 'wait' | 'background'
+  silent?: boolean
 }): TaskRecord {
   const ts = timestamp()
   return {
@@ -172,8 +194,8 @@ export function createTask(input: {
     subject: input.subject,
     prompt: input.prompt,
     ...input.acceptanceCriteria ? { acceptanceCriteria: input.acceptanceCriteria } : {},
-    responseMode: input.responseMode,
     status: 'queued',
+    silent: input.silent ?? false,
     progressSteps: [],
     revision: 0,
     createdAt: ts,
@@ -181,41 +203,50 @@ export function createTask(input: {
   }
 }
 
-export const routeQueryInputSchema = z.object({
-  query: trimmed.max(10_000),
-}).strict()
-
 export const conversationIdInputSchema = z.object({
   conversationId: trimmed,
 }).strict()
 
+
 export const dispatchInputSchema = z.object({
   subject: z.string().trim().min(1).max(200),
+  workspaceName: z.string().trim().min(1).max(80).optional(),
   prompt: z.string().trim().min(1).max(100_000),
   conversationId: z.string().trim().min(1).optional(),
-  // 默认后台执行，不阻塞主对话；wait 仅用于需要同轮拿结果的短任务。
-  responseMode: z.enum(['wait', 'background']).default('background'),
   acceptanceCriteria: z.string().trim().min(1).max(10_000).optional(),
-  waitTimeoutMs: z.number().int().positive().max(600_000).optional(),
+  silent: z.boolean().optional(),
 }).strict()
 
 export const taskUpdateInputSchema = z.object({
-  status: z.enum(['running', 'input_required', 'completed', 'failed']),
+  status: z.enum(taskUpdateStatuses),
   progressNote: trimmed.max(5_000).optional(),
   userAnswer: trimmed.max(50_000).optional(),
   resultSummary: trimmed.max(1_000).optional(),
   error: trimmed.max(10_000).optional(),
   question: trimmed.max(5_000).optional(),
+  reasonCode: z.enum(blockReasonCodes).optional(),
+  remediation: trimmed.max(5_000).optional(),
   outlinePatch: outlinePatchSchema.optional(),
 }).strict().superRefine((value, ctx) => {
   if (value.status === 'completed' && !value.userAnswer) {
     ctx.addIssue({ code: 'custom', path: ['userAnswer'], message: 'completed task_update requires userAnswer' })
   }
-  if (value.status === 'failed' && !value.error) {
-    ctx.addIssue({ code: 'custom', path: ['error'], message: 'failed task_update requires error' })
+  if ((value.status === 'failed' || value.status === 'blocked') && !value.error) {
+    ctx.addIssue({ code: 'custom', path: ['error'], message: `${value.status} task_update requires error` })
   }
-  if (value.status === 'input_required' && !value.error && !value.progressNote && !value.question) {
-    ctx.addIssue({ code: 'custom', path: ['question'], message: 'input_required task_update requires question, error or progressNote' })
+  if (value.status === 'input_required' && !value.question) {
+    ctx.addIssue({ code: 'custom', path: ['question'], message: 'input_required task_update requires question' })
+  }
+
+  const allowed = new Set(taskUpdateFieldAllowList[value.status])
+  for (const [field, fieldValue] of Object.entries(value)) {
+    if (field !== 'status' && fieldValue !== undefined && !allowed.has(field)) {
+      ctx.addIssue({
+        code: 'custom',
+        path: [field],
+        message: `${field} is not allowed on a ${value.status} task_update`,
+      })
+    }
   }
 })
 

@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import { buildPresetDefinitions, LEAD_PRESET, LEAD_TOOL_ALLOW, WORKER_PRESET } from '../src/presets.ts'
 
@@ -9,10 +10,16 @@ describe('Orchestrator agent presets', () => {
     expect(presets.map(preset => preset.id)).toEqual([LEAD_PRESET, WORKER_PRESET])
   })
 
-  it('Lead 全局工具白名单只保留向用户提问与长期记忆工具', () => {
+  it('Lead 全局工具白名单：提问、记忆、只读查询；不含执行类工具', () => {
     expect(LEAD_TOOL_ALLOW).toContain('ask_user_question')
     expect(LEAD_TOOL_ALLOW).toContain('memory_search')
-    // 浏览器/桌面/邮件等执行工具不得出现在主控白名单
+    for (const name of ['web_search', 'web_fetch', 'read', 'glob', 'grep']) {
+      expect(LEAD_TOOL_ALLOW).toContain(name)
+    }
+    // 写文件、跑命令、浏览器/桌面/邮件等执行工具不得出现在主控白名单
+    for (const name of ['write', 'edit', 'bash', 'pwsh']) {
+      expect(LEAD_TOOL_ALLOW).not.toContain(name)
+    }
     expect(LEAD_TOOL_ALLOW.some(name => name.startsWith('browser_'))).toBe(false)
     expect(LEAD_TOOL_ALLOW.some(name => name.startsWith('qqmail_'))).toBe(false)
   })
@@ -75,9 +82,19 @@ describe('Orchestrator agent presets', () => {
     expect(prefix).toContain('task_update')
     expect(prefix).toContain('completed')
     expect(prefix).toContain('工作区')
-    // 个人助理工况与记忆纪律
-    expect(prefix).toContain('browser_*')
+    // 记忆纪律与安全边界（工具用法由工具自身描述，不在 persona 重复）
     expect(prefix).toContain('memory_remember')
-    expect(prefix).toContain('request-help')
+    expect(prefix).toContain("status:'blocked'")
+    expect(prefix).toContain('reasonCode')
+    expect(prefix).toContain('权限、配置、依赖、网络等系统阻碍')
+    expect(prefix).toContain('input_required 请用户本人接管')
+    expect(prefix).toContain('禁止再派生子 Agent')
+  })
+
+  it('bundle patch 自动把 Lead 预设设为默认，无需用户手改配置文件', () => {
+    const patch = readFileSync(new URL('../cordis.patch.yml', import.meta.url), 'utf8')
+    expect(patch).toContain('id: agent-preset-registry')
+    expect(patch).toContain('selectedDefault: may-orchestrator-lead')
+    expect(patch).toContain('default: standard')
   })
 })

@@ -14,12 +14,8 @@ const delegationPatterns = [
 
 const questionPatterns = ['ask_user', 'ask_user_question', 'ask-user']
 
-const orchestratorPatterns = [
-  'orchestrator_route',
-  'orchestrator_dispatch',
-  'orchestrator_list',
-  'orchestrator_get',
-]
+// 前缀匹配：Lead 现在和将来新增的全部 orchestrator_* 工具都对 Worker 禁用。
+const orchestratorPatterns = ['orchestrator']
 
 export const workerForbiddenPatterns = [...delegationPatterns, ...questionPatterns, ...orchestratorPatterns]
 

@@ -34,3 +34,10 @@
     - id: computer-use-win32
       name: '@milkuovo/dsh-computer-use'
       disabled: !!js "process.platform !== 'win32'"
+
+# 新会话默认使用主控助理预设；用户仍可在 DSH 的 preset 选择界面中主动切换。
+- id: agent-preset-registry
+  name: '@deepseek-ai/dsh-agent-preset-registry'
+  config:
+    default: standard
+    selectedDefault: may-orchestrator-lead

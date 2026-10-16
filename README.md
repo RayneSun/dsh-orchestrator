@@ -4,10 +4,15 @@ DSH 主控助理编排插件，也是一个开箱即用的个人助理能力包�
 
 ## 预设
 
-- `may-orchestrator-lead`：主控助理。工具采用**白名单**：仅保留编排工具、向用户提问工具和长期记忆工具；用户后安装的执行类全局工具（MCP/插件）对 Lead 不可见，避免干扰路由。能直接回答的闲聊和解释类问题 Lead 直接回答，不派发。
+- `may-orchestrator-lead`：主控助理。工具采用**白名单**：编排工具、向用户提问、长期记忆，以及只读轻量查询（web_search / web_fetch / read / glob / grep）——一步能完成的查询 Lead 直接做；写文件、跑命令等执行类全局工具（含用户后装的 MCP/插件）对 Lead 不可见，避免干扰路由。能直接回答的闲聊和解释类问题 Lead 直接回答，不派发。
 - `may-orchestrator-worker`：统一执行 Worker。工具采用**黑名单**：文件、命令、网页、浏览器、技能、MCP 等宿主自带与用户安装的工具默认可用，仅禁止再派生子 Agent、调用编排工具和直接向用户提问。
 
-Worker 的任务上报协议、安全红线（支付/删除等不可逆操作先确认）、文件边界与整洁约束都固化在预设 persona 中，每次派发只传递任务本身（共享工作区，不重复环境声明）。`task_update` 状态为 running、input_required、completed、failed。
+Worker 的任务上报协议、安全红线（支付/删除等不可逆操作先确认）、文件边界与整洁约束都固化在预设 persona 中，每次派发只传递任务本身（独立工作区由运行时自动绑定，不重复环境声明）。`task_update` 状态为 running、input_required、blocked、completed、failed。
+
+- `input_required` 只表示需要用户回复/选择，或需要用户接管浏览器、系统安全界面。
+- `blocked` 表示权限、配置、依赖、网络、资源、运行时等系统阻碍；Worker 可提供原因分类和补救建议。
+- Worker 主动上报 `failed` 时只结束本次任务，持久子会话仍可复用；只有子会话启动/崩溃等 Host 级致命错误才会让 Conversation 进入 failed。
+- 安装 bundle 后，新会话自动使用 `may-orchestrator-lead` 预设，不需要手动修改模型或 DSH 配置文件；用户仍可在 DSH 界面主动切换其他预设。
 
 ## 个人助理能力包
 
@@ -23,30 +28,30 @@ Worker 的任务上报协议、安全红线（支付/删除等不可逆操作先
 
 ## 工作方式
 
-- Lead 先调用 `orchestrator_route`，强相关追问复用原 Conversation。
+- Lead 的系统提示中注入实时 roster（conversationId、状态、创建/更新时间），直接据此复用 Conversation；追问、改单和用户指代的历史任务（如“上周那个”）按主题与时间对号。
 - `orchestrator_dispatch` 新建 Conversation，或向已有持久子会话排队新 TaskRun；目标会话仍在运行时，会先把旧任务原子标记为 `interrupted`（改单中断，区别于失败/取消，不向主会话投递失败通知），中断子会话当前轮次，再把新需求 steer 进**同一个**子会话继续执行。
 - 用户在子会话中手动停止执行时，活动任务进入 `interrupted`（非失败），工作流回到 idle，并向主会话投递中断通知：Lead 据此简短告知用户并询问继续、改需求还是放弃，答复仍复用同一工作流。
 - Worker 系统提示自动遮蔽 DSH 自举开发说明（checkout/Web GUI/HMR）等与执行任务无关的全局段落，且不组合 present/goal 等面向终端用户的插件，降低每轮上下文体积。
-- `orchestrator_route` 同时考虑运行中的工作流；纯词法 0 命中时，若只有一个工作流且查询呈现改单/追问语气（如“改成白天背景”），会兜底返回该工作流。
-- Worker 不能直接向用户提问：需要用户选择或补充时调用 `task_update({status:'input_required', question})`，由 Lead 向用户提问，并把答复作为新 TaskRun 派发回同一子会话。
+- Worker 不能直接向用户提问：需要用户选择、补充或接管浏览器/系统确认时调用 `task_update({status:'input_required', question})`，由 Lead 向用户提问，并把答复作为新 TaskRun 派发回同一子会话；权限/配置/依赖/网络等系统阻碍使用 `blocked`。
 - Worker 多步骤任务继续使用内置 `todo_write`；Host 监听子会话的 `todo/write` 事件（约 350ms 合并）并自动同步到 TaskRun 的步骤进度，任务看板会实时显示 `✓/▶/○` 与 `已完成/总数`。Worker 不需要为每个 todo 变化调用 `task_update`，todo 全完成也不会自动结束任务，终态仍以 `task_update` 为准。
-- `dispatch` 默认 `background`，不阻塞主对话；`wait` 仅用于需要同轮结果的短任务，超过 60 秒自动转后台。
-- `background` 完成、待补充、失败或被用户手动停止后通过持久 outbox 唤醒 Lead；改单接管的旧任务不产生通知。
+- 新建 Worker 会在当前主工作区下获得独立工作目录 `<主题>/`（同名冲突自动递增 `-2`、`-3`）；`dispatch.subject` 自动用于目录命名，也可传 `workspaceName` 覆盖。复用已有子会话时继续使用原目录。
+- `dispatch` 一律后台派发，不阻塞主对话；需要了解进展时由 Lead 主动调用 `orchestrator_list` / `orchestrator_get` 查询。记忆整理等后台维护任务可设 `silent: true`：终态（含失败）完全不向主会话投递，Lead 不跟进，看板仍显示状态并带“静默”徽标。
+- 完成、待操作、受阻、失败或被用户手动停止后通过持久 outbox 唤醒 Lead；改单接管和普通重启中断的旧任务不产生通知。
 - 子会话框架自带的 settled 通知会被过滤，避免与 `task_update` 重复；Lead 只以 Worker 的 `userAnswer` 为权威结果。
-- 重启后恢复看板；未完成任务标记 input_required，未投递的后台终态会重试唤醒 Lead。
+- 重启后恢复看板；普通未完成任务标记 interrupted，无法确认持久化状态时标记 blocked；未投递的后台终态会重试唤醒 Lead。
 
 ## Web 看板
 
-在主会话 header 点击“任务看板”。右侧栏按子会话展示状态、轻量路由卡摘要、任务时间线（支持折叠，运行中的子会话高亮）、实时步骤进度、错误、结果和同步状态；点击“打开子会话”可查看完整子会话。V1 看板只读。
+在主会话 header 点击“任务看板”。右侧栏按子会话展示状态、独立工作区名、轻量路由卡摘要、任务时间线（支持折叠，运行中的子会话高亮）、实时步骤进度、错误、结果和同步状态；点击“打开子会话”可查看完整子会话。静默工作流带 🔇 图标、整卡降透明度，标题计数拆分“N 个子会话 · M 个静默”。V1 看板只读。
 
 ## 分发安装
 
 要求接收方已安装 DSH `0.2.1-alpha.1`，并且使用 Web profile。
 
-把 `may-dsh-orchestrator-0.3.0.tgz` 发给对方后执行：
+把 `may-dsh-orchestrator-0.3.2.tgz` 发给对方后执行（安装后新会话自动进入主控助理预设，无需手改配置）：
 
 ```sh
-dsh plugin add --profile web /path/to/may-dsh-orchestrator-0.3.0.tgz
+dsh plugin add --profile web /path/to/may-dsh-orchestrator-0.3.2.tgz
 dsh web --no-open --host 127.0.0.1 --port 3080
 ```
 
@@ -54,7 +59,7 @@ dsh web --no-open --host 127.0.0.1 --port 3080
 
 ```sh
 dsh plugin remove --profile web @may/dsh-orchestrator
-dsh plugin add --profile web /path/to/may-dsh-orchestrator-0.3.0.tgz
+dsh plugin add --profile web /path/to/may-dsh-orchestrator-0.3.2.tgz
 ```
 
 重新生成分发包：

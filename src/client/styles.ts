@@ -37,8 +37,13 @@ export const CSS = `
 .dsho-badge-completed{background:var(--dsw-alias-label-positive,#188038);color:#fff}
 .dsho-badge-idle{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-secondary)}
 .dsho-badge-input_required{background:color-mix(in srgb,#b26b00 15%,transparent);color:#965400}
+.dsho-badge-blocked{background:color-mix(in srgb,#e07b00 16%,transparent);color:#a35200}
 .dsho-badge-failed{background:color-mix(in srgb,var(--dsw-alias-label-error,#d93025) 11%,transparent);color:color-mix(in srgb,var(--dsw-alias-label-error,#d93025) 85%,#000 5%)}
 .dsho-badge-interrupted,.dsho-badge-cancelled{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-tertiary)}
+.dsho-badge-silent{background:transparent;color:var(--dsw-alias-label-tertiary);border:1px solid var(--dsw-alias-interactive-bg-hover)}
+.dsho-conv-silent{opacity:.68}
+.dsho-conv-silent:hover{opacity:.92}
+.dsho-mute{font-size:12px;line-height:1}
 .dsho-taskMuted{opacity:.7}
 .dsho-taskMuted .dsho-taskSubject{text-decoration:line-through}
 .dsho-meta{padding:10px 13px;color:var(--dsw-alias-label-tertiary);font-size:11px;line-height:1.6}
@@ -49,12 +54,12 @@ export const CSS = `
 .dsho-task{border-top:.5px solid var(--dsw-alias-border-l2);padding:10px 13px;display:flex;flex-direction:column;gap:5px}
 .dsho-taskHead{display:flex;align-items:center;gap:8px;font-size:12px}
 .dsho-taskSubject{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--dsw-alias-label-primary)}
-.dsho-mode{color:var(--dsw-alias-label-tertiary);font-size:11px}
 .dsho-note{margin:0;color:var(--dsw-alias-label-secondary);font-size:12px;line-height:1.5}
 .dsho-subtle{margin:0;color:var(--dsw-alias-label-tertiary);font-size:11px;line-height:1.5}
 .dsho-answer{margin:0;color:var(--dsw-alias-label-primary);font-size:12px;line-height:1.55;display:-webkit-box;-webkit-line-clamp:5;-webkit-box-orient:vertical;overflow:hidden}
 .dsho-times{color:var(--dsw-alias-label-tertiary);font-size:10px}
 .dsho-error{color:var(--dsw-alias-label-error,#d93025)}
+.dsho-blocked{color:#a35200}
 
 .dsho-steps{border:.5px solid var(--dsw-alias-border-l4);border-radius:10px;padding:8px 9px;background:var(--dsw-alias-bg-layer-3)}
 .dsho-stepsHead{display:flex;justify-content:space-between;align-items:center;color:var(--dsw-alias-label-secondary);font-size:11px;font-weight:620;margin-bottom:5px}
