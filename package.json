@@ -1,6 +1,6 @@
 {
   "name": "@may/dsh-orchestrator",
-  "version": "0.2.7",
+  "version": "0.3.0",
   "description": "DSH 主控助理编排插件：Lead 通过持久子会话和 TaskRun 分发后台任务",
   "type": "module",
   "main": "./lib/index.js",
@@ -9,7 +9,8 @@
     "./client": "./lib/client.js",
     "./typert": "./lib/typert.host.js",
     "./remote": "./lib/typert.remote-client.js",
-    "./package.json": "./package.json"
+    "./package.json": "./package.json",
+    "./dsh-computer-use-darwin": "./lib/vendor/dsh-computer-use-darwin/index.js"
   },
   "files": [
     "lib",
@@ -19,7 +20,7 @@
   ],
   "license": "MIT",
   "scripts": {
-    "build": "rm -rf lib && tsdown",
+    "build": "rm -rf lib && tsdown && node scripts/copy-vendor.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.client.json --noEmit",
     "test": "vitest run",
     "pack:dry": "npm pack --dry-run",
@@ -28,7 +29,12 @@
     "verify:packaging": "node scripts/verify-packaging.mjs"
   },
   "dependencies": {
-    "zod": "^4.4.3"
+    "zod": "^4.4.3",
+    "@dsh-market/plugin": "^0.4.13",
+    "@milkuovo/dsh-computer-use": "0.3.1",
+    "@wxg-prc-cpg/browser-skill-dsh-plugin": "0.3.2",
+    "@zhengjunyao/dsh-qqmail": "0.1.1",
+    "meow-memory": "0.31.0"
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": "^4.0.5-alpha.1",

@@ -21,11 +21,18 @@ const requiredExports = [
   ['./client', './lib/client.js'],
   ['./typert', './lib/typert.host.js'],
   ['./remote', './lib/typert.remote-client.js'],
+  ['./dsh-computer-use-darwin', './lib/vendor/dsh-computer-use-darwin/index.js'],
 ]
 for (const [key, expected] of requiredExports) {
   const actual = pkg.exports?.[key]
   if (actual !== expected) fail(`exports[${key}] must point to ${expected}, got ${String(actual)}`)
   read(expected.replace(/^\.\//, ''))
+}
+
+for (const forbiddenDependency of ['dsh-computer-use', '@deepseek-ai/dsh-tools']) {
+  if (pkg.dependencies?.[forbiddenDependency]) {
+    fail(`ordinary dependency ${forbiddenDependency} would duplicate/hijack the host DSH runtime; use a peer dependency or vendor the adapter`)
+  }
 }
 
 const client = read('lib/client.js').trimStart()
@@ -52,6 +59,8 @@ for (const required of [
   'lib/client.js',
   'lib/typert.host.js',
   'lib/typert.remote-client.js',
+  'lib/vendor/dsh-computer-use-darwin/index.js',
+  'lib/vendor/dsh-computer-use-darwin/LICENSE',
 ]) {
   if (!packed.has(required)) fail(`npm pack output omits ${required}`)
 }

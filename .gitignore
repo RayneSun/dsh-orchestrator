@@ -1,5 +1,6 @@
 node_modules/
 lib/
+!vendor/dsh-computer-use-darwin/lib/
 dist/
 *.tsbuildinfo
 .DS_Store

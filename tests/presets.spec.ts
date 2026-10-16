@@ -9,8 +9,12 @@ describe('Orchestrator agent presets', () => {
     expect(presets.map(preset => preset.id)).toEqual([LEAD_PRESET, WORKER_PRESET])
   })
 
-  it('Lead 全局工具白名单只保留向用户提问', () => {
+  it('Lead 全局工具白名单只保留向用户提问与长期记忆工具', () => {
     expect(LEAD_TOOL_ALLOW).toContain('ask_user_question')
+    expect(LEAD_TOOL_ALLOW).toContain('memory_search')
+    // 浏览器/桌面/邮件等执行工具不得出现在主控白名单
+    expect(LEAD_TOOL_ALLOW.some(name => name.startsWith('browser_'))).toBe(false)
+    expect(LEAD_TOOL_ALLOW.some(name => name.startsWith('qqmail_'))).toBe(false)
   })
 
   it('每个 agent-instructions 行都提供必需的 maxBytes', () => {
@@ -71,5 +75,9 @@ describe('Orchestrator agent presets', () => {
     expect(prefix).toContain('task_update')
     expect(prefix).toContain('completed')
     expect(prefix).toContain('工作区')
+    // 个人助理工况与记忆纪律
+    expect(prefix).toContain('browser_*')
+    expect(prefix).toContain('memory_remember')
+    expect(prefix).toContain('request-help')
   })
 })

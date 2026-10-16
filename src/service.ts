@@ -74,6 +74,8 @@ type DispatchProvision =
 
 /** Worker 子会话用空 section 遮蔽的全局系统提示段（同名 scoped section shadow 全局）。 */
 const WORKER_SUPPRESSED_SECTIONS = ['harness:source', 'app:web-surface', 'ui:deliverable-file-references'] as const
+/** Lead 白名单不含邮件工具，但 qqmail 会全局公告工具能力；遮蔽避免主控看到却调不到而产生幻觉。 */
+const LEAD_SUPPRESSED_SECTIONS = ['plugin:dsh-qqmail'] as const
 const RECOVERY_INTERVAL_MS = 15_000
 const REVISION_GUARD_MS = 120_000
 const TODO_FLUSH_DELAY_MS = 350
@@ -307,6 +309,9 @@ export class OrchestratorService extends TypertRemoteService {
       text: () => this.renderRoster(String(agent.session.id)),
     }))
     this.applyLeadToolWhitelist(agent, scoped)
+    for (const sectionName of LEAD_SUPPRESSED_SECTIONS) {
+      this.keep(agent, scoped.systemPrompt.section({ name: sectionName, order: 0, text: '', interpolate: false }))
+    }
     this.keep(agent, scoped.on('agent/pre-step', async ({ messages }, next) => {
       if (!messages.some(message => this.isManagedSettlement(agent, message))) return next()
       const visible = messages.filter(message => !this.isManagedSettlement(agent, message))

@@ -1,13 +1,25 @@
 # DSH Orchestrator
 
-DSH 主控助理编排插件。Lead 主会话只负责理解需求、维护路由卡、派发任务和转述结果；持久子会话保存完整执行上下文，每次派发对应一条 TaskRun。
+DSH 主控助理编排插件，也是一个开箱即用的个人助理能力包。Lead 主会话只负责理解需求、维护路由卡、派发任务和转述结果；持久子会话保存完整执行上下文，每次派发对应一条 TaskRun。
 
 ## 预设
 
-- `may-orchestrator-lead`：主控助理。工具采用**白名单**：仅保留编排工具和向用户提问工具；用户后安装的全局工具（MCP/插件）对 Lead 不可见，避免干扰路由。能直接回答的闲聊和解释类问题 Lead 直接回答，不派发。
+- `may-orchestrator-lead`：主控助理。工具采用**白名单**：仅保留编排工具、向用户提问工具和长期记忆工具；用户后安装的执行类全局工具（MCP/插件）对 Lead 不可见，避免干扰路由。能直接回答的闲聊和解释类问题 Lead 直接回答，不派发。
 - `may-orchestrator-worker`：统一执行 Worker。工具采用**黑名单**：文件、命令、网页、浏览器、技能、MCP 等宿主自带与用户安装的工具默认可用，仅禁止再派生子 Agent、调用编排工具和直接向用户提问。
 
 Worker 的任务上报协议、安全红线（支付/删除等不可逆操作先确认）、文件边界与整洁约束都固化在预设 persona 中，每次派发只传递任务本身（共享工作区，不重复环境声明）。`task_update` 状态为 running、input_required、completed、failed。
+
+## 个人助理能力包
+
+安装本 bundle 会同时启用：
+
+- `meow-memory`：工作区共享的跨会话长期记忆，是唯一长期记忆库。
+- `@wxg-prc-cpg/browser-skill-dsh-plugin`：浏览器自动化；需自行安装 `bsk` CLI 和浏览器扩展。
+- `@zhengjunyao/dsh-qqmail`：QQ 邮箱/IMAP/SMTP，默认只读，外发或删除需用户确认与配置授权码。
+- `@dsh-market/plugin`：Web 插件市场入口。
+- 桌面操控：macOS 使用本包内 vendored 的 `dsh-computer-use` 驱动；Windows 安装 `@milkuovo/dsh-computer-use`。两者通过平台 gate 二选一启用。vendored 驱动的 MIT 许可证见 `lib/vendor/dsh-computer-use-darwin/LICENSE`，仍需系统提供可执行的 `cua-driver`。
+
+这些能力插件的普通依赖不会把旧版 DSH runtime 提升到 profile 依赖树；macOS 驱动只通过宿主的 peer runtime 加载，避免覆盖 `@deepseek-ai/dsh-tools`。
 
 ## 工作方式
 
@@ -31,18 +43,18 @@ Worker 的任务上报协议、安全红线（支付/删除等不可逆操作先
 
 要求接收方已安装 DSH `0.2.1-alpha.1`，并且使用 Web profile。
 
-把 `may-dsh-orchestrator-0.2.7.tgz` 发给对方后执行：
+把 `may-dsh-orchestrator-0.3.0.tgz` 发给对方后执行：
 
 ```sh
-dsh plugin --profile web add /path/to/may-dsh-orchestrator-0.2.7.tgz
+dsh plugin add --profile web /path/to/may-dsh-orchestrator-0.3.0.tgz
 dsh web --no-open --host 127.0.0.1 --port 3080
 ```
 
 新版本覆盖安装时，先移除旧版本再添加新 tarball：
 
 ```sh
-dsh plugin --profile web remove @may/dsh-orchestrator
-dsh plugin --profile web add /path/to/may-dsh-orchestrator-0.2.7.tgz
+dsh plugin remove --profile web @may/dsh-orchestrator
+dsh plugin add --profile web /path/to/may-dsh-orchestrator-0.3.0.tgz
 ```
 
 重新生成分发包：
@@ -68,13 +80,13 @@ pnpm pack:dry
 安装到本地 Web profile：
 
 ```sh
-dsh plugin --profile web add /path/to/dsh-orchestrator
+dsh plugin add --profile web /path/to/dsh-orchestrator
 ```
 
 移除：
 
 ```sh
-dsh plugin --profile web remove @may/dsh-orchestrator
+dsh plugin remove --profile web @may/dsh-orchestrator
 ```
 
 启动：

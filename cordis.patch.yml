@@ -2,3 +2,35 @@
 - insert:
     - id: may-dsh-orchestrator
       name: '@may/dsh-orchestrator'
+
+    # ── 个人助理能力包：随本 bundle 自动安装启用 ──────────────────────
+    # 跨会话长期记忆：工作区共享的唯一长期记忆库（SQLite，零原生依赖）。
+    - id: meow-memory
+      name: 'meow-memory'
+
+    # 浏览器操作（独立 Agent Window，用户可旁观/接管）：代操作京东等个人平台。
+    # 需用户自备 bsk CLI 与浏览器扩展，缺省时浏览器工具会给出自救指引。
+    - id: browserskill
+      name: '@wxg-prc-cpg/browser-skill-dsh-plugin'
+
+    # QQ 邮箱（IMAP/SMTP）：默认只读，发信/删除/移动需用户在设置面板显式关闭只读。
+    # 首次使用需用户填入 QQ 邮箱授权码。
+    - id: qqmail
+      name: '@zhengjunyao/dsh-qqmail'
+      config:
+        announceToAgent: true
+        enabled: true
+        readOnly: true
+
+    # 插件市场（Web 侧边栏 UI，不向 agent 注册工具）。
+    - id: dsh-market
+      name: '@dsh-market/plugin'
+
+    # 桌面操控：按平台唯一启用一个驱动。macOS 驱动 vendored 在本包内，
+    # 只使用宿主 DSH runtime；Windows 驱动用 peerDependencies，均不会引入旧版 tools。
+    - id: computer-use-darwin
+      name: '@may/dsh-orchestrator/dsh-computer-use-darwin'
+      disabled: !!js "process.platform !== 'darwin'"
+    - id: computer-use-win32
+      name: '@milkuovo/dsh-computer-use'
+      disabled: !!js "process.platform !== 'win32'"
