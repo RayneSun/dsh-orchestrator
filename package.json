@@ -48,7 +48,8 @@
     "@deepseek-ai/dsh-subagent": "0.2.1-alpha.1",
     "@deepseek-ai/dsh-tools": "0.2.1-alpha.1",
     "@deepseek-ai/dsh-typert-protocol": "0.2.1-alpha.1",
-    "@deepseek-ai/schemastery": "^3.18.5-alpha.1"
+    "@deepseek-ai/schemastery": "^3.18.5-alpha.1",
+    "@deepseek-ai/dsh-session-title": "0.2.1-alpha.1"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",
@@ -110,6 +111,9 @@
       "optional": true
     },
     "@deepseek-ai/dsh-session-persistence": {
+      "optional": true
+    },
+    "@deepseek-ai/dsh-session-title": {
       "optional": true
     }
   },

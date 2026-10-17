@@ -2,7 +2,7 @@ import { mkdtemp, rm, readdir } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
-import { buildChildWorkspace, sanitizeWorkspaceName, wrapAgentCreateWithCwd } from '../src/workspaces.ts'
+import { buildChildWorkspace, sanitizeWorkspaceName } from '../src/workspaces.ts'
 
 const roots: string[] = []
 afterEach(async () => {
@@ -43,45 +43,5 @@ describe('子会话工作区路径', () => {
     const { mkdir } = await import('node:fs/promises')
     await mkdir(workspace.dir, { recursive: true })
     await expect(readdir(root)).resolves.toEqual(['etc-passwd'])
-  })
-})
-
-describe('agents.create 工作区注入', () => {
-  const childId = 'child-session-1'
-
-  function recorder() {
-    const calls: Array<Record<string, unknown>> = []
-    const create = async (options: Record<string, unknown>) => {
-      calls.push(options)
-      return options
-    }
-    return { calls, create }
-  }
-
-  it('只给目标子会话注入 meta.cwd，并保留已有 meta 字段', async () => {
-    const { calls, create } = recorder()
-    const wrapped = wrapAgentCreateWithCwd(create, childId, '/ws/x')
-    await wrapped({ sessionId: childId, meta: { cwd: '/ws', parentSession: 'p', origin: 'subagent' } })
-    expect(calls[0].meta).toEqual({
-      cwd: '/ws/x',
-      parentSession: 'p',
-      origin: 'subagent',
-    })
-    // 原始 options 不被改写
-  })
-
-  it('其他会话的创建调用原样透传（同一引用）', async () => {
-    const { calls, create } = recorder()
-    const wrapped = wrapAgentCreateWithCwd(create, childId, '/ws/child')
-    const options = { sessionId: 'another-session', meta: { cwd: '/ws' } }
-    await wrapped(options)
-    expect(calls[0]).toBe(options)
-  })
-
-  it('sessionId 类型不一致时按字符串比较，缺失 meta 时自动补上', async () => {
-    const { calls, create } = recorder()
-    const wrapped = wrapAgentCreateWithCwd(create, '123', '/ws/child')
-    await wrapped({ sessionId: 123 })
-    expect(calls[0].meta).toEqual({ cwd: '/ws/child' })
   })
 })

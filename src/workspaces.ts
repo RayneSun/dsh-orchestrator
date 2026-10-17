@@ -51,18 +51,3 @@ export async function buildChildWorkspace(rootCwd: string, requestedName: string
   }
   throw new Error(`无法为子会话分配工作区目录：${slug} 的可用名称已耗尽`)
 }
-
-type AgentCreate = (options: Record<string, unknown>) => Promise<unknown>
-
-/**
- * 包装 agents.create：仅对预分配 childSessionId 的那次创建注入 meta.cwd（覆盖
- * childSessionMeta 从父会话继承的 cwd），其余调用原样透传。注入的 cwd 会持久化
- * 进子会话 session header，后续恢复与文件/命令工具都以它为工作目录。
- */
-export function wrapAgentCreateWithCwd(create: AgentCreate, childSessionId: string, cwd: string): AgentCreate {
-  return options => {
-    if (String(options.sessionId) !== childSessionId) return create(options)
-    const meta = (options.meta && typeof options.meta === 'object' ? options.meta : {}) as Record<string, unknown>
-    return create({ ...options, meta: { ...meta, cwd } })
-  }
-}

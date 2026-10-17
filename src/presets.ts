@@ -97,6 +97,8 @@ export function buildPresetDefinitions(): PresetDefinition[] {
           config: { sampleOverCapGlobResults: false },
         },
         { id: 'tool-jobs', name: '@deepseek-ai/dsh-tool-jobs' },
+        // 定时/周期提醒：Worker 是根会话（delegationDepth=0），schedule 绑定并触发回本子会话。
+        { id: 'tool-schedule', name: '@deepseek-ai/dsh-tool-schedule' },
         { id: 'skill-filesystem', name: '@deepseek-ai/dsh-skill-filesystem' },
         { id: 'tool-skill', name: '@deepseek-ai/dsh-tool-skill' },
         { id: 'tool-todo', name: '@deepseek-ai/dsh-tool-todo', config: { allowParallelInProgress: true } },

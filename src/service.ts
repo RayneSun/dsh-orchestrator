@@ -1,8 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { mkdir, rmdir } from 'node:fs/promises'
-import { Context, Service, symbols } from '@deepseek-ai/cordis'
+import { Context, Service } from '@deepseek-ai/cordis'
 import { createUserMessage, type ContextFormed } from '@deepseek-ai/dsh-llm'
-import { queueHostSubagentPrompt, steerHostSubagentPrompt } from '@deepseek-ai/dsh-subagent/internal'
 import { delegationDepthOf } from '@deepseek-ai/dsh-subagent'
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import { Remote, TypertRemoteService } from '@deepseek-ai/dsh-typert-protocol'
@@ -12,11 +11,11 @@ import type { SessionId } from '@deepseek-ai/dsh-session'
 import type {} from '@deepseek-ai/dsh-agent-preset-registry'
 import type {} from '@deepseek-ai/dsh-api-session-controller'
 import type {} from '@deepseek-ai/dsh-session-persistence'
-import { WORKER_PROMPT, deliveryNotice, revisionPrompt, workerPrompt } from './messages.ts'
+import { deliveryNotice, revisionPrompt, workerPrompt } from './messages.ts'
 import { toJson } from './json.ts'
 import { isWorkerToolForbidden } from './worker-policy.ts'
 import { normalizeProgressSteps } from './progress.ts'
-import { buildChildWorkspace, wrapAgentCreateWithCwd } from './workspaces.ts'
+import { buildChildWorkspace } from './workspaces.ts'
 import { orchestratorDomain } from './storage.ts'
 import { buildPresetDefinitions, LEAD_PRESET, LEAD_TOOL_ALLOW, WORKER_PRESET } from './presets.ts'
 import {
@@ -84,8 +83,6 @@ const TODO_FLUSH_DELAY_MS = 350
 const LAUNCH_ACCEPT_TIMEOUT_MS = 120_000
 const PERSISTENCE_STAT_TIMEOUT_MS = 5_000
 
-type WorkerTurnEnd = { until: number; cause: WorkerTurnEndCause }
-
 function isSessionNotFoundError(error: unknown): boolean {
   if (!error || typeof error !== 'object') return false
   const candidate = error as { name?: unknown; message?: unknown }
@@ -113,8 +110,8 @@ function formatRosterTime(value: string): string {
 
 export class OrchestratorService extends TypertRemoteService {
   static inject = [
-    'agents', 'sessions', 'subagents', 'storageDomain',
-    'sessionController', 'sessionPersistence', 'agentPresets',
+    'agents', 'sessions', 'storageDomain',
+    'sessionController', 'sessionPersistence', 'agentPresets', 'sessionTitle',
   ]
 
   private ready: Promise<void>
@@ -124,11 +121,8 @@ export class OrchestratorService extends TypertRemoteService {
   private readonly delivering = new Set<string>()
   private readonly pendingTodoSteps = new Map<string, { taskId: string; steps: ProgressStep[] }>()
   private readonly todoTimers = new Map<string, ReturnType<typeof setTimeout>>()
-  private readonly revisionEndGuards = new Map<string, { until: number; oldTaskId: string }>()
-  // 改单 interrupt 自身会产生一次 aborted turn/end，需要忽略，不能当成手动停止。
+  // 改单 cancel 自身会产生一次 aborted turn/end，需要忽略，不能当成手动停止或任务失败。
   private readonly revisionTurnEnds = new Map<string, number>()
-  // 子会话 turn/end aborted/interrupted → 紧随其后的 subagent/end 是手动停止，不是任务失败。
-  private readonly workerTurnEnds = new Map<string, WorkerTurnEnd>()
   private recoveryTimer: ReturnType<typeof setInterval> | undefined
 
   constructor(private readonly hostCtx: Context) {
@@ -161,11 +155,6 @@ export class OrchestratorService extends TypertRemoteService {
     try {
       await this.registerPresets()
       this.hostCtx.effect(() => {
-        const offEnd = this.hostCtx.on('subagent/end', (info) => {
-          void this.onSubagentEnd(String(info.id)).catch(error => {
-            this.hostCtx.logger.warn(`orchestrator: subagent/end handler failed: ${String(error)}`)
-          })
-        })
         const offPreset = this.hostCtx.on('agent-preset/selected', (sessionId, preset) => {
           if (preset !== LEAD_PRESET) return
           const agent = this.hostCtx.agents.get(sessionId as SessionId)
@@ -181,7 +170,6 @@ export class OrchestratorService extends TypertRemoteService {
         this.recoveryTimer = setInterval(() => { void this.recoverDeliveries() }, RECOVERY_INTERVAL_MS)
         this.recoveryTimer.unref()
         return async () => {
-          offEnd()
           offPreset()
           offCreated()
           if (this.recoveryTimer) clearInterval(this.recoveryTimer)
@@ -406,15 +394,17 @@ export class OrchestratorService extends TypertRemoteService {
         const until = this.revisionTurnEnds.get(childId)
         if (until) {
           this.revisionTurnEnds.delete(childId)
-          if (Date.now() <= until) return // 改单 interrupt 的预期内轮次结束，不是手动停止。
+          if (Date.now() <= until) return // 改单 cancel 的预期内轮次结束，不是手动停止。
         }
         const cause = classifyWorkerTurnEnd(ev.data?.reason)
-        if (cause) this.workerTurnEnds.set(childId, { until: Date.now() + REVISION_GUARD_MS, cause })
+        void this.onWorkerTurnEnd(childId, cause).catch(error => {
+          this.hostCtx.logger.warn(`orchestrator: worker turn/end handler failed: ${String(error)}`)
+        })
       }
     }))
     this.keep(agent, scoped.tools.register(defineTool({
       name: 'task_update',
-      description: '向 Orchestrator Host 上报当前子会话活动 TaskRun 的状态。不接受 task id，Host 根据会话身份反查。',
+      description: '向 Orchestrator Host 上报当前子会话活动 TaskRun 的状态。不接受 task id，Host 根据会话身份反查。无活动任务时仅允许 completed（定时触发后的结果上报）。',
       parameters: {
         status: { type: 'string', required: true, enum: [...taskUpdateStatuses] },
         progressNote: { type: 'string', description: '进展说明' },
@@ -444,29 +434,10 @@ export class OrchestratorService extends TypertRemoteService {
     })))
   }
 
-  private armRevisionEndGuard(childSessionId: string, oldTaskId: string): void {
-    // interrupt 的取消效果异步到达：下一次 subagent/end 属于旧轮次，必须忽略。
-    // 守卫过期后不再吞掉新任务真正的失败信号。
-    const until = Date.now() + REVISION_GUARD_MS
-    this.revisionEndGuards.set(childSessionId, { until, oldTaskId })
-    this.revisionTurnEnds.set(childSessionId, until)
-  }
-
-  /** 取子会话最近一次结束原因；时间窗口外视为过期，防止旧 turn 波及新任务。 */
-  private consumeWorkerTurnEnd(childSessionId: string): WorkerTurnEndCause | undefined {
-    const turn = this.workerTurnEnds.get(childSessionId)
-    if (!turn) return undefined
-    this.workerTurnEnds.delete(childSessionId)
-    return Date.now() <= turn.until ? turn.cause : undefined
-  }
-
-  /** 改单注入中断后，旧轮次结束属于预期事件：仅当活动任务确实已切到新任务时忽略一次。 */
-  private consumeRevisionEnd(childSessionId: string, activeTaskId: string | null | undefined): boolean {
-    const guard = this.revisionEndGuards.get(childSessionId)
-    if (!guard) return false
-    this.revisionEndGuards.delete(childSessionId)
-    if (Date.now() > guard.until) return false
-    return activeTaskId !== guard.oldTaskId
+  private armRevisionTurnGuard(childSessionId: string): void {
+    // cancel 的取消效果异步到达：下一次 turn/end 属于旧轮次，必须忽略。
+    // 守卫过期后不再吞掉新任务真正的结束信号。
+    this.revisionTurnEnds.set(childSessionId, Date.now() + REVISION_GUARD_MS)
   }
 
   private queueTodoProgress(childSessionId: string, rawTodos: unknown): void {
@@ -642,8 +613,8 @@ export class OrchestratorService extends TypertRemoteService {
       const existing = this.conversationById(args.conversationId)
       if (!existing || existing.parentSessionId !== parentSessionId) return { ok: false, result: { kind: 'error', error: 'conversation not found' } }
 
-      // 改需求：先在存储里原子完成“旧任务 interrupted + 新任务 active”，再中断子会话当前轮次，
-      // 最后用 steer 把新需求注入同一个持久子会话。这样 subagent/end 到达时不会把旧任务误判为 failed。
+      // 改需求：先在存储里原子完成“旧任务 interrupted + 新任务 active”，再取消子会话当前轮次，
+      // 最后用 followup 把新需求注入同一个持久子会话。这样旧轮次的 turn/end 到达时不会把旧任务误判为 failed。
       let interruptedTaskId: string | undefined
       if (existing.activeTaskId) {
         const active = this.taskById(existing.activeTaskId)
@@ -670,48 +641,27 @@ export class OrchestratorService extends TypertRemoteService {
         if (active) {
           const interruptedTask = interruptTaskForRevision(active, `被新需求「${args.subject}」接管`, at)
           await this.tasks().put(interruptedTaskId, interruptedTask)
-          // interrupt 会异步带来一次 subagent/end；那是改单的预期结果，不是任务失败。
-          this.armRevisionEndGuard(existing.childSessionId, interruptedTaskId)
+          // cancel 会异步带来一次旧轮次的 turn/end；那是改单的预期结果，不是任务失败。
+          this.armRevisionTurnGuard(existing.childSessionId)
         }
       }
       await this.putPair(conv, task)
 
       if (interruptedTaskId) {
-        // interrupt 本身失败不应拖垮新任务：steer 也会抢占当前轮次，queue 则等旧轮次自然结束后注入。
+        // cancel 本身失败不应拖垮新任务：取消当前轮次后照常注入，新需求在旧轮次收敛后运行。
         try {
-          this.hostCtx.subagents.interrupt(existing.childSessionId as SessionId, { kind: 'ancestor', agent: parent })
+          await this.interruptWorker(existing.childSessionId)
         } catch (interruptError) {
-          this.hostCtx.logger.warn(`orchestrator: interrupt before revise failed, continue with steer/queue: ${String(interruptError)}`)
+          this.hostCtx.logger.warn(`orchestrator: cancel before revise failed, continue with inject: ${String(interruptError)}`)
         }
       }
       try {
         const text = interruptedTaskId ? revisionPrompt(task) : workerPrompt(task)
-        const blocks = [{ type: 'text' as const, text }]
-        const source = {
-          kind: 'orchestrator' as const,
-          form: 'notice' as const,
-          summary: `orchestrator ${interruptedTaskId ? 'revise' : 'task'} ${task.subject}`.slice(0, 120),
-        }
-        if (interruptedTaskId) {
-          // 改单时 steer 抢占当前轮次；若运行时不接受则退化为排队，等旧轮次结束后注入。
-          try {
-            await steerHostSubagentPrompt(
-              this.hostCtx.subagents, parent, conv.childSessionId as SessionId, blocks, source,
-              AbortSignal.timeout(LAUNCH_ACCEPT_TIMEOUT_MS),
-            )
-          } catch (steerError) {
-            this.hostCtx.logger.warn(`orchestrator: steer failed, fallback to queue: ${String(steerError)}`)
-            await queueHostSubagentPrompt(
-              this.hostCtx.subagents, parent, conv.childSessionId as SessionId, blocks, source,
-              AbortSignal.timeout(LAUNCH_ACCEPT_TIMEOUT_MS),
-            )
-          }
-        } else {
-          await queueHostSubagentPrompt(
-            this.hostCtx.subagents, parent, conv.childSessionId as SessionId, blocks, source,
-            AbortSignal.timeout(LAUNCH_ACCEPT_TIMEOUT_MS),
-          )
-        }
+        // 取消后的 followup 会排队并在被中止轮次收敛为 idle 后开启新一轮（agent-loop 的 wake 收敛语义）。
+        await this.deliverToWorker(
+          conv.childSessionId, text,
+          `orchestrator ${interruptedTaskId ? 'revise' : 'task'} ${task.subject}`,
+        )
       } catch (error) {
         return { ok: false, result: await this.failLaunch(conv, task, error) }
       }
@@ -744,19 +694,8 @@ export class OrchestratorService extends TypertRemoteService {
       })
       await this.putPair(conv, task)
       try {
-        await this.withChildWorkspaceCwd(childSessionId, workspace.dir, () => this.hostCtx.subagents.startContinuable({
-          provider: 'spawn',
-          label: args.subject,
-          childId: childSessionId as SessionId,
-          request: {
-            prompt: [{ type: 'text', text: workerPrompt(task) }],
-            parent,
-            persona: WORKER_PROMPT,
-            // 创建窗口先继承 Lead preset；文件等工具要等 Worker preset recompose 后才可枚举。
-            maxDepth: 1,
-          },
-          signal: AbortSignal.timeout(LAUNCH_ACCEPT_TIMEOUT_MS),
-        }))
+        await this.createWorkerAgent(childSessionId, workspace.dir, parent, args.subject)
+        await this.deliverToWorker(childSessionId, workerPrompt(task), `orchestrator task ${task.subject}`)
       } catch (error) {
         return { ok: false, result: await this.failLaunch(conv, task, error) }
       }
@@ -779,32 +718,53 @@ export class OrchestratorService extends TypertRemoteService {
   }
 
   /**
-   * startContinuable 的公开契约不支持每次启动指定 cwd：内部固定从 parent header 继承。
-   * 这里仅在本次创建窗口替换 agents.create，按预分配 childId 注入 meta.cwd；
-   * 持久子会话之后由自己的 session header 保留独立工作区，冷恢复也继续使用该目录。
+   * 创建根级别的 Worker 会话：与主会话同为一等会话（不带 origin/delegationDepth 的
+   * subagent 血统），因此 schedule 等只对 depth-0 会话开放的宿主能力对 Worker 可用。
+   * cwd 与 agentPreset 直接写入 session header，冷恢复后保持不变；模型配置继承主会话。
    */
-  private async withChildWorkspaceCwd<T>(childSessionId: string, cwd: string, work: () => Promise<T>): Promise<T> {
-    const proxied = this.hostCtx.agents as unknown as Record<PropertyKey, unknown> & {
-      create(options: Record<string, unknown>): Promise<unknown>
-    }
-    // ctx.agents 是 Cordis tracing proxy：每次读方法都会包一层新代理，身份比较恒不相等；
-    // 必须先用 symbols.original 解包到真实服务实例，再往实例上遮蔽 create。
-    const real = (proxied[symbols.original] ?? proxied) as {
-      create(options: Record<string, unknown>): Promise<unknown>
-    }
-    const original = real.create
-    const hadOwn = Object.prototype.hasOwnProperty.call(real, 'create')
-    const wrapped = wrapAgentCreateWithCwd(original.bind(real), childSessionId, cwd)
-    real.create = wrapped
-    // 严格模式下不可写会直接抛 TypeError；再防一层奇异对象静默吞掉赋值。
-    if (real.create !== wrapped) throw new Error('无法为子会话注入独立工作区：agents.create 不可重写')
-    try {
-      return await work()
-    } finally {
-      // 恢复原状：原来没有自有属性时删除遮蔽属性，还原原型方法。
-      if (hadOwn) real.create = original
-      else delete (real as Partial<typeof real>).create
-    }
+  private async createWorkerAgent(childSessionId: string, cwd: string, parent: Agent, title: string): Promise<void> {
+    await this.hostCtx.agents.withoutInitiator(async () => {
+      const handle = await this.hostCtx.agents.create({
+        sessionId: childSessionId as SessionId,
+        meta: { cwd, agentPreset: WORKER_PRESET },
+        agentOptions: { ...parent.options },
+        signal: AbortSignal.timeout(LAUNCH_ACCEPT_TIMEOUT_MS),
+      })
+      try {
+        // 自动标题只响应真人消息（source=orchestrator 的任务注入不触发），显式命名为任务主题。
+        this.hostCtx.sessionTitle.rename(handle.agent.session, title)
+      } catch (titleError) {
+        this.hostCtx.logger.warn(`orchestrator: rename worker session failed: ${String(titleError)}`)
+      }
+    })
+  }
+
+  /**
+   * 向 Worker 会话投递任务消息：resolveAgent 恢复冷会话后 followup 排队（空闲即开轮；
+   * 改单时排在被中止轮次之后运行）。消息经 flush 落盘后才算投递成功，
+   * 与 dsh-schedule 的提醒投递是同一机制。
+   */
+  private async deliverToWorker(childSessionId: string, text: string, summary: string): Promise<void> {
+    await this.hostCtx.agents.withoutInitiator(async () => {
+      const resolved = await this.hostCtx.sessionController.resolveAgent(childSessionId as SessionId)
+      if ('error' in resolved) throw resolved.error
+      const message = createUserMessage({
+        content: [{ type: 'text', text }],
+        source: { kind: 'orchestrator', form: 'notice', summary: summary.slice(0, 120) },
+      })
+      resolved.agent.followup(message)
+      const flushed = await this.hostCtx.sessions.flush(resolved.agent.session)
+      if (!flushed) throw new Error('Session persistence did not acknowledge orchestrator worker prompt')
+    })
+  }
+
+  /** 取消 Worker 当前轮次（改单前置）：原因记为 parent，turn/end 据此归类为 revision。 */
+  private async interruptWorker(childSessionId: string): Promise<void> {
+    await this.hostCtx.agents.withoutInitiator(async () => {
+      const resolved = await this.hostCtx.sessionController.resolveAgent(childSessionId as SessionId)
+      if ('error' in resolved) throw resolved.error
+      resolved.agent.cancel({ kind: 'parent' })
+    })
   }
 
   private async failLaunch(conv: ConversationRecord, task: TaskRecord, error: unknown): Promise<unknown> {
@@ -826,8 +786,28 @@ export class OrchestratorService extends TypertRemoteService {
     let terminalTaskId: string | undefined
     const result = await this.serialize(async () => {
       const conv = this.conversationByChild(childSessionId)
-      if (!conv || !conv.activeTaskId) {
-        throw new Error('task_update is only available in a managed worker with an active task')
+      if (!conv) throw new Error('task_update is only available in a managed worker')
+      if (!conv.activeTaskId) {
+        // 定时提醒触发等无活动任务的轮次：只允许 completed 上报，
+        // 生成一条 ad-hoc 已完成任务并照常经 outbox 投递给主会话。
+        if (args.status !== 'completed') {
+          throw new Error('no active task: only completed task_update is allowed (e.g. schedule-fired reporting)')
+        }
+        const subject = (args.outlinePatch?.title?.trim() || args.userAnswer?.trim().split('\n')[0] || '定时触发上报').slice(0, 60)
+        const seeded = createTask({
+          id: createId('task'),
+          parentSessionId: conv.parentSessionId,
+          conversationId: conv.id,
+          predecessorTaskId: conv.lastTaskId,
+          subject,
+          prompt: '（定时触发或 Worker 自发上报）',
+        })
+        const task = transitionTask({ ...seeded, status: 'running', startedAt: seeded.createdAt }, args)
+        const patched = args.outlinePatch ? applyOutlinePatch(conv, args.outlinePatch as OutlinePatch) : conv
+        await this.putPair(settleConversation(patched, task), task)
+        terminalTaskId = task.id
+        shouldDeliver = task.delivery?.state === 'pending'
+        return { ok: true as const, status: task.status }
       }
       const previous = this.taskById(conv.activeTaskId)
       if (!previous) throw new Error('active task record is missing')
@@ -848,24 +828,20 @@ export class OrchestratorService extends TypertRemoteService {
     return result
   }
 
-  private async onSubagentEnd(childSessionId: string): Promise<void> {
+  /**
+   * Worker 轮次结束的结算：task_update 已提交终态的任务在 settle 后 activeTaskId 为空，
+   * 走到这里的都是“轮次结束了但任务没有终态”——按结束原因分为手动停止、改单中断或失败。
+   */
+  private async onWorkerTurnEnd(childSessionId: string, endCause: WorkerTurnEndCause | undefined): Promise<void> {
     let shouldDeliver = false
     let taskId: string | undefined
-    let outcome: 'ignored' | 'manual_stop' | 'revision' | 'failed' | undefined
+    let outcome: 'manual_stop' | 'revision' | 'failed' | undefined
     await this.serialize(async () => {
       const conv = this.conversationByChild(childSessionId)
       if (!conv?.activeTaskId) return
-      if (this.consumeRevisionEnd(childSessionId, conv.activeTaskId)) {
-        // 改单注入产生的预期内旧轮次结束；同一事件原因令牌也作废，避免波及新任务。
-        this.workerTurnEnds.delete(childSessionId)
-        this.revisionTurnEnds.delete(childSessionId)
-        outcome = 'ignored'
-        return
-      }
       const previous = this.taskById(conv.activeTaskId)
       if (!previous || !(activeTaskStatuses as readonly string[]).includes(previous.status)) return
       const now = timestamp()
-      const endCause = this.consumeWorkerTurnEnd(childSessionId)
       let task: TaskRecord
       let nextConv: ConversationRecord
       if (endCause === 'manual_stop') {
@@ -890,10 +866,6 @@ export class OrchestratorService extends TypertRemoteService {
       await this.putPair(nextConv, task)
       taskId = task.id
     })
-    if (outcome === 'ignored') {
-      this.hostCtx.logger.info?.(`orchestrator: ignore expected subagent/end after revision: ${childSessionId}`)
-      return
-    }
     if (outcome === 'manual_stop') {
       this.hostCtx.logger.info?.(`orchestrator: task ${taskId} interrupted by manual stop: ${childSessionId}`)
     }
