@@ -40,6 +40,28 @@ export function buildPresetDefinitions(): PresetDefinition[] {
     },
     { id: 'time-context', name: '@deepseek-ai/dsh-time-context' },
   ]
+  // 子智能体：与平台 standard 预设同款的 delegation 组（不含 workflow-ptc，
+  // 高层编排循环仍由黑名单拦截）。后端 spawn/fork 驻留宿主平面，这里只选择工具面。
+  const delegation: PluginRow = {
+    id: 'delegation',
+    name: 'cordis:group',
+    group: true,
+    isolate: { workflowEngine: true },
+    config: [
+      { id: 'tool-subagent-control', name: '@deepseek-ai/dsh-tool-subagent-control' },
+      { id: 'tool-subagent-list-agents', name: '@deepseek-ai/dsh-tool-subagent-control/list-agents' },
+      {
+        id: 'tool-subagent',
+        name: '@deepseek-ai/dsh-tool-subagent',
+        config: { provider: 'spawn', toolName: 'subagent', modelSelectionSettings: true },
+      },
+      {
+        id: 'tool-subagent-fork',
+        name: '@deepseek-ai/dsh-tool-subagent',
+        config: { provider: 'fork', toolName: 'subagent_fork' },
+      },
+    ],
+  }
   const compaction: PluginRow = {
     id: 'compaction',
     name: 'cordis:group',
@@ -77,7 +99,7 @@ export function buildPresetDefinitions(): PresetDefinition[] {
       id: WORKER_PRESET,
       name: '执行 Worker',
       order: 20,
-      description: '可使用宿主与用户安装的全部工具执行任务；禁止再派生子 Agent，通过 task_update 上报状态',
+      description: '可使用宿主与用户安装的全部工具执行任务（含子智能体与后台任务）；禁止编排循环与 orchestrator 工具，通过 task_update 上报状态',
       plugins: [
         {
           id: 'persona',
@@ -96,6 +118,7 @@ export function buildPresetDefinitions(): PresetDefinition[] {
           config: { sampleOverCapGlobResults: false },
         },
         { id: 'tool-jobs', name: '@deepseek-ai/dsh-tool-jobs' },
+        delegation,
         // 定时/周期提醒：Worker 是根会话（delegationDepth=0），schedule 绑定并触发回本子会话。
         { id: 'tool-schedule', name: '@deepseek-ai/dsh-tool-schedule' },
         { id: 'skill-filesystem', name: '@deepseek-ai/dsh-skill-filesystem' },

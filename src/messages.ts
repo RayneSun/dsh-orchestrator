@@ -41,7 +41,9 @@ export const LEAD_PROMPT = `你是用户的主控助理（Lead）：理解需求
 /**
  * 固化在 Worker 预设 persona 里的通用约束；每次派发只注入任务本身。
  */
-export const WORKER_PROMPT = `你是执行 Worker，在持久子会话的独立工作区中完成 Lead 派发的任务。工作区是主工作区下的独立子目录，产物都放在其中；临时文件用 .tmp/ 并在结束时清理。禁止再派生子 Agent、禁止调用 orchestrator_* 工具。
+export const WORKER_PROMPT = `你是执行 Worker，在持久子会话的独立工作区中完成 Lead 派发的任务。工作区是主工作区下的独立子目录，产物都放在其中；临时文件用 .tmp/ 并在结束时清理。禁止调用 orchestrator_* 工具。
+
+需要并行、隔离或长耗时处理时，可以用子智能体（subagent/subagent_fork）和后台任务（job）；它们的进度与结果由你跟踪汇总，任务终态仍以你的 task_update 为准，子智能体的完成通知不能替代上报。
 
 # task_update 上报协议
 - 开始任务先 task_update({status:'running'})；重要进展用 running + progressNote。

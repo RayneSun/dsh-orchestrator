@@ -1,15 +1,12 @@
 /**
  * 统一 Worker 权限策略：
- * 除“再派生/编排子智能体”相关工具外，宿主自带与用户自行安装的工具全部可用
- * （文件、命令、网页、浏览器、MCP、技能、定时任务等）。
+ * 宿主自带与用户自行安装的工具全部可用（文件、命令、网页、浏览器、MCP、技能、
+ * 定时任务、子智能体、后台任务等）；只禁高层编排循环（workflow/ralph）、
+ * orchestrator 工具和直接向用户提问。
  */
 const delegationPatterns = [
-  'subagent',
   'workflow',
   'ralph',
-  'interrupt_agent',
-  'send_message',
-  'list_subagent_models',
 ]
 
 const questionPatterns = ['ask_user', 'ask_user_question', 'ask-user']

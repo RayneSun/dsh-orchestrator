@@ -44,8 +44,11 @@ describe('Orchestrator agent presets', () => {
     }
   })
 
-  it('统一 Worker 组合完整执行工具集，且不组合任何派生/编排插件', () => {
-    const names = new Set(byId.get(WORKER_PRESET)!.plugins.map(row => row.name))
+  it('统一 Worker 组合完整执行工具集，且不组合高层编排循环插件', () => {
+    // 展开 cordis:group 的子行，delegation/compaction 组内的插件也计入
+    const flatten = (rows: readonly any[]): Set<string> => new Set(rows.flatMap(row =>
+      row.group ? [row.name, ...flatten(row.config as any[])] : [row.name]))
+    const names = flatten(byId.get(WORKER_PRESET)!.plugins)
     for (const name of [
       '@deepseek-ai/dsh-tool-bash',
       '@deepseek-ai/dsh-tool-fs',
@@ -56,6 +59,9 @@ describe('Orchestrator agent presets', () => {
       '@deepseek-ai/dsh-tool-todo',
       '@deepseek-ai/dsh-tool-web',
       '@deepseek-ai/dsh-persona',
+      // 子智能体工具组（spawn/fork 与控制面）
+      '@deepseek-ai/dsh-tool-subagent',
+      '@deepseek-ai/dsh-tool-subagent-control',
     ]) {
       expect(names.has(name)).toBe(true)
     }
@@ -65,9 +71,7 @@ describe('Orchestrator agent presets', () => {
       '@deepseek-ai/dsh-tool-present',
       '@deepseek-ai/dsh-tool-goal',
       '@deepseek-ai/dsh-command-goal',
-      // 禁止再派生
-      '@deepseek-ai/dsh-tool-subagent',
-      '@deepseek-ai/dsh-tool-subagent-control',
+      // 禁止高层编排循环
       '@deepseek-ai/dsh-tool-workflow',
       '@deepseek-ai/dsh-tool-ralph',
       '@deepseek-ai/dsh-workflow-ptc',
@@ -88,7 +92,8 @@ describe('Orchestrator agent presets', () => {
     expect(prefix).toContain('reasonCode')
     expect(prefix).toContain('权限、配置、依赖、网络等系统阻碍')
     expect(prefix).toContain('input_required 请用户本人接管')
-    expect(prefix).toContain('禁止再派生子 Agent')
+    expect(prefix).toContain('subagent')
+    expect(prefix).not.toContain('禁止再派生')
   })
 
   it('bundle patch 自动把 Lead 预设设为默认，无需用户手改配置文件', () => {

@@ -2,8 +2,8 @@ import { describe, expect, it } from 'vitest'
 import { isWorkerToolForbidden, workerForbiddenPatterns } from '../src/worker-policy.ts'
 
 describe('统一 Worker 权限', () => {
-  it('禁止再派生或编排子 Agent', () => {
-    for (const name of ['subagent', 'subagent_spawn', 'subagent_fork', 'workflow', 'ralph', 'interrupt_agent', 'send_message', 'list_subagent_models']) {
+  it('禁止高层编排循环（workflow/ralph）', () => {
+    for (const name of ['workflow', 'workflow_run', 'ralph']) {
       expect(isWorkerToolForbidden(name)).toContain(name)
     }
   })
@@ -25,6 +25,7 @@ describe('统一 Worker 权限', () => {
       'read', 'write', 'edit', 'str_replace_editor', 'bash', 'pwsh', 'run_code',
       'glob', 'grep', 'web_search', 'web_fetch', 'task_update',
       'job_list', 'job_output', 'job_kill', 'todo_write', 'goal_create',
+      'subagent', 'subagent_fork', 'interrupt_agent', 'send_message', 'list_subagent_models',
       'browser_session', 'browser_page', 'browser_interact',
       'mcp__writer__update', 'tool:read',
     ]) {

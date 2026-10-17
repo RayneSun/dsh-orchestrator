@@ -90,7 +90,7 @@ dsh plugin --profile web add <tgz 绝对路径>
 - Lead：`scoped.tools.restrict({ allow })`，allow 名单见 `LEAD_TOOL_ALLOW`（presets.ts）。
   - restrict 只过滤**全局**工具；scope 内注册的 orchestrator_* 始终可见。
   - 必须先枚举实际注册的全局工具取交集再 restrict（传未知名会 throw）；枚举失败退回无限制并 warn，fail-open 比让主控失能安全。
-- Worker：`scoped.tools.guard(isWorkerToolForbidden)`（worker-policy.ts）。模式匹配见 `workerForbiddenPatterns`（含 subagent/workflow/ralph/send_message/orchestrator/ask_user 等）；新增"禁止类"工具只改这里。
+- Worker：`scoped.tools.guard(isWorkerToolForbidden)`（worker-policy.ts）。模式匹配见 `workerForbiddenPatterns`（workflow/ralph/orchestrator/ask_user）；新增"禁止类"工具只改这里。子智能体工具由 Worker 预设的 delegation 组显式组合（与平台 standard 预设同款，spawn/fork 后端驻留宿主平面）。
 - 不要用白名单裁剪 Worker——用户后装工具（MCP/浏览器/技能）必须默认可用。
 
 ### 定时任务
@@ -153,4 +153,4 @@ dsh plugin --profile web add <tgz 绝对路径>
 ## 背景材料
 
 - README.md：用户面说明，发版时随版本号更新。
-- git log：0.2.0（background/单 Worker 预设）→ 0.2.1（路由追问兜底/改单 steer/blocked 提问）→ 0.2.2（todo 进度桥接看板）→ 0.2.3（interrupted 改单语义）→ 0.2.4（手动停止捕获、看板与话术精简）→ 0.2.5（白名单、input_required、上下文瘦身、鲁棒性）→ 0.2.6（手动中断通知、状态配色、Worker 提示词瘦身）→ 0.2.7（子会话折叠、柔光动效、按钮突出、提示词/恢复加固）→ 0.3.0（个人助理能力 bundle）→ 0.3.2（Worker 根会话化、blocked 系统受阻语义、默认 Lead 预设免手改）→ 0.3.3（DSH 0.2.1-rc.2 适配、移除 dsh-market）→ 0.3.4（记忆共享、settled 死代码清理、文档重写）。
+- git log：0.2.0（background/单 Worker 预设）→ 0.2.1（路由追问兜底/改单 steer/blocked 提问）→ 0.2.2（todo 进度桥接看板）→ 0.2.3（interrupted 改单语义）→ 0.2.4（手动停止捕获、看板与话术精简）→ 0.2.5（白名单、input_required、上下文瘦身、鲁棒性）→ 0.2.6（手动中断通知、状态配色、Worker 提示词瘦身）→ 0.2.7（子会话折叠、柔光动效、按钮突出、提示词/恢复加固）→ 0.3.0（个人助理能力 bundle）→ 0.3.2（Worker 根会话化、blocked 系统受阻语义、默认 Lead 预设免手改）→ 0.3.3（DSH 0.2.1-rc.2 适配、移除 dsh-market）→ 0.3.4（记忆共享、settled 死代码清理、文档重写）→ 0.3.5（Worker 放开子智能体与后台任务）。
