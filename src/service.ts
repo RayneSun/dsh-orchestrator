@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { mkdir, rmdir } from 'node:fs/promises'
+import { dirname } from 'node:path'
 import { Context, Service } from '@deepseek-ai/cordis'
 import { createUserMessage, type ContextFormed } from '@deepseek-ai/dsh-llm'
 import { delegationDepthOf } from '@deepseek-ai/dsh-subagent'
@@ -15,7 +16,7 @@ import { deliveryNotice, revisionPrompt, workerPrompt } from './messages.ts'
 import { toJson } from './json.ts'
 import { isWorkerToolForbidden } from './worker-policy.ts'
 import { normalizeProgressSteps } from './progress.ts'
-import { buildChildWorkspace } from './workspaces.ts'
+import { buildChildWorkspace, ensureSharedMemoryLink } from './workspaces.ts'
 import { orchestratorDomain } from './storage.ts'
 import { buildPresetDefinitions, LEAD_PRESET, LEAD_TOOL_ALLOW, WORKER_PRESET } from './presets.ts'
 import {
@@ -302,7 +303,6 @@ export class OrchestratorService extends TypertRemoteService {
   private async configureLead(agent: Agent): Promise<void> {
     await this.resetInstalled(String(agent.session.id))
     const scoped = agent.ctx
-    this.installSettlementFilter(agent)
     this.keep(agent, scoped.systemPrompt.section({
       name: 'orchestrator:roster',
       order: 610,
@@ -312,12 +312,6 @@ export class OrchestratorService extends TypertRemoteService {
     for (const sectionName of LEAD_SUPPRESSED_SECTIONS) {
       this.keep(agent, scoped.systemPrompt.section({ name: sectionName, order: 0, text: '', interpolate: false }))
     }
-    this.keep(agent, scoped.on('agent/pre-step', async ({ messages }, next) => {
-      if (!messages.some(message => this.isManagedSettlement(agent, message))) return next()
-      const visible = messages.filter(message => !this.isManagedSettlement(agent, message))
-      if (visible.length === 0) return { kind: 'reject' as const }
-      return { kind: 'enter' as const, messages: visible }
-    }))
     for (const tool of this.leadTools(agent)) this.keep(agent, scoped.tools.register(tool as any))
   }
 
@@ -333,27 +327,6 @@ export class OrchestratorService extends TypertRemoteService {
     } catch (error) {
       // 枚举失败时退回无限制，避免主控完全失去工具。
       this.hostCtx.logger.warn(`orchestrator: lead tool whitelist failed: ${String(error)}`)
-    }
-  }
-
-  private isManagedSettlement(agent: Agent, message: { source?: unknown }): boolean {
-    const source = message.source as { kind?: string; senderSessionId?: string } | undefined
-    if (source?.kind !== 'subagent-settled' || typeof source.senderSessionId !== 'string') return false
-    return this.conversationByChild(source.senderSessionId)?.parentSessionId === String(agent.session.id)
-  }
-
-  /** task_update 是唯一完成通道；过滤子代理框架自带的 settled 唤醒，避免空回合和重复答案。 */
-  private installSettlementFilter(agent: Agent): void {
-    for (const name of ['followup', 'steer', 'inject'] as const) {
-      const original = agent[name].bind(agent)
-      const replacement = (message: { source?: unknown }): void => {
-        if (this.isManagedSettlement(agent, message)) return
-        original(message as never)
-      }
-      ;(agent as unknown as Record<typeof name, typeof replacement>)[name] = replacement
-      this.keep(agent, () => {
-        ;(agent as unknown as Record<typeof name, typeof original>)[name] = original
-      })
     }
   }
 
@@ -673,6 +646,7 @@ export class OrchestratorService extends TypertRemoteService {
       if (!parentCwd) throw new Error('当前主会话缺少工作区，无法创建子会话工作区')
       const workspace = await buildChildWorkspace(parentCwd, args.workspaceName ?? args.subject)
       await mkdir(workspace.dir, { recursive: true })
+      await this.shareMemoryWithRoot(workspace.dir, parentCwd)
       const provisional = createConversation({
         id: conversationId,
         childSessionId,
@@ -715,6 +689,18 @@ export class OrchestratorService extends TypertRemoteService {
       task = nextTask
     }
     return { ok: true, conv, task }
+  }
+
+  /**
+   * 记忆库共享：把 Worker 工作区的 .dsh-meow 链接到主工作区，Lead 与全部 Worker 共用
+   * 同一份 meow-memory 长期记忆。失败（如 Windows 无 symlink 权限）降级为独立记忆，仅告警。
+   */
+  private async shareMemoryWithRoot(workspaceDir: string, rootCwd: string): Promise<void> {
+    try {
+      await ensureSharedMemoryLink(workspaceDir, rootCwd)
+    } catch (error) {
+      this.hostCtx.logger.warn(`orchestrator: shared memory link failed for ${workspaceDir}: ${String(error)}`)
+    }
   }
 
   /**
@@ -947,6 +933,8 @@ export class OrchestratorService extends TypertRemoteService {
     await this.serialize(async () => {
       const now = timestamp()
       for (const [, conv] of this.conversations().entries()) {
+        // 存量会话补建共享记忆链接（workspaceDir 是主工作区的直接子目录，dirname 即主工作区）。
+        if (conv.workspaceDir) await this.shareMemoryWithRoot(conv.workspaceDir, dirname(conv.workspaceDir))
         const active = conv.activeTaskId ? this.taskById(conv.activeTaskId) : undefined
         if (!active) {
           if (conv.activeTaskId) {

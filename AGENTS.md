@@ -4,30 +4,33 @@
 
 ## 项目是什么
 
-`@may/dsh-orchestrator`：DSH（DeepSeek Harness，基线 `0.2.1-alpha.1`）的编排插件。
+`@may/dsh-orchestrator`：DSH（DeepSeek Harness，基线 `0.2.1-rc.2`）的编排插件。
 
 - **Lead**（主会话，预设 `may-orchestrator-lead`）：理解需求、路由、派发任务、向用户转述结果。工具**白名单**制：编排 + 提问 + 记忆 + 只读查询（web_search/web_fetch/read/glob/grep），一步查询直接做，有副作用的执行全部派发。
-- **Worker**（持久子会话，预设 `may-orchestrator-worker`）：执行任务。工具**黑名单**制（只禁派生/编排/直接提问），其余宿主与用户安装的工具默认可用。
+- **Worker**（持久**根会话**，预设 `may-orchestrator-worker`）：执行任务。不是 subagent——通过 `agents.create` 创建（无 origin/delegationDepth），与主会话同为一等会话，schedule 等仅 depth-0 可用的宿主能力对 Worker 开放。工具**黑名单**制（只禁派生/编排/直接提问），其余宿主与用户安装的工具默认可用。
 - 两层领域模型：**Conversation**（持久子会话/工作流）1—N **TaskRun**（一次派发）。
 - 技术栈：pnpm + TypeScript + Cordis + Zod + tsdown + vitest。4 个入口：主插件、client（看板 React）、typert host/remote（snapshot RPC）。
 
 ## 本机环境与硬性约束
 
-- DSH CLI 全局包：`@deepseek-ai/dsh@0.2.1-alpha.1`（`/opt/homebrew/lib/node_modules`，读 API 定义从这里查）。
-- 真实 web profile：`~/.dsh/profiles/web`；**GUI（`/Applications/DeepSeek Harness.app`）绝不能动**，不要用全局 npm 安装/覆盖 dsh。
-- **重启 web 必须用脚本**：`/Users/lixuchuan/work/harness/start-dsh-web.sh`（设置 NODE_EXTRA_CA_CERTS、清代理，内部 `exec dsh web --host 127.0.0.1 --port 3080`）。不要直接 `dsh web`。
-- 访问/写入 `~/.dsh`、`dsh plugin`、kill 3080 端口、启动 dsh 都需要沙箱提权。
-- `npm pack` 有 `~/.npm` root 属主 EPERM 问题，必须：`export npm_config_cache=/private/tmp/dsh-npm-cache`。
+- DSH CLI 全局包：`@deepseek-ai/dsh@0.2.1-rc.2`（`/opt/homebrew/lib/node_modules`，读 API 定义从这里查）。**CLI 是 web 的运行时**，升级 CLI 用全局 npm；**GUI（`/Applications/DeepSeek Harness.app`）绝不能动**。
+- 真实 web profile：`~/.dsh/profiles/web`。
+- **重启 web 必须用脚本**：`/Users/lixuchuan/work/harness/start-dsh-web.sh`（设置 NODE_EXTRA_CA_CERTS、清代理，内部 `exec dsh web --host 127.0.0.1 --port 3080`）。不要直接 `dsh web`。脚本需用 `start_new_session` 方式彻底脱离当前会话启动，否则进程会被回收。
+- 访问/写入 `~/.dsh`、`dsh plugin`、kill 3080 端口、启动 dsh 都需要沙箱提权。GitHub 访问不稳定，push/release 失败时按用户约定请求开代理。
+- pnpm 供应链校验在沙箱无网时会挂起：typecheck/test/build 直接用 `./node_modules/.bin/tsc|vitest|tsdown`；`pnpm install` 需提权 + `CI=true npm_config_cache=/private/tmp/dsh-orchestrator-npm-cache`，改 manifest 后加 `--no-frozen-lockfile`。
+- `npm pack`/缓存写 `~/.npm` 会 EPERM，必须：`export npm_config_cache=/private/tmp/dsh-orchestrator-npm-cache`。
+- 插件安装到 profile 必须用 **tgz 绝对路径**（相对路径会被 pnpm 误判为 GitHub 简写）；先 remove 再 add，仅重启不会更新 bundle。
 
 ## 标准发布流程
 
 ```bash
-pnpm typecheck          # tsc（主）+ tsc（client）两个 project 都要过
-pnpm test               # vitest，当前 59 个用例
-pnpm build
-export npm_config_cache=/private/tmp/dsh-npm-cache
-pnpm verify:packaging   # 校验 tgz 只含运行所需 lib/、vendor/、cordis.patch.yml 等文件
-npm pack --pack-destination dist   # 产物 dist/may-dsh-orchestrator-<version>.tgz
+./node_modules/.bin/tsc -p tsconfig.json --noEmit
+./node_modules/.bin/tsc -p tsconfig.client.json --noEmit
+./node_modules/.bin/vitest run        # 当前 59 个用例
+./node_modules/.bin/tsdown            # 应无弃用警告
+export npm_config_cache=/private/tmp/dsh-orchestrator-npm-cache
+node scripts/verify-packaging.mjs     # 校验 tgz 只含运行所需 lib/、vendor/、cordis.patch.yml 等
+npm pack --pack-destination dist      # 产物 dist/may-dsh-orchestrator-<version>.tgz
 # 改 package.json 版本号与 README.md 中的安装文件名，保持一致
 ```
 
@@ -37,16 +40,25 @@ npm pack --pack-destination dist   # 产物 dist/may-dsh-orchestrator-<version>.
 lsof -ti tcp:3080 | xargs kill
 dsh plugin --profile web remove @may/dsh-orchestrator
 dsh plugin --profile web add <tgz 绝对路径>
-/Users/lixuchuan/work/harness/start-dsh-web.sh
+/Users/lixuchuan/work/harness/start-dsh-web.sh --no-open
 ```
 
-验证要在**新会话**里做；旧会话可能有历史脏数据。改插件代码后必须 remove+add 重装，仅重启不会更新 bundle。
+验证要在**新会话**里做；旧会话可能有历史脏数据。
+
+## rc.2 平台要点（与 alpha.1 的差异）
+
+- **prompt 严格插值**：persona suffix 只注册 `provider`/`model` 变量，`{{cwd}}` 等未注册变量直接抛 `unknown prompt variable`（曾导致 Worker 启动即崩）。不要在 persona/suffix 里手写模板变量。
+- **cwd 自动注入**：平台 `dsh-working-directory` 给每个会话注入 `Current working directory: <path>` 上下文（dsh-base 默认加载），无需也不许在提示词里重复声明工作目录。
+- **zod 钉 4.4.3**：rc.2 把 zod 从 4.6.7 回钉 4.4.3；`pnpm-workspace.yaml` 的 `overrides.zod=4.4.3` 防止与 `dsh-storage-domain.defineDomain` 形成双实例类型冲突（pnpm v11 不读 package.json 的 pnpm 字段，必须放 pnpm-workspace.yaml；同文件还有 rc 新包的 `minimumReleaseAgeExclude`）。
+- **根会话能力**：schedule（dsh-tool-schedule）、session-query 等只对 depth-0 会话开放；Worker 根会话化后可用。ralph/workflow 等新编排工具已被 Worker 黑名单覆盖。
+- **systemPrompt section/variable API**：`scoped.systemPrompt.section({name, order, text, interpolate:false})` 用于注入 roster 与遮蔽无关段落；`ctx.systemPrompt.variable()` 仅 agent scope 可用。
+- `.npmrc` 的 `verify-deps-before-run=false`：防止 pnpm 在 CI 环境下误判依赖过期而清空 node_modules。
 
 ## 架构要点（改代码前必读）
 
 ### 状态机（src/types.ts + src/state-machine.ts）
 
-- 新建 Conversation 必须在主会话 cwd 下创建唯一子目录（同名冲突递增 `-N` 后缀），并在创建持久子会话时通过 `withChildWorkspaceCwd` 注入 `meta.cwd`；复用 Conversation 不换目录。目录名由 `dispatch.subject` 或 `workspaceName` 经 `src/workspaces.ts` 清洗。
+- 新建 Conversation 必须在主会话 cwd 下创建唯一子目录（同名冲突递增 `-N` 后缀），`meta.cwd` 写入 session header，冷恢复后不变；复用 Conversation 不换目录。目录名由 `dispatch.subject` 或 `workspaceName` 经 `src/workspaces.ts` 清洗。
 - Task 状态：`queued / running / input_required / blocked / completed / failed / cancelled / interrupted`。
   - `input_required`：只表示 Worker 需要用户补充信息/选择，或需要用户接管浏览器、系统安全界面；必须有 question。
   - `blocked`（0.3.2 重新引入，语义不同于 0.2.x）：权限、配置、依赖、网络、资源、运行时等系统阻碍；带 error、可选 reasonCode/remediation。
@@ -56,45 +68,63 @@ dsh plugin --profile web add <tgz 绝对路径>
 - 终态投递（delivery outbox）由状态机在迁移时统一挂起，**不要**在创建任务或别处预挂 `delivery: pending`（否则看板对运行中任务误报"同步中"）。
 - 所有状态修改走 `service.serialize()` 串行链；涉及改单必须"旧任务 interrupted + reviseConversation 原子切 activeTaskId"先落盘，再做外部调用。
 
+### Worker 会话生命周期（根会话，0.3.2 起）
+
+- 创建：`agents.withoutInitiator` + `agents.create({sessionId, meta:{cwd, agentPreset: WORKER_PRESET}, agentOptions: {...parent.options}})`；随后 `sessionTitle.rename` 显式命名为任务主题（自动标题只响应真人消息）。
+- 投递：`sessionController.resolveAgent` 恢复冷会话 → `agent.followup(message)`（source.kind='orchestrator'）→ `sessions.flush` 确认落盘后才算投递成功（与 dsh-schedule 的提醒投递同一机制）。
+- 中断：`agent.cancel({kind:'parent'})`（fire-and-return，单独 try/catch，失败不拖垮新任务）。
+- 完成驱动：监听子会话 `turn/end`。`classifyWorkerTurnEnd`：`aborted.reason.kind=user` → 用户手动停止（interrupted + 投递非失败通知）；`kind=parent` → 改单中断。无 task_update 终态就结束的轮次按失败处理。
+
 ### 改单（同一工作流补充/修改需求）时序
 
 `provisionDispatch` 复用分支（src/service.ts）：
 
 1. 存储原子切换：旧任务 `interruptTaskForRevision`（delivery=undefined）+ `reviseConversation`（绕过 busy 校验）+ 新任务落盘。
-2. arm 两个守卫（`revisionEndGuards` + `revisionTurnEnds`，120s 窗口）。
-3. `subagents.interrupt()`（fire-and-return，单独 try/catch，失败不拖垮新任务）。
-4. `steerHostSubagentPrompt` 注入 `revisionPrompt(task)`（一句短通知 + 任务正文）；steer 不接受则 fallback `queueHostSubagentPrompt`。
-5. interrupt 必然异步带来一次 `turn/end aborted` 和 `subagent/end`：前者由 revisionTurnEnds 吞掉（防止误判为手动停止），后者由 revisionEndGuards 按 oldTaskId 核对吞掉（防止误判 failed）。
-6. 子会话 `turn/end` 的 `aborted.reason.kind=user` 是**用户手动停止**：任务标 interrupted、工作流回 idle、投递非失败通知；`aborted.reason.kind=parent` 且改单守卫缺失时按改单中断幂等处理，不投递。
+2. arm 改单守卫（`revisionTurnEnds`，120s 窗口）。
+3. `cancel({kind:'parent'})` 取消当前轮次（单独 try/catch）。
+4. `deliverToWorker` 注入 `revisionPrompt(task)`；followup 排队，在被中止轮次收敛为 idle 后开新一轮。
+5. cancel 异步带来的旧轮次 `turn/end aborted(kind=parent)` 由守卫吞掉，防止误判为手动停止或 failed。
 
 ### 工具权限
 
 - Lead：`scoped.tools.restrict({ allow })`，allow 名单见 `LEAD_TOOL_ALLOW`（presets.ts）。
   - restrict 只过滤**全局**工具；scope 内注册的 orchestrator_* 始终可见。
   - 必须先枚举实际注册的全局工具取交集再 restrict（传未知名会 throw）；枚举失败退回无限制并 warn，fail-open 比让主控失能安全。
-- Worker：`scoped.tools.guard(isWorkerToolForbidden)`（worker-policy.ts）。模式匹配见 `workerForbiddenPatterns`；新增"禁止类"工具只改这里。
+- Worker：`scoped.tools.guard(isWorkerToolForbidden)`（worker-policy.ts）。模式匹配见 `workerForbiddenPatterns`（含 subagent/workflow/ralph/send_message/orchestrator/ask_user 等）；新增"禁止类"工具只改这里。
 - 不要用白名单裁剪 Worker——用户后装工具（MCP/浏览器/技能）必须默认可用。
+
+### 定时任务
+
+- Worker 预设挂载 `dsh-tool-schedule`（schedule_create/list/update/delete）；提醒绑定 Worker 会话，到点作为新消息发回该会话。
+- 定时触发的轮次没有活动任务：只允许 `task_update({status:'completed'})`，Host 生成 ad-hoc 已完成任务并经 outbox 投递给 Lead（service.ts updateFromWorker 的无 activeTaskId 分支）。
+
+### 记忆共享（0.3.4 起）
+
+- meow-memory 的记忆库是 `<会话cwd>/.dsh-meow/memory.db`（per-workspace SQLite，WAL + busy_timeout=5000）。
+- 为让 Lead 与全部 Worker 共用一份记忆：`ensureSharedMemoryLink()`（workspaces.ts）把每个 Worker 工作区的 `.dsh-meow` **符号链接**到主工作区的 `.dsh-meow`（win32 用 junction，普通用户免管理员；目标必须绝对路径）。
+- 接入点：新建派发（mkdir 后）与 `recoverRuntimeState`（存量会话补建，dirname(workspaceDir) 即主工作区）。幂等；已存在真实目录（历史孤立记忆）时保留现状；失败仅 warn 降级为独立记忆。
 
 ### 给模型的输入输出要精简（产品要求）
 
-- dispatch 的 `prompt` 只写需求和验收点。Lead/Worker 共享同一工作区（`{{cwd}}` 由 persona suffix 注入），禁止重复工作目录/路径声明，禁止粘贴内部 ID。
+- dispatch 的 `prompt` 只写需求和验收点。cwd 由平台注入，禁止重复工作目录/路径声明，禁止粘贴内部 ID。
 - dispatch 返回给 Lead 的只需 `conversationId`（后续复用）；不要返回 taskId/childSessionId。
 - list/get 的输出做投影（leadTools/listWorkflows），不要把整条数据库记录给模型。
-- roster 系统提示词每工作流一行；看板（Board.tsx）可以展示更多内部字段，但不要在主会话输出内部概念。
+- roster 系统提示词每工作流一行（含创建/更新时间，供"上周那个"类指代对号）；看板（Board.tsx）可以展示更多内部字段，但不要在主会话输出内部概念。
 - Worker 注入只有两种文案：`workerPrompt`（正常）和 `revisionPrompt`（改单），都在 messages.ts。
 
 ### Lead 行为约束（messages.ts LEAD_PROMPT）
 
 - 闲聊、概念解释、当前对话内可答的问题**直接回答，不调任何工具**；需要实际执行（联网/文件/命令/浏览器）才派发。
 - background 派发后只回一句简短自然确认（"好，这就改"）；禁止"任务正在后台进行/Worker 完成后我会发给你"等系统腔；不暴露 Worker/Conversation/TaskRun 等词；不提前承诺交付物。
-- 追问、改单必须由 Lead 按 roster 复用原 conversationId；roster/list 必须给 Lead 暴露创建和更新时间。
+- 追问、改单必须由 Lead 按 roster 复用原 conversationId。
+- 记忆维护类任务必须 `silent: true` 派发（终态不投递）；用户常在手机端，blocked 时不得指导用户手改文件/命令/配置。
+- 单条记忆 Lead 自己 `memory_remember`；任务中产生的记忆由 Worker 记；写入前先查重。
 
 ### Worker 上报协议
 
 - `task_update`：running(+progressNote?) / input_required(+question) / blocked(+error, reasonCode?, remediation?) / completed(+userAnswer) / failed(+error)。completed 的 userAnswer 是 Lead 转述的唯一权威答案。
 - Worker 不能直接向用户提问（ask-user 工具被 guard 拦且不进预设）。
 - todo_write 是内部步骤清单：Host 监听 `todo/write` 事件，350ms 防抖写入 `task.progressSteps` 驱动看板；Worker 无需为 todo 调 task_update，todo 全完成不等于任务完成。
-- 子代理框架自带的 settled 唤醒（source.kind = 'subagent-settled'）必须被 pre-step 过滤 + followup/steer/inject monkey-patch 双重拦截，否则会产生空回合和重复答案。
 
 ### 存储与兼容性
 
@@ -104,21 +134,23 @@ dsh plugin --profile web add <tgz 绝对路径>
 
 ## 代码约定
 
-- `pnpm typecheck` 必须干净；提交前跑全量 vitest。
+- typecheck（host + client 两个 project）必须干净；提交前跑全量 vitest。
 - 新语义先在 state-machine/types 层落纯函数 + 单测，再接 service。
-- 状态字面量列表用 types.ts 的常量（activeTaskStatuses / deliverableTaskStatuses / terminalTaskStatuses / taskUpdateStatuses / blockReasonCodes），不要再散落状态数组。
+- 状态字面量列表用 types.ts 的常量（activeTaskStatuses / deliverableTaskStatuses / terminalTaskStatuses / taskUpdateStatuses / blockReasonCodes），不要再散落状态数组；仅内部使用的常量不要 export。
 - 日志用 `hostCtx.logger.info/warn`，英文即可；面向用户的文案一律中文。
 - 看板文案与状态标签中文；新增 TaskStatus/ConversationState 时同步 Board.tsx 的 labels 与 styles.ts 的 badge 颜色。
-- 死代码及时删（前几轮已清理 scene 四模式、PLAN.md、未用导入等），不要留兼容分支以外的旧代码。
+- 死代码及时删（已清理：scene 四模式、PLAN.md、subagent 时代 settled 双重拦截、{{cwd}} suffix 等），不要留兼容分支以外的旧代码。
 
 ## 常见坑
 
 - 先 interrupt 再对持旧 activeTaskId 的 conv 做普通 activate：必撞 `conversation_busy`。改单走 `reviseConversation`。
-- interrupt 是 fire-and-return，end 事件晚到；没有守卫就会把新任务/旧任务误判 failed 并向主会话吐失败通知。
+- cancel 是 fire-and-return，旧轮次 turn/end 晚到；没有 revisionTurnEnds 守卫就会把旧任务误判 failed 或把新任务误标手动停止。
 - 向 failed 工作流派发会 throw，dispatch 已包 try/catch 返回结构化 error，新增的外部调用路径同样要兜住。
-- 重启恢复：普通活动任务统一转 interrupted（`interruptTaskAfterRestart`，不主动投递）；persistence stat 不确定时用 blockTask 标 blocked；并恢复未投递 outbox。
+- 快速 Worker 可能在 followup 接受与收尾之间已提交终态：只补 queued→running，不回滚终态。
+- 重启恢复：普通活动任务统一转 interrupted（`interruptTaskAfterRestart`，不主动投递）；persistence stat 不确定时用 blockTask 标 blocked；并恢复未投递 outbox 与补建记忆共享链接。
+- pnpm-lock 与 peerDeps 范围改动后必须 `--no-frozen-lockfile` 重装并核对 zod 解析到 4.4.3。
 
 ## 背景材料
 
 - README.md：用户面说明，发版时随版本号更新。
-- git log：0.2.0（background/单 Worker 预设）→ 0.2.1（路由追问兜底/改单 steer/blocked 提问）→ 0.2.2（todo 进度桥接看板）→ 0.2.3（interrupted 改单语义）→ 0.2.4（手动停止捕获、看板与话术精简）→ 0.2.5（白名单、input_required、上下文瘦身、鲁棒性）→ 0.2.6（手动中断通知、状态配色、Worker 提示词瘦身）→ 0.2.7（子会话折叠、柔光动效、按钮突出、提示词/恢复加固）→ 0.3.0（个人助理能力 bundle）→ 0.3.2（blocked 系统受阻语义、Worker failed 可复用、默认 Lead 预设免手改）。
+- git log：0.2.0（background/单 Worker 预设）→ 0.2.1（路由追问兜底/改单 steer/blocked 提问）→ 0.2.2（todo 进度桥接看板）→ 0.2.3（interrupted 改单语义）→ 0.2.4（手动停止捕获、看板与话术精简）→ 0.2.5（白名单、input_required、上下文瘦身、鲁棒性）→ 0.2.6（手动中断通知、状态配色、Worker 提示词瘦身）→ 0.2.7（子会话折叠、柔光动效、按钮突出、提示词/恢复加固）→ 0.3.0（个人助理能力 bundle）→ 0.3.2（Worker 根会话化、blocked 系统受阻语义、默认 Lead 预设免手改）→ 0.3.3（DSH 0.2.1-rc.2 适配、移除 dsh-market）→ 0.3.4（记忆共享、settled 死代码清理、文档重写）。

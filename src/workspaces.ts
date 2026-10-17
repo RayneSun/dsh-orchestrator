@@ -1,5 +1,5 @@
-import { stat } from 'node:fs/promises'
-import { resolve, sep, basename } from 'node:path'
+import { lstat, mkdir, readlink, stat, symlink } from 'node:fs/promises'
+import { resolve, sep, basename, join } from 'node:path'
 
 const MAX_NAME_LENGTH = 64
 
@@ -50,4 +50,30 @@ export async function buildChildWorkspace(rootCwd: string, requestedName: string
     if (!await pathExists(dir)) return { name, dir }
   }
   throw new Error(`无法为子会话分配工作区目录：${slug} 的可用名称已耗尽`)
+}
+
+/** meow-memory 记忆库目录名（其库文件为 <会话cwd>/.dsh-meow/memory.db，per-workspace）。 */
+export const SHARED_MEMORY_DIRNAME = '.dsh-meow'
+
+/**
+ * 把 Worker 工作区下的记忆库目录链接到主工作区的共享库，让 Lead 与全部 Worker
+ * 共用同一份长期记忆（meow-memory 开 WAL + busy_timeout，多连接并发安全）。
+ * 已存在真实目录（历史孤立记忆）时保留现状返回 false，由调用方决定告警；
+ * 链接已正确指向目标时幂等返回 true。
+ */
+export async function ensureSharedMemoryLink(workerDir: string, rootCwd: string): Promise<boolean> {
+  const root = resolve(rootCwd)
+  const worker = resolve(workerDir)
+  if (worker === root || !worker.startsWith(root + sep)) return false
+  const target = join(root, SHARED_MEMORY_DIRNAME)
+  const link = join(worker, SHARED_MEMORY_DIRNAME)
+  const existing = await lstat(link).catch(() => undefined)
+  if (existing) {
+    if (!existing.isSymbolicLink()) return false
+    const points = await readlink(link).catch(() => undefined)
+    return points === target
+  }
+  await mkdir(target, { recursive: true })
+  await symlink(target, link, process.platform === 'win32' ? 'junction' : 'dir')
+  return true
 }

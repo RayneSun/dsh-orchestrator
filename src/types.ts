@@ -1,7 +1,7 @@
 import { z } from 'zod'
 
-export const conversationStates = ['provisioning', 'running', 'idle', 'input_required', 'failed'] as const
-export const taskStatuses = ['queued', 'running', 'input_required', 'blocked', 'completed', 'failed', 'cancelled', 'interrupted'] as const
+const conversationStates = ['provisioning', 'running', 'idle', 'input_required', 'failed'] as const
+const taskStatuses = ['queued', 'running', 'input_required', 'blocked', 'completed', 'failed', 'cancelled', 'interrupted'] as const
 export const activeTaskStatuses = ['queued', 'running'] as const
 /** 单条 TaskRun 的终态；input_required/blocked 结束本次执行，等待 Lead 后续派发新的 TaskRun。 */
 export const terminalTaskStatuses = ['input_required', 'blocked', 'completed', 'failed', 'cancelled', 'interrupted'] as const
@@ -150,7 +150,7 @@ export function timestamp(): string {
   return now()
 }
 
-export function emptyOutline(): Outline {
+function emptyOutline(): Outline {
   return { summary: '', keyFacts: [], entities: [], tags: [], artifacts: [], openQuestions: [] }
 }
 

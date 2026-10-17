@@ -5,7 +5,7 @@ DSH 主控助理编排插件，也是一个开箱即用的个人助理能力包�
 ## 预设
 
 - `may-orchestrator-lead`：主控助理。工具采用**白名单**：编排工具、向用户提问、长期记忆，以及只读轻量查询（web_search / web_fetch / read / glob / grep）——一步能完成的查询 Lead 直接做；写文件、跑命令等执行类全局工具（含用户后装的 MCP/插件）对 Lead 不可见，避免干扰路由。能直接回答的闲聊和解释类问题 Lead 直接回答，不派发。
-- `may-orchestrator-worker`：统一执行 Worker。工具采用**黑名单**：文件、命令、网页、浏览器、技能、MCP 等宿主自带与用户安装的工具默认可用，仅禁止再派生子 Agent、调用编排工具和直接向用户提问。
+- `may-orchestrator-worker`：统一执行 Worker，是与主会话同级的**一等根会话**（非子代理），因此定时任务（schedule）等平台能力对其开放。工具采用**黑名单**：文件、命令、网页、浏览器、技能、MCP、定时任务等宿主自带与用户安装的工具默认可用，仅禁止再派生子 Agent、调用编排工具和直接向用户提问。
 
 Worker 的任务上报协议、安全红线（支付/删除等不可逆操作先确认）、文件边界与整洁约束都固化在预设 persona 中，每次派发只传递任务本身（独立工作区由运行时自动绑定，不重复环境声明）。`task_update` 状态为 running、input_required、blocked、completed、failed。
 
@@ -18,10 +18,9 @@ Worker 的任务上报协议、安全红线（支付/删除等不可逆操作先
 
 安装本 bundle 会同时启用：
 
-- `meow-memory`：工作区共享的跨会话长期记忆，是唯一长期记忆库。
+- `meow-memory`：跨会话长期记忆，是唯一长期记忆库。Lead 与所有 Worker 子会话通过共享链接（macOS/Linux 符号链接、Windows junction）指向主工作区下的同一份记忆库，任何一端写入、全端可查。
 - `@wxg-prc-cpg/browser-skill-dsh-plugin`：浏览器自动化；需自行安装 `bsk` CLI 和浏览器扩展。
 - `@zhengjunyao/dsh-qqmail`：QQ 邮箱/IMAP/SMTP，默认只读，外发或删除需用户确认与配置授权码。
-- `@dsh-market/plugin`：Web 插件市场入口。
 - 桌面操控：macOS 使用本包内 vendored 的 `dsh-computer-use` 驱动；Windows 安装 `@milkuovo/dsh-computer-use`。两者通过平台 gate 二选一启用。vendored 驱动的 MIT 许可证见 `lib/vendor/dsh-computer-use-darwin/LICENSE`，仍需系统提供可执行的 `cua-driver`。
 
 这些能力插件的普通依赖不会把旧版 DSH runtime 提升到 profile 依赖树；macOS 驱动只通过宿主的 peer runtime 加载，避免覆盖 `@deepseek-ai/dsh-tools`。
@@ -37,7 +36,8 @@ Worker 的任务上报协议、安全红线（支付/删除等不可逆操作先
 - 新建 Worker 会在当前主工作区下获得独立工作目录 `<主题>/`（同名冲突自动递增 `-2`、`-3`）；`dispatch.subject` 自动用于目录命名，也可传 `workspaceName` 覆盖。复用已有子会话时继续使用原目录。
 - `dispatch` 一律后台派发，不阻塞主对话；需要了解进展时由 Lead 主动调用 `orchestrator_list` / `orchestrator_get` 查询。记忆整理等后台维护任务可设 `silent: true`：终态（含失败）完全不向主会话投递，Lead 不跟进，看板仍显示状态并带“静默”徽标。
 - 完成、待操作、受阻、失败或被用户手动停止后通过持久 outbox 唤醒 Lead；改单接管和普通重启中断的旧任务不产生通知。
-- 子会话框架自带的 settled 通知会被过滤，避免与 `task_update` 重复；Lead 只以 Worker 的 `userAnswer` 为权威结果。
+- Lead 只以 Worker 的 `userAnswer` 为权威结果。
+- 定时/周期任务由 Worker 的 schedule 工具创建并绑定其自身子会话；到点触发后 Worker 执行并上报，Lead 转述给用户。
 - 重启后恢复看板；普通未完成任务标记 interrupted，无法确认持久化状态时标记 blocked；未投递的后台终态会重试唤醒 Lead。
 
 ## Web 看板
@@ -46,12 +46,12 @@ Worker 的任务上报协议、安全红线（支付/删除等不可逆操作先
 
 ## 分发安装
 
-要求接收方已安装 DSH `0.2.1-alpha.1`，并且使用 Web profile。
+要求接收方已安装 DSH `0.2.1-rc.2` 或更高版本，并且使用 Web profile。
 
-把 `may-dsh-orchestrator-0.3.2.tgz` 发给对方后执行（安装后新会话自动进入主控助理预设，无需手改配置）：
+把 `may-dsh-orchestrator-0.3.4.tgz` 发给对方后执行（安装后新会话自动进入主控助理预设，无需手改配置）：
 
 ```sh
-dsh plugin add --profile web /path/to/may-dsh-orchestrator-0.3.2.tgz
+dsh plugin add --profile web /path/to/may-dsh-orchestrator-0.3.4.tgz
 dsh web --no-open --host 127.0.0.1 --port 3080
 ```
 
@@ -59,7 +59,7 @@ dsh web --no-open --host 127.0.0.1 --port 3080
 
 ```sh
 dsh plugin remove --profile web @may/dsh-orchestrator
-dsh plugin add --profile web /path/to/may-dsh-orchestrator-0.3.2.tgz
+dsh plugin add --profile web /path/to/may-dsh-orchestrator-0.3.4.tgz
 ```
 
 重新生成分发包：

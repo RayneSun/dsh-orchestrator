@@ -19,7 +19,7 @@ const esm = {
   clean: false,
   splitting: false,
   outputOptions: { entryFileNames: '[name].js' },
-  external: [deepseekExternal, /^node:/, 'zod'],
+  deps: { neverBundle: [deepseekExternal, /^node:/, 'zod'] },
 }
 
 export default defineConfig([
@@ -48,7 +48,7 @@ export default defineConfig([
     clean: false,
     splitting: false,
     outputOptions: { entryFileNames: '[name].js' },
-    external: [deepseekExternal],
+    deps: { neverBundle: [deepseekExternal] },
   },
   {
     name: `${pkg.name}/client`,
@@ -62,9 +62,8 @@ export default defineConfig([
     sourcemap: false,
     clean: false,
     splitting: false,
-    external: specifier => clientInject.has(specifier),
     // DSH Web 只注入 dsh.client.inject 中的包；Zod 必须内联进 closure。
-    deps: { alwaysBundle: [/^zod($|\/)/] },
+    deps: { neverBundle: [...clientInject], alwaysBundle: [/^zod($|\/)/] },
     outputOptions: {
       entryFileNames: 'client.js',
       banner: `window.__ModuleLoader__.load({ id: ${JSON.stringify(pkg.name)}, factory: (require) => {`,
