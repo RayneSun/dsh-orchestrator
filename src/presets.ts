@@ -82,10 +82,9 @@ export function buildPresetDefinitions(): PresetDefinition[] {
         {
           id: 'persona',
           name: '@deepseek-ai/dsh-persona',
-          config: {
-            prefix: WORKER_PROMPT,
-            suffix: '你的工作目录是 {{cwd}}。',
-          },
+          // rc.2 起 persona suffix 不再支持 {{cwd}} 模板变量（严格插值，仅 provider/model）；
+          // 平台 dsh-working-directory 已给每个会话注入 Current working directory，无需手写。
+          config: { prefix: WORKER_PROMPT },
         },
         ...basics,
         bash,

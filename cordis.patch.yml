@@ -22,10 +22,6 @@
         enabled: true
         readOnly: true
 
-    # 插件市场（Web 侧边栏 UI，不向 agent 注册工具）。
-    - id: dsh-market
-      name: '@dsh-market/plugin'
-
     # 桌面操控：按平台唯一启用一个驱动。macOS 驱动 vendored 在本包内，
     # 只使用宿主 DSH runtime；Windows 驱动用 peerDependencies，均不会引入旧版 tools。
     - id: computer-use-darwin
