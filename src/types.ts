@@ -78,6 +78,8 @@ const baseConversationSchema = z.object({
   revision: z.number().int().nonnegative().default(0),
   createdAt: z.string(),
   updatedAt: z.string(),
+  /** 仅快照投影使用：子会话绑定了活动定时任务（不落库，由宿主核对 schedule 后填入）。 */
+  hasActiveSchedule: z.boolean().optional(),
 }).strict()
 
 const baseTaskSchema = z.object({
@@ -213,6 +215,7 @@ export const dispatchInputSchema = z.object({
   workspaceName: z.string().trim().min(1).max(80).optional(),
   prompt: z.string().trim().min(1).max(100_000),
   conversationId: z.string().trim().min(1).optional(),
+  conversationTitle: z.string().trim().min(1).max(200).optional(),
   acceptanceCriteria: z.string().trim().min(1).max(10_000).optional(),
   silent: z.boolean().optional(),
 }).strict()

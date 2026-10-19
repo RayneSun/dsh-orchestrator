@@ -120,6 +120,19 @@ describe('工具输入 Zod 校验', () => {
   })
 
 
+  it('dispatch 接受可选 conversationTitle 并拒绝空白', () => {
+    expect(dispatchInputSchema.parse({ subject: 's', prompt: 'p', conversationTitle: '每日热点新闻' }).conversationTitle).toBe('每日热点新闻')
+    expect(dispatchInputSchema.parse({ subject: 's', prompt: 'p' }).conversationTitle).toBeUndefined()
+    expect(dispatchInputSchema.safeParse({ subject: 's', prompt: 'p', conversationTitle: '  ' }).success).toBe(false)
+    expect(dispatchInputSchema.safeParse({ subject: 's', prompt: 'p', conversationTitle: 'a'.repeat(201) }).success).toBe(false)
+  })
+
+  it('conversation 记录允许可选 hasActiveSchedule 快照标记', () => {
+    const conv = createConversation({ id: 'c1', childSessionId: 's1', parentSessionId: 'p1', title: 't' })
+    expect(conversationSchema.parse(conv).hasActiveSchedule).toBeUndefined()
+    expect(conversationSchema.parse({ ...conv, hasActiveSchedule: true }).hasActiveSchedule).toBe(true)
+  })
+
   it('conversationId 查询拒绝空值和多余字段', () => {
     expect(conversationIdInputSchema.safeParse({ conversationId: ' ' }).success).toBe(false)
     expect(conversationIdInputSchema.safeParse({ conversationId: 'conv_1', extra: 1 }).success).toBe(false)

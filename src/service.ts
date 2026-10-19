@@ -12,7 +12,8 @@ import type { SessionId } from '@deepseek-ai/dsh-session'
 import type {} from '@deepseek-ai/dsh-agent-preset-registry'
 import type {} from '@deepseek-ai/dsh-api-session-controller'
 import type {} from '@deepseek-ai/dsh-session-persistence'
-import { deliveryNotice, revisionPrompt, workerPrompt } from './messages.ts'
+import { deliveryNotice, revisionPrompt, rosterSummarySegment, workerPrompt } from './messages.ts'
+import { applyScheduleMark, type ScheduleServiceLike, type SessionActivityGroup } from './schedule-marks.ts'
 import { toJson } from './json.ts'
 import { isWorkerToolForbidden } from './worker-policy.ts'
 import { normalizeProgressSteps } from './progress.ts'
@@ -75,6 +76,8 @@ type DispatchProvision =
   | { ok: false; result: unknown }
 
 /** Worker 子会话用空 section 遮蔽的全局系统提示段（同名 scoped section shadow 全局）。 */
+/** schedule/changed 在任务创建/更新/删除/投递时都会触发，合并后再核对，避免每轮触发都全量 list。 */
+const SCHEDULE_SYNC_DEBOUNCE_MS = 500
 const WORKER_SUPPRESSED_SECTIONS = ['harness:source', 'app:web-surface', 'ui:deliverable-file-references'] as const
 /** Lead 白名单不含邮件工具，但 qqmail 会全局公告工具能力；遮蔽避免主控看到却调不到而产生幻觉。 */
 const LEAD_SUPPRESSED_SECTIONS = ['plugin:dsh-qqmail'] as const
@@ -124,6 +127,11 @@ export class OrchestratorService extends TypertRemoteService {
   private readonly todoTimers = new Map<string, ReturnType<typeof setTimeout>>()
   // 改单 cancel 自身会产生一次 aborted turn/end，需要忽略，不能当成手动停止或任务失败。
   private readonly revisionTurnEnds = new Map<string, number>()
+  /** childSessionId -> 是否绑定了活动定时任务（看板 badge 数据源，内存推导不落库）。 */
+  private readonly scheduleMarks = new Map<string, boolean>()
+  /** childSessionId -> 已同步到 DSH 侧栏的标题（含 ⏰ 前缀），用于跳过无谓 rename。 */
+  private readonly syncedTitles = new Map<string, string>()
+  private scheduleSyncTimer: ReturnType<typeof setTimeout> | undefined
   private recoveryTimer: ReturnType<typeof setInterval> | undefined
 
   constructor(private readonly hostCtx: Context) {
@@ -168,11 +176,26 @@ export class OrchestratorService extends TypertRemoteService {
             this.hostCtx.logger.warn(`orchestrator: configure agent failed: ${String(error)}`)
           })
         })
+        // 定时任务标记：schedule 服务每次提交变更（创建/更新/删除/投递）后广播，防抖后全量核对。
+        const offScheduleChanged = (this.hostCtx.on as (name: string, listener: () => void) => () => void)
+          .call(this.hostCtx, 'schedule/changed', () => this.queueScheduleMarkSync())
+        // 归档准入：有进行中任务的受管子会话向平台瀑布上报活动，归档被拦截报错（与 dsh-schedule 同机制）。
+        const offActivity = (this.hostCtx.on as (name: string, listener: (payload: { sessionId: string }, next: () => Promise<SessionActivityGroup[]>) => Promise<SessionActivityGroup[]>) => () => void)
+          .call(this.hostCtx, 'workspace/session-activity', async ({ sessionId }, next) => {
+            const rest = await next()
+            const conv = this.conversationByChild(String(sessionId))
+            const active = conv?.activeTaskId ? this.taskById(conv.activeTaskId) : undefined
+            if (!conv || !active || !(activeTaskStatuses as readonly string[]).includes(active.status)) return rest
+            return [{ kind: 'orchestrator', items: [{ id: conv.id, label: `任务进行中：${active.subject}` }] }, ...rest]
+          })
         this.recoveryTimer = setInterval(() => { void this.recoverDeliveries() }, RECOVERY_INTERVAL_MS)
         this.recoveryTimer.unref()
         return async () => {
           offPreset()
           offCreated()
+          offScheduleChanged()
+          offActivity()
+          if (this.scheduleSyncTimer) clearTimeout(this.scheduleSyncTimer)
           if (this.recoveryTimer) clearInterval(this.recoveryTimer)
           await this.chain.catch(() => undefined)
           await domain.close()
@@ -181,6 +204,9 @@ export class OrchestratorService extends TypertRemoteService {
 
       await this.recoverRuntimeState()
       void this.recoverDeliveries()
+      void this.syncScheduleMarks().catch(error => {
+        this.hostCtx.logger.warn(`orchestrator: initial schedule mark sync failed: ${String(error)}`)
+      })
     } catch (error) {
       await domain.close().catch(closeError => {
         this.hostCtx.logger.warn(`orchestrator: close storage after failed startup: ${String(closeError)}`)
@@ -208,6 +234,7 @@ export class OrchestratorService extends TypertRemoteService {
       .map(([, conv]) => conv)
       .filter(conv => conv.parentSessionId === parentSessionId)
       .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
+      .map(conv => this.scheduleMarks.get(conv.childSessionId) ? { ...conv, hasActiveSchedule: true } : conv)
     const ids = new Set(conversations.map(conv => conv.id))
     const tasks = [...this.tasks().entries()]
       .map(([, task]) => task)
@@ -465,7 +492,7 @@ export class OrchestratorService extends TypertRemoteService {
         : last?.resultSummary || last?.userAnswer
           ? `｜最近结果：${(last.resultSummary || last.userAnswer)!.slice(0, 80)}`
           : ''
-      return `- ${conv.id} [${conv.state}] ${conv.title}｜创建 ${formatRosterTime(conv.createdAt)}｜更新 ${formatRosterTime(conv.updatedAt)}${tail}`
+      return `- ${conv.id} [${conv.state}] ${conv.title}${rosterSummarySegment(conv.outline.summary)}｜创建 ${formatRosterTime(conv.createdAt)}｜更新 ${formatRosterTime(conv.updatedAt)}${tail}`
     })
     return `Orchestrator roster（dispatch 用 conversationId 复用子会话；get 看详情）：\n${lines.join('\n')}`
   }
@@ -501,6 +528,7 @@ export class OrchestratorService extends TypertRemoteService {
           workspaceName: { type: 'string', description: '新建子会话时的工作区目录名，简短可文件系统使用；复用已有子会话时忽略；缺省由 subject 生成' },
           prompt: { type: 'string', required: true, description: '需求本身和验收点。Worker 与你共享同一工作区，不要重复工作目录、路径等环境声明，不要粘贴内部 ID' },
           conversationId: { type: 'string', description: '复用已有工作流时提供' },
+          conversationTitle: { type: 'string', description: '可选：重命名子会话标题（侧栏/看板同步），仅当会话主题漂移时使用' },
           acceptanceCriteria: { type: 'string', description: '可选验收标准' },
           silent: { type: 'boolean', description: '静默模式：记忆整理等后台维护任务使用；终态不会向主会话投递任何消息，看板仍可见状态' },
         },
@@ -609,6 +637,9 @@ export class OrchestratorService extends TypertRemoteService {
       conv = interruptedTaskId
         ? reviseConversation(existing, task.id, at)
         : activateConversation(existing, task.id, at)
+      // 会话主题漂移：Lead 显式传 conversationTitle 才改名，标题保持克制不随每条任务措辞抖动。
+      const titleChanged = args.conversationTitle !== undefined && args.conversationTitle !== existing.title
+      if (titleChanged) conv = { ...conv, title: args.conversationTitle! }
       if (interruptedTaskId) {
         const active = this.taskById(interruptedTaskId)
         if (active) {
@@ -635,6 +666,7 @@ export class OrchestratorService extends TypertRemoteService {
           conv.childSessionId, text,
           `orchestrator ${interruptedTaskId ? 'revise' : 'task'} ${task.subject}`,
         )
+        if (titleChanged) await this.renameWorkerSession(conv.childSessionId)
       } catch (error) {
         return { ok: false, result: await this.failLaunch(conv, task, error) }
       }
@@ -651,7 +683,7 @@ export class OrchestratorService extends TypertRemoteService {
         id: conversationId,
         childSessionId,
         parentSessionId,
-        title: args.subject,
+        title: args.conversationTitle ?? args.subject,
         workspaceName: workspace.name,
         workspaceDir: workspace.dir,
       })
@@ -668,7 +700,7 @@ export class OrchestratorService extends TypertRemoteService {
       })
       await this.putPair(conv, task)
       try {
-        await this.createWorkerAgent(childSessionId, workspace.dir, parent, args.subject)
+        await this.createWorkerAgent(childSessionId, workspace.dir, parent, conv.title)
         await this.deliverToWorker(childSessionId, workerPrompt(task), `orchestrator task ${task.subject}`)
       } catch (error) {
         return { ok: false, result: await this.failLaunch(conv, task, error) }
@@ -703,6 +735,65 @@ export class OrchestratorService extends TypertRemoteService {
     }
   }
 
+  /** 宿主 schedule 服务（本地结构化类型，组合未挂载时整体降级为无标记）。 */
+  private scheduleService(): ScheduleServiceLike | undefined {
+    return (this.hostCtx as unknown as { schedule?: ScheduleServiceLike }).schedule
+  }
+
+  private queueScheduleMarkSync(): void {
+    if (this.scheduleSyncTimer) clearTimeout(this.scheduleSyncTimer)
+    this.scheduleSyncTimer = setTimeout(() => {
+      this.scheduleSyncTimer = undefined
+      void this.syncScheduleMarks().catch(error => {
+        this.hostCtx.logger.warn(`orchestrator: schedule mark sync failed: ${String(error)}`)
+      })
+    }, SCHEDULE_SYNC_DEBOUNCE_MS)
+    this.scheduleSyncTimer.unref()
+  }
+
+  /**
+   * 核对全部受管子会话的活动定时任务：更新看板标记（hasActiveSchedule）并把
+   * DSH 侧栏标题同步为「看板标题 + ⏰ 前缀」。单会话 list 失败跳过该会话，不影响其余。
+   */
+  private async syncScheduleMarks(): Promise<void> {
+    const schedule = this.scheduleService()
+    if (!schedule) return
+    for (const [, conv] of this.conversations().entries()) {
+      let marked: boolean
+      try {
+        marked = (await schedule.list({ sessionId: conv.childSessionId })).length > 0
+      } catch (error) {
+        this.hostCtx.logger.warn(`orchestrator: schedule list failed for ${conv.childSessionId}: ${String(error)}`)
+        continue
+      }
+      const previous = this.scheduleMarks.get(conv.childSessionId) ?? false
+      this.scheduleMarks.set(conv.childSessionId, marked)
+      await this.renameWorkerSession(conv.childSessionId)
+      if (previous !== marked) this.emitChanged()
+    }
+  }
+
+  /**
+   * 子会话标题同步：DSH 侧栏标题 = 看板标题 + 定时标记 ⏰ 前缀；与上次同步值一致则跳过，
+   * rename 失败仅告警（下次 schedule/changed 核对时按 diff 重试）。
+   */
+  private async renameWorkerSession(childSessionId: string): Promise<void> {
+    const conv = this.conversationByChild(childSessionId)
+    if (!conv) return
+    const desired = applyScheduleMark(conv.title, this.scheduleMarks.get(childSessionId) ?? false)
+    if (this.syncedTitles.get(childSessionId) === desired) return
+    try {
+      await this.hostCtx.agents.withoutInitiator(async () => {
+        const resolved = await this.hostCtx.sessionController.resolveAgent(childSessionId as SessionId)
+        if ('error' in resolved) throw resolved.error
+        this.hostCtx.sessionTitle.rename(resolved.agent.session, desired)
+      })
+      this.syncedTitles.set(childSessionId, desired)
+    } catch (error) {
+      this.hostCtx.logger.warn(`orchestrator: rename worker session failed: ${String(error)}`)
+    }
+  }
+
   /**
    * 创建根级别的 Worker 会话：与主会话同为一等会话（不带 origin/delegationDepth 的
    * subagent 血统），因此 schedule 等只对 depth-0 会话开放的宿主能力对 Worker 可用。
@@ -719,6 +810,7 @@ export class OrchestratorService extends TypertRemoteService {
       try {
         // 自动标题只响应真人消息（source=orchestrator 的任务注入不触发），显式命名为任务主题。
         this.hostCtx.sessionTitle.rename(handle.agent.session, title)
+        this.syncedTitles.set(childSessionId, title)
       } catch (titleError) {
         this.hostCtx.logger.warn(`orchestrator: rename worker session failed: ${String(titleError)}`)
       }

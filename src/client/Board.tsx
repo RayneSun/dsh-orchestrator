@@ -229,6 +229,7 @@ export function Board({ sessionId: propSessionId, useTabInfo, orchestrator, remo
         >
           <span className="dsho-chevron" aria-hidden />
           {silentConv && <span className="dsho-mute" title="静默工作流：终态不会通知主会话" aria-label="静默">🔇</span>}
+          {conv.hasActiveSchedule && <span className="dsho-mute" title="绑定了定时任务：到点自动触发并上报" aria-label="定时任务">⏰</span>}
           <span className="dsho-convTitle" title={conv.title}>{conv.title}</span>
           <span className={`dsho-badge dsho-badge-${displayState}`}>{convStateLabels[displayState] ?? displayState}</span>
           <button className="dsho-open" type="button" onClick={event => {

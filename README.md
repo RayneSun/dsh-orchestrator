@@ -48,18 +48,18 @@ Worker 的任务上报协议、安全红线（支付/删除等不可逆操作先
 
 要求接收方已安装 DSH `0.2.1-rc.2` 或更高版本，并且使用 Web profile。
 
-把 `may-dsh-orchestrator-0.3.5.tgz` 发给对方后执行（安装后新会话自动进入主控助理预设，无需手改配置）：
+把 `may-dsh-orchestrator-0.3.6.tgz` 发给对方后执行（安装后新会话自动进入主控助理预设，无需手改配置）：
 
 ```sh
-dsh plugin add --profile web /path/to/may-dsh-orchestrator-0.3.5.tgz
+dsh plugin --profile web add /path/to/may-dsh-orchestrator-0.3.6.tgz
 dsh web --no-open --host 127.0.0.1 --port 3080
 ```
 
 新版本覆盖安装时，先移除旧版本再添加新 tarball：
 
 ```sh
-dsh plugin remove --profile web @may/dsh-orchestrator
-dsh plugin add --profile web /path/to/may-dsh-orchestrator-0.3.5.tgz
+dsh plugin --profile web remove @may/dsh-orchestrator
+dsh plugin --profile web add /path/to/may-dsh-orchestrator-0.3.6.tgz
 ```
 
 重新生成分发包：
@@ -85,13 +85,13 @@ pnpm pack:dry
 安装到本地 Web profile：
 
 ```sh
-dsh plugin add --profile web /path/to/dsh-orchestrator
+dsh plugin --profile web add /path/to/dsh-orchestrator
 ```
 
 移除：
 
 ```sh
-dsh plugin remove --profile web @may/dsh-orchestrator
+dsh plugin --profile web remove @may/dsh-orchestrator
 ```
 
 启动：
