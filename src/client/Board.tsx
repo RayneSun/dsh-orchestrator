@@ -7,7 +7,9 @@ interface BoardProps {
   orchestrator: { snapshot(request: { parentSessionId: string }): Promise<{ ok: true; value: Snapshot } | { ok: false; error?: { message?: string } }> }
   remoteEvents: {
     $on(event: string, listener: () => void): () => void
-    session?: { openWorkspacePath?(request: { path: string }): Promise<{ ok: boolean }> }
+    session?: {
+      openWorkspacePath?(request: { path: string; action?: 'reveal' }): Promise<{ ok: boolean; error?: { message?: string } }>
+    }
   }
   uiWorkspace: any
 }
@@ -234,14 +236,30 @@ export function Board({ sessionId: propSessionId, useTabInfo, orchestrator, remo
     return map
   }, [snapshot])
 
-  const openArtifact = useCallback((conv: ConversationRecord, artifact: string) => {
+  // 制品点击反馈：成功/失败都给 toast，打开失败自动降级为在文件管理器中显示。
+  const [toast, setToast] = useState<string>()
+  const toastTimer = useRef<ReturnType<typeof setTimeout>>()
+  const showToast = useCallback((text: string) => {
+    setToast(text)
+    clearTimeout(toastTimer.current)
+    toastTimer.current = setTimeout(() => setToast(undefined), 2200)
+  }, [])
+  useEffect(() => () => clearTimeout(toastTimer.current), [])
+
+  const openArtifact = useCallback(async (conv: ConversationRecord, artifact: string) => {
     const opener = remoteEvents.session?.openWorkspacePath
-    if (!opener || !conv.workspaceDir) return
+    if (!opener) { showToast('当前环境不支持打开文件'); return }
+    if (!conv.workspaceDir) { showToast('缺少工作区路径，无法打开'); return }
     const path = `${conv.workspaceDir.replace(/\/+$/, '')}/${artifact}`
-    Promise.resolve(opener({ path })).catch(err => {
-      setError(err instanceof Error ? err.message : String(err))
-    })
-  }, [remoteEvents])
+    try {
+      const opened = await opener({ path })
+      if (opened?.ok) { showToast(`已打开：${artifact}`); return }
+      const revealed = await opener({ path, action: 'reveal' })
+      showToast(revealed?.ok ? `已在文件管理器中显示：${artifact}` : `打开失败：${opened?.error?.message ?? revealed?.error?.message ?? '未知错误'}`)
+    } catch (err) {
+      showToast(`打开失败：${err instanceof Error ? err.message : String(err)}`)
+    }
+  }, [remoteEvents, showToast])
 
   if (!sessionId) return <div className="dsho-board"><p className="dsho-empty dsho-error">无法确定主会话 ID。</p></div>
   if (error) return <div className="dsho-board"><h2 className="dsho-title">任务看板</h2><p className="dsho-empty dsho-error" role="alert">{error}</p></div>
@@ -260,6 +278,7 @@ export function Board({ sessionId: propSessionId, useTabInfo, orchestrator, remo
 
   return <div className="dsho-board">
     <h2 className="dsho-title">任务看板 · {snapshot.conversations.length} 个子会话</h2>
+    {toast && <div className="dsho-toast" role="status">{toast}</div>}
     {snapshot.conversations.map(conv => {
       const tasks = tasksByConversation.get(conv.id) ?? []
       const latest = tasks[tasks.length - 1]

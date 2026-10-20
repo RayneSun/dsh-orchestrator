@@ -541,7 +541,7 @@ export class OrchestratorService extends TypertRemoteService {
         description: '新建工作流，或把新需求派发给已有持久子会话；目标会话正忙时会自动中断旧任务并把新需求注入同一子会话。',
         parameters: {
           subject: { type: 'string', required: true, description: '短主题' },
-          workspaceName: { type: 'string', description: '新建子会话时的工作区目录名，简短可文件系统使用；复用已有子会话时忽略；缺省由 subject 生成' },
+          workspaceName: { type: 'string', pattern: '^[a-z0-9][a-z0-9-]{0,79}$', description: '新建子会话必填：子工作区目录名，英文小写短横线 slug（如 daily-news、plane-war）；复用已有子会话时忽略' },
           prompt: { type: 'string', required: true, description: '需求本身和验收点。Worker 与你共享同一工作区，不要重复工作目录、路径等环境声明，不要粘贴内部 ID' },
           conversationId: { type: 'string', description: '复用已有工作流时提供' },
           acceptanceCriteria: { type: 'string', description: '可选验收标准' },

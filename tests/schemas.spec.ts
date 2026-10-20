@@ -14,6 +14,7 @@ describe('工具输入 Zod 校验', () => {
     const parsed = dispatchInputSchema.parse({
       subject: '  查询天气  ',
       prompt: '请查询上海天气',
+      workspaceName: 'weather-query',
       acceptanceCriteria: ' 给出温度 ',
     })
     expect(parsed.subject).toBe('查询天气')
@@ -21,7 +22,7 @@ describe('工具输入 Zod 校验', () => {
   })
 
   it.each(['subject', 'prompt'] as const)('dispatch 拒绝空的 %s', (field) => {
-    const input = { subject: '主题', prompt: '内容' }
+    const input = { subject: '主题', prompt: '内容', workspaceName: 'demo-task' }
     expect(dispatchInputSchema.safeParse({ ...input, [field]: ' ' }).success).toBe(false)
   })
 
@@ -105,14 +106,21 @@ describe('工具输入 Zod 校验', () => {
 
 
 
-  it('dispatch 接受可选子工作区名称，并限制长度', () => {
+  it('workspaceName 新建必填且必须是英文 slug；复用子会话时可省略', () => {
     expect(dispatchInputSchema.parse({ subject: 's', prompt: 'p', workspaceName: 'plane-war' }).workspaceName).toBe('plane-war')
-    expect(dispatchInputSchema.safeParse({ subject: 's', prompt: 'p', workspaceName: 'a'.repeat(81) }).success).toBe(false)
+    // 新建（无 conversationId）缺 workspaceName 拒绝
+    expect(dispatchInputSchema.safeParse({ subject: 's', prompt: 'p' }).success).toBe(false)
+    // 复用时不需要
+    expect(dispatchInputSchema.safeParse({ subject: 's', prompt: 'p', conversationId: 'conv_1' }).success).toBe(true)
+    // slug 规则：中文、大写、空格、下划线、前导中划线、超长都拒绝
+    for (const bad of ['制作页面', 'Daily-News', 'daily news', 'daily_news', '-daily', 'a'.repeat(81), '']) {
+      expect(dispatchInputSchema.safeParse({ subject: 's', prompt: 'p', workspaceName: bad }).success).toBe(false)
+    }
   })
 
   it('dispatch 接受 silent 标记，任务记录默认非静默', () => {
-    expect(dispatchInputSchema.parse({ subject: 's', prompt: 'p', silent: true }).silent).toBe(true)
-    expect(dispatchInputSchema.parse({ subject: 's', prompt: 'p' }).silent).toBeUndefined()
+    expect(dispatchInputSchema.parse({ subject: 's', prompt: 'p', workspaceName: 'demo-task', silent: true }).silent).toBe(true)
+    expect(dispatchInputSchema.parse({ subject: 's', prompt: 'p', workspaceName: 'demo-task' }).silent).toBeUndefined()
     const task = createTask({
       id: 't', parentSessionId: 'p', conversationId: 'c', predecessorTaskId: null,
       subject: 's', prompt: 'p', silent: true,
@@ -126,8 +134,8 @@ describe('工具输入 Zod 校验', () => {
 
 
   it('dispatch 已移除 conversationTitle（subject 即会话标题）', () => {
-    expect(dispatchInputSchema.parse({ subject: '每日热点新闻', prompt: 'p' }).subject).toBe('每日热点新闻')
-    expect(dispatchInputSchema.safeParse({ subject: 's', prompt: 'p', conversationTitle: 'x' }).success).toBe(false)
+    expect(dispatchInputSchema.parse({ subject: '每日热点新闻', prompt: 'p', workspaceName: 'daily-news' }).subject).toBe('每日热点新闻')
+    expect(dispatchInputSchema.safeParse({ subject: 's', prompt: 'p', workspaceName: 'demo-task', conversationTitle: 'x' }).success).toBe(false)
   })
 
   it('conversation 记录允许可选 hasActiveSchedule 快照标记', () => {
@@ -143,8 +151,8 @@ describe('工具输入 Zod 校验', () => {
   })
 
   it('dispatch 限制主题、需求和验收标准长度，outline 列表最多 50 项', () => {
-    expect(dispatchInputSchema.safeParse({ subject: 'a'.repeat(201), prompt: 'p' }).success).toBe(false)
-    expect(dispatchInputSchema.safeParse({ subject: 's', prompt: 'a'.repeat(100_001) }).success).toBe(false)
+    expect(dispatchInputSchema.safeParse({ subject: 'a'.repeat(201), prompt: 'p', workspaceName: 'demo-task' }).success).toBe(false)
+    expect(dispatchInputSchema.safeParse({ subject: 's', prompt: 'a'.repeat(100_001), workspaceName: 'demo-task' }).success).toBe(false)
     expect(dispatchInputSchema.safeParse({
       subject: 's', prompt: 'p', acceptanceCriteria: 'a'.repeat(10_001),
     }).success).toBe(false)

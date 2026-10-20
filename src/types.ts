@@ -229,14 +229,23 @@ export const conversationIdInputSchema = z.object({
 }).strict()
 
 
+// 子工作区目录名强制英文 slug：中文目录名在 shell/路径拼接场景容易出问题，且跨平台可读性差。
+export const workspaceNameSchema = z.string().trim()
+  .regex(/^[a-z0-9][a-z0-9-]{0,79}$/, 'workspaceName must be a lowercase slug like daily-news')
+
 export const dispatchInputSchema = z.object({
   subject: z.string().trim().min(1).max(200),
-  workspaceName: z.string().trim().min(1).max(80).optional(),
+  workspaceName: workspaceNameSchema.optional(),
   prompt: z.string().trim().min(1).max(100_000),
   conversationId: z.string().trim().min(1).optional(),
   acceptanceCriteria: z.string().trim().min(1).max(10_000).optional(),
   silent: z.boolean().optional(),
-}).strict()
+}).strict().superRefine((value, ctx) => {
+  // 新建子会话必须显式给英文目录名；复用已有子会话时沿用原目录，无需传。
+  if (!value.conversationId && !value.workspaceName) {
+    ctx.addIssue({ code: 'custom', path: ['workspaceName'], message: 'new conversation requires workspaceName (lowercase slug)' })
+  }
+})
 
 export const taskUpdateInputSchema = z.object({
   status: z.enum(taskUpdateStatuses),

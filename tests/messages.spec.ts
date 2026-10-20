@@ -21,6 +21,11 @@ describe('prompt 编排约定', () => {
     expect(LEAD_PROMPT).toContain('优先复用其 conversationId')
   })
 
+  it('Worker prompt 约定 progressNote 拟人化幽默风格', () => {
+    expect(WORKER_PROMPT).toContain('拟人化')
+    expect(WORKER_PROMPT).toContain('不许为了搞笑编造信息')
+  })
+
   it('Worker prompt 约定重复模式主动建议定时任务', () => {
     expect(WORKER_PROMPT).toContain('反复定期出现')
     expect(WORKER_PROMPT).toContain('schedule_create 绑定本会话')
