@@ -126,6 +126,21 @@ function formatRosterTime(value: string): string {
   return `${sameYear ? '' : `${date.getFullYear()}/`}${month}/${day} ${hour}:${minute}`
 }
 
+/**
+ * orchestrator_dispatch 的参数描述。注意：dsh-tools 的参数 DSL 只支持
+ * type/required/enum/const/items/properties/oneOf/description/title/default/examples，
+ * 任何其他关键字（如 pattern）会在 defineTool 编译期直接抛错、导致工具注册失败消失。
+ * 约束只能写进 description，运行时校验由 dispatchInputSchema 负责。
+ */
+export const DISPATCH_TOOL_PARAMETERS = {
+  subject: { type: 'string', required: true, description: '短主题' },
+  workspaceName: { type: 'string', description: '新建子会话必填：子工作区目录名，必须匹配 ^[a-z0-9][a-z0-9-]{0,79}$（英文小写短横线 slug，如 daily-news、plane-war）；复用已有子会话时忽略' },
+  prompt: { type: 'string', required: true, description: '需求本身和验收点。Worker 与你共享同一工作区，不要重复工作目录、路径等环境声明，不要粘贴内部 ID' },
+  conversationId: { type: 'string', description: '复用已有工作流时提供' },
+  acceptanceCriteria: { type: 'string', description: '可选验收标准' },
+  silent: { type: 'boolean', description: '静默模式：记忆整理等后台维护任务使用；终态不会向主会话投递任何消息，看板仍可见状态' },
+} as const
+
 export class OrchestratorService extends TypertRemoteService {
   static inject = [
     'agents', 'sessions', 'storageDomain',
@@ -539,14 +554,7 @@ export class OrchestratorService extends TypertRemoteService {
       defineTool({
         name: 'orchestrator_dispatch',
         description: '新建工作流，或把新需求派发给已有持久子会话；目标会话正忙时会自动中断旧任务并把新需求注入同一子会话。',
-        parameters: {
-          subject: { type: 'string', required: true, description: '短主题' },
-          workspaceName: { type: 'string', pattern: '^[a-z0-9][a-z0-9-]{0,79}$', description: '新建子会话必填：子工作区目录名，英文小写短横线 slug（如 daily-news、plane-war）；复用已有子会话时忽略' },
-          prompt: { type: 'string', required: true, description: '需求本身和验收点。Worker 与你共享同一工作区，不要重复工作目录、路径等环境声明，不要粘贴内部 ID' },
-          conversationId: { type: 'string', description: '复用已有工作流时提供' },
-          acceptanceCriteria: { type: 'string', description: '可选验收标准' },
-          silent: { type: 'boolean', description: '静默模式：记忆整理等后台维护任务使用；终态不会向主会话投递任何消息，看板仍可见状态' },
-        },
+        parameters: DISPATCH_TOOL_PARAMETERS,
         output: sharedJsonOutput,
         execute: async (args: any) => toJson(await this.dispatch(args, agent)),
       }),
