@@ -235,11 +235,9 @@ export function Board({ sessionId: propSessionId, useTabInfo, orchestrator, remo
           <button className="dsho-open" type="button" onClick={event => {
             event.stopPropagation()
             try {
-              const opened = uiWorkspace.openSession({
-                parentSessionId: sessionId,
-                childSessionId: conv.childSessionId,
-                mode: 'continuable',
-              })
+              // Worker 是一级根会话（无 subagent 血统），必须按普通会话打开；
+              // 用 parent+child 的 subagent 寻址会被平台鉴权拒绝（subagent/unauthorized）。
+              const opened = uiWorkspace.openSession(conv.childSessionId)
               Promise.resolve(opened).catch(err => {
                 setError(err instanceof Error ? err.message : String(err))
               })

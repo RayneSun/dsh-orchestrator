@@ -76,8 +76,22 @@ type DispatchProvision =
   | { ok: false; result: unknown }
 
 /** Worker 子会话用空 section 遮蔽的全局系统提示段（同名 scoped section shadow 全局）。 */
-/** schedule/changed 在任务创建/更新/删除/投递时都会触发，合并后再核对，避免每轮触发都全量 list。 */
+/** schedule/changed 在任务创建/更新、删除、投递时都会触发，合并后再核对，避免每轮触发都全量 list。 */
 const SCHEDULE_SYNC_DEBOUNCE_MS = 500
+
+/** 平台 modelSelection 投影与默认模型服务的本地结构化类型（不新增包导入）。 */
+type ReasoningEffort = NonNullable<Agent['options']>['reasoningEffort']
+interface ModelSelectionLike {
+  provider?: string
+  model?: string
+  reasoningEffort?: ReasoningEffort
+}
+interface SessionProjectionsLike {
+  stateOf(session: unknown, key: string): { pending?: ModelSelectionLike | null } | undefined
+}
+interface AgentDefaultModelLike {
+  currentSelection(): ModelSelectionLike
+}
 const WORKER_SUPPRESSED_SECTIONS = ['harness:source', 'app:web-surface', 'ui:deliverable-file-references'] as const
 /** Lead 白名单不含邮件工具，但 qqmail 会全局公告工具能力；遮蔽避免主控看到却调不到而产生幻觉。 */
 const LEAD_SUPPRESSED_SECTIONS = ['plugin:dsh-qqmail'] as const
@@ -116,6 +130,7 @@ export class OrchestratorService extends TypertRemoteService {
   static inject = [
     'agents', 'sessions', 'storageDomain',
     'sessionController', 'sessionPersistence', 'agentPresets', 'sessionTitle',
+    'sessionProjections', 'agentDefaultModel',
   ]
 
   private ready: Promise<void>
@@ -797,14 +812,58 @@ export class OrchestratorService extends TypertRemoteService {
   /**
    * 创建根级别的 Worker 会话：与主会话同为一等会话（不带 origin/delegationDepth 的
    * subagent 血统），因此 schedule 等只对 depth-0 会话开放的宿主能力对 Worker 可用。
-   * cwd 与 agentPreset 直接写入 session header，冷恢复后保持不变；模型配置继承主会话。
+   * cwd 与 agentPreset 直接写入 session header，冷恢复后保持不变；模型继承主会话当前生效的选择。
    */
+  /**
+   * Worker 的模型选项。Agent.options 只是会话创建时的快照：用户在主会话里切换模型走
+   * 会话级选择（model/selection 事件 + requestHeader），不回写 options。这里按
+   * session-controller 内部 selectionFor 的同一顺序解析主会话当前生效模型——
+   * 会话级 pending 选择 → 最近请求头 → 全局默认——覆盖 provider/model/reasoningEffort；
+   * 任一步读取失败回退到创建快照。Worker 首个请求头落盘后，后续轮次沿用它。
+   */
+  private workerModelOptions(parent: Agent): Agent['options'] {
+    try {
+      const projections = (this.hostCtx as unknown as { sessionProjections?: SessionProjectionsLike }).sessionProjections
+      const pending = projections?.stateOf(parent.session, 'modelSelection')?.pending
+      if (pending?.provider && pending.model) {
+        return {
+          ...parent.options,
+          provider: pending.provider,
+          model: pending.model,
+          ...pending.reasoningEffort ? { reasoningEffort: pending.reasoningEffort } : {},
+        }
+      }
+      const header = parent.session.requestHeader()
+      if (header?.config.provider && header.config.model) {
+        const keepEffort = header.config.reasoningEffort !== undefined && header.adapterDefaults?.reasoningEffort !== true
+        return {
+          ...parent.options,
+          provider: header.config.provider,
+          model: header.config.model,
+          ...keepEffort ? { reasoningEffort: header.config.reasoningEffort } : {},
+        }
+      }
+      const defaults = (this.hostCtx as unknown as { agentDefaultModel?: AgentDefaultModelLike }).agentDefaultModel
+      const fallback = defaults?.currentSelection()
+      if (fallback?.provider && fallback.model) {
+        return {
+          ...parent.options,
+          provider: fallback.provider,
+          model: fallback.model,
+          ...fallback.reasoningEffort ? { reasoningEffort: fallback.reasoningEffort } : {},
+        }
+      }
+    } catch (error) {
+      this.hostCtx.logger.warn(`orchestrator: read lead model selection failed: ${String(error)}`)
+    }
+    return { ...parent.options }
+  }
   private async createWorkerAgent(childSessionId: string, cwd: string, parent: Agent, title: string): Promise<void> {
     await this.hostCtx.agents.withoutInitiator(async () => {
       const handle = await this.hostCtx.agents.create({
         sessionId: childSessionId as SessionId,
         meta: { cwd, agentPreset: WORKER_PRESET },
-        agentOptions: { ...parent.options },
+        agentOptions: this.workerModelOptions(parent),
         signal: AbortSignal.timeout(LAUNCH_ACCEPT_TIMEOUT_MS),
       })
       try {

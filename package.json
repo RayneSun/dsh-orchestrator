@@ -1,6 +1,6 @@
 {
   "name": "@may/dsh-orchestrator",
-  "version": "0.3.6",
+  "version": "0.3.7",
   "description": "DSH 主控助理编排插件：Lead 通过持久子会话和 TaskRun 分发后台任务",
   "type": "module",
   "main": "./lib/index.js",
