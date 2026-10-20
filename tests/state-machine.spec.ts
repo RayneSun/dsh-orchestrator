@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { createConversation, createTask } from '../src/types.ts'
 import {
-  StateError, activateConversation, applyOutlinePatch, assertRevision, classifyWorkerTurnEnd,
+  StateError, activateConversation, updateOutlineSummary, assertRevision, classifyWorkerTurnEnd,
   failConversation, interruptTaskForRevision, reviseConversation, canTransition, blockTask, failTask, interruptTaskAfterRestart,
   isTerminal, settleConversation, startConversation, transitionTask,
 } from '../src/state-machine.ts'
@@ -75,11 +75,13 @@ describe('任务状态机', () => {
     expect(() => activateConversation(conv, 't2')).toThrow(/already runs task t1/)
   })
 
-  it('outline patch 合并去重标签和实体', () => {
+  it('summary 更新路由卡摘要并保留其余 outline 字段', () => {
     const { conv } = pair()
-    const next = applyOutlinePatch(conv, { tags: ['天气', '天气', '穿衣'], entities: ['温度'] })
-    expect(next.outline.tags).toEqual(['天气', '穿衣'])
-    expect(next.outline.entities).toEqual(['温度'])
+    const withFacts = { ...conv, outline: { ...conv.outline, keyFacts: ['旧事实'] } }
+    const next = updateOutlineSummary(withFacts, '新摘要')
+    expect(next.outline.summary).toBe('新摘要')
+    expect(next.outline.keyFacts).toEqual(['旧事实'])
+    expect(next.revision).toBe(conv.revision + 1)
   })
 })
 

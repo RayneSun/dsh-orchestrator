@@ -26,7 +26,7 @@
 ```bash
 ./node_modules/.bin/tsc -p tsconfig.json --noEmit
 ./node_modules/.bin/tsc -p tsconfig.client.json --noEmit
-./node_modules/.bin/vitest run        # 当前 59 个用例
+./node_modules/.bin/vitest run        # 当前 74 个用例
 ./node_modules/.bin/tsdown            # 应无弃用警告
 export npm_config_cache=/private/tmp/dsh-orchestrator-npm-cache
 node scripts/verify-packaging.mjs     # 校验 tgz 只含运行所需 lib/、vendor/、cordis.patch.yml 等
@@ -58,8 +58,8 @@ dsh plugin --profile web add <tgz 绝对路径>
 
 ### 状态机（src/types.ts + src/state-machine.ts）
 
-- 新建 Conversation 必须在主会话 cwd 下创建唯一子目录（同名冲突递增 `-N` 后缀），`meta.cwd` 写入 session header，冷恢复后不变；复用 Conversation 不换目录。目录名由 `dispatch.subject` 或 `workspaceName` 经 `src/workspaces.ts` 清洗。
-- Task 状态：`queued / running / input_required / blocked / completed / failed / cancelled / interrupted`。
+- 新建 Conversation 必须在主会话 cwd 下创建唯一子目录（同名冲突递增 `-N` 后缀），`meta.cwd` 写入 session header，冷恢复后不变；复用 Conversation 不换目录。新建派发必须提供 `workspaceName`（`workspaceNameSchema` 强制英文小写 slug），经 `src/workspaces.ts` 清洗后落盘。
+- Task 状态：`queued / running / input_required / blocked / completed / failed / interrupted`（`cancelled` 从未产生过，0.3.11 起移除，旧记录加载时迁移为 interrupted）。
   - `input_required`：只表示 Worker 需要用户补充信息/选择，或需要用户接管浏览器、系统安全界面；必须有 question。
   - `blocked`（0.3.2 重新引入，语义不同于 0.2.x）：权限、配置、依赖、网络、资源、运行时等系统阻碍；带 error、可选 reasonCode/remediation。
   - `interrupted`：被改单接管或用户手动停止。改单接管不投递；用户手动停止需要投递一条非失败通知，工作流回 `idle` 可继续派发。
@@ -153,4 +153,4 @@ dsh plugin --profile web add <tgz 绝对路径>
 ## 背景材料
 
 - README.md：用户面说明，发版时随版本号更新。
-- git log：0.2.0（background/单 Worker 预设）→ 0.2.1（路由追问兜底/改单 steer/blocked 提问）→ 0.2.2（todo 进度桥接看板）→ 0.2.3（interrupted 改单语义）→ 0.2.4（手动停止捕获、看板与话术精简）→ 0.2.5（白名单、input_required、上下文瘦身、鲁棒性）→ 0.2.6（手动中断通知、状态配色、Worker 提示词瘦身）→ 0.2.7（子会话折叠、柔光动效、按钮突出、提示词/恢复加固）→ 0.3.0（个人助理能力 bundle）→ 0.3.2（Worker 根会话化、blocked 系统受阻语义、默认 Lead 预设免手改）→ 0.3.3（DSH 0.2.1-rc.2 适配、移除 dsh-market）→ 0.3.4（记忆共享、settled 死代码清理、文档重写）→ 0.3.5（Worker 放开子智能体与后台任务）。
+- git log：0.2.0（background/单 Worker 预设）→ 0.2.1（路由追问兜底/改单 steer/blocked 提问）→ 0.2.2（todo 进度桥接看板）→ 0.2.3（interrupted 改单语义）→ 0.2.4（手动停止捕获、看板与话术精简）→ 0.2.5（白名单、input_required、上下文瘦身、鲁棒性）→ 0.2.6（手动中断通知、状态配色、Worker 提示词瘦身）→ 0.2.7（子会话折叠、柔光动效、按钮突出、提示词/恢复加固）→ 0.3.0（个人助理能力 bundle）→ 0.3.2（Worker 根会话化、blocked 系统受阻语义、默认 Lead 预设免手改）→ 0.3.3（DSH 0.2.1-rc.2 适配、移除 dsh-market）→ 0.3.4（记忆共享、settled 死代码清理、文档重写）→ 0.3.5（Worker 放开子智能体与后台任务）→ 0.3.6（标题更新/同主题复用/定时编排/定时标记）→ 0.3.7（模型选择透传、打开子会话寻址修复）→ 0.3.8（看板重构、task_update v2：report/progressNote/summary）→ 0.3.9（workspaceName 英文 slug 必填、mock 对齐）→ 0.3.10（dispatch 工具参数 DSL pattern 崩溃修复）→ 0.3.11（死字段 userAnswer/resultSummary/outlinePatch/cancelled 清理与数据迁移、outline 摘要写入简化、看板 API 文档）。

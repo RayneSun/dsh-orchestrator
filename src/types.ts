@@ -1,10 +1,10 @@
 import { z } from 'zod'
 
 const conversationStates = ['provisioning', 'running', 'idle', 'input_required', 'failed'] as const
-const taskStatuses = ['queued', 'running', 'input_required', 'blocked', 'completed', 'failed', 'cancelled', 'interrupted'] as const
+const taskStatuses = ['queued', 'running', 'input_required', 'blocked', 'completed', 'failed', 'interrupted'] as const
 export const activeTaskStatuses = ['queued', 'running'] as const
 /** 单条 TaskRun 的终态；input_required/blocked 结束本次执行，等待 Lead 后续派发新的 TaskRun。 */
-export const terminalTaskStatuses = ['input_required', 'blocked', 'completed', 'failed', 'cancelled', 'interrupted'] as const
+export const terminalTaskStatuses = ['input_required', 'blocked', 'completed', 'failed', 'interrupted'] as const
 /** 需要向主会话投递通知的终态。 */
 // interrupted 是否投递取决于产生路径：改单/重启不投递，手动停止才投递通知。
 // 因此该表只表示"允许带 delivery"，pending 由具体路径挂起。
@@ -54,16 +54,6 @@ export const deliverySchema = z.discriminatedUnion('state', [
   }).strict(),
 ])
 
-export const outlinePatchSchema = z.object({
-  title: trimmed.max(200).optional(),
-  summary: trimmed.max(2_000).optional(),
-  keyFacts: trimmedList.optional(),
-  entities: trimmedList.optional(),
-  tags: trimmedList.optional(),
-  artifacts: trimmedList.optional(),
-  openQuestions: trimmedList.optional(),
-}).strict()
-
 /** 制品路径：子工作区内相对路径，拒绝绝对路径、盘符与 .. 逃逸。 */
 const artifactPath = z.string().trim().min(1).max(500).refine(
   (value) => {
@@ -108,14 +98,11 @@ const baseTaskSchema = z.object({
   acceptanceCriteria: z.string().optional(),
   status: z.enum(taskStatuses).default('queued'),
   progressNote: z.string().optional(),
-  userAnswer: z.string().optional(),
-  resultSummary: z.string().optional(),
   error: z.string().optional(),
   question: z.string().optional(),
   reasonCode: z.enum(blockReasonCodes).optional(),
   remediation: z.string().optional(),
   cancelledReason: z.string().optional(),
-  outlinePatch: outlinePatchSchema.optional(),
   progressSteps: z.array(progressStepSchema).default([]),
   silent: z.boolean().default(false),
   report: reportSchema.optional(),
@@ -129,7 +116,12 @@ const baseTaskSchema = z.object({
   endedAt: z.string().optional(),
 }).strict()
 
-/** 兼容 0.2.x 存储记录：旧 blocked(+scene/blockedQuestion)→input_required，并丢弃废弃 scene。0.3.1 的 blocked 无 scene，必须保留。 */
+/**
+ * 旧存储记录迁移：
+ * - 0.2.x：blocked(+scene/blockedQuestion)→input_required，丢弃废弃 scene；0.3.1 的 blocked 无 scene，必须保留。
+ * - ≤0.3.10：userAnswer/resultSummary → report.result（内容保留，旧任务的结果在看板和 roster 仍可读）；
+ *   outlinePatch 从未写入过，直接剥离；cancelled 状态从未产生过，防御性并入 interrupted。
+ */
 function migrateRecord<T>(raw: unknown): unknown {
   if (!raw || typeof raw !== 'object') return raw
   const record = { ...(raw as Record<string, unknown>) }
@@ -143,6 +135,14 @@ function migrateRecord<T>(raw: unknown): unknown {
     if (record.question === undefined) record.question = record.blockedQuestion
     delete record.blockedQuestion
   }
+  if (record.report === undefined) {
+    const legacyResult = record.userAnswer ?? record.resultSummary
+    if (typeof legacyResult === 'string' && legacyResult.trim()) record.report = { result: legacyResult }
+  }
+  delete record.userAnswer
+  delete record.resultSummary
+  delete record.outlinePatch
+  if (record.status === 'cancelled') record.status = 'interrupted'
   return record
 }
 
@@ -156,7 +156,6 @@ export type TaskStatus = TaskRecord['status']
 export type BlockReasonCode = NonNullable<TaskRecord['reasonCode']>
 export type ConversationState = ConversationRecord['state']
 export type Delivery = z.infer<typeof deliverySchema>
-export type OutlinePatch = z.infer<typeof outlinePatchSchema>
 
 export interface Snapshot {
   conversations: ConversationRecord[]

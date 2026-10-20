@@ -157,13 +157,14 @@ describe('工具输入 Zod 校验', () => {
       subject: 's', prompt: 'p', acceptanceCriteria: 'a'.repeat(10_001),
     }).success).toBe(false)
     expect(taskUpdateInputSchema.safeParse({
-      status: 'running', outlinePatch: { tags: Array.from({ length: 51 }, (_, i) => `t${i}`) },
+      status: 'running', outlinePatch: { tags: ['t'] },
     }).success).toBe(false)
+    expect(taskUpdateInputSchema.safeParse({ status: 'running', summary: 'a'.repeat(301) }).success).toBe(false)
   })
 
 })
 
-describe('0.2.x 存储记录迁移', () => {
+describe('旧版本存储记录迁移', () => {
   const baseTask = {
     id: 'task_1', parentSessionId: 'p', conversationId: 'c', predecessorTaskId: null,
     subject: 's', prompt: 'p', responseMode: 'background',
@@ -190,6 +191,29 @@ describe('0.2.x 存储记录迁移', () => {
     const conv = conversationSchema.parse({ ...baseConv, state: 'blocked', scene: 'worker' })
     expect(conv.state).toBe('input_required')
     expect('scene' in conv).toBe(false)
+  })
+
+  it('≤0.3.10 的 userAnswer/resultSummary 迁移为 report.result', () => {
+    const task = taskSchema.parse({ ...baseTask, status: 'completed', userAnswer: '旧答案', resultSummary: '旧摘要' })
+    expect(task.report?.result).toBe('旧答案')
+    expect('userAnswer' in task).toBe(false)
+    expect('resultSummary' in task).toBe(false)
+    const onlySummary = taskSchema.parse({ ...baseTask, status: 'completed', resultSummary: '旧摘要' })
+    expect(onlySummary.report?.result).toBe('旧摘要')
+  })
+
+  it('≤0.3.10 的 outlinePatch 剥离、cancelled 并入 interrupted', () => {
+    const task = taskSchema.parse({ ...baseTask, status: 'cancelled', outlinePatch: { tags: ['t'] } })
+    expect(task.status).toBe('interrupted')
+    expect('outlinePatch' in task).toBe(false)
+  })
+
+  it('已有 report 的记录不被 userAnswer 覆盖', () => {
+    const task = taskSchema.parse({
+      ...baseTask, status: 'completed',
+      report: { result: '新结果' }, userAnswer: '旧答案',
+    })
+    expect(task.report?.result).toBe('新结果')
   })
 
   it('0.3.1 的 blocked 记录不会被旧迁移规则误转为 input_required', () => {

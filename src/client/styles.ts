@@ -39,7 +39,7 @@ export const CSS = `
 .dsho-badge-input_required{background:color-mix(in srgb,var(--dsho-warn) 15%,transparent);color:var(--dsho-warn)}
 .dsho-badge-blocked{background:color-mix(in srgb,var(--dsho-warn) 16%,transparent);color:var(--dsho-warn)}
 .dsho-badge-failed{background:color-mix(in srgb,var(--dsho-err) 11%,transparent);color:var(--dsho-err-ink)}
-.dsho-badge-interrupted,.dsho-badge-cancelled{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-tertiary)}
+.dsho-badge-interrupted{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-tertiary)}
 .dsho-taskMuted{opacity:.75}
 .dsho-meta{padding:6px 13px;color:var(--dsw-alias-label-tertiary,#9aa0a6);font-size:11px;line-height:1.6;border-bottom:.5px dashed var(--dsho-line)}
 .dsho-open{font:inherit;flex:none;cursor:pointer;font-size:11px;line-height:16px;padding:3px 8px;border-radius:6px;border:1px solid var(--dsho-line);background:transparent;color:var(--dsho-brand)}

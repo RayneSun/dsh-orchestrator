@@ -33,7 +33,7 @@ Worker 的任务上报协议、安全红线（支付/删除等不可逆操作先
 - Worker 系统提示自动遮蔽 DSH 自举开发说明（checkout/Web GUI/HMR）等与执行任务无关的全局段落，且不组合 present/goal 等面向终端用户的插件，降低每轮上下文体积。
 - Worker 不能直接向用户提问：需要用户选择、补充或接管浏览器/系统确认时调用 `task_update({status:'input_required', question})`，由 Lead 向用户提问，并把答复作为新 TaskRun 派发回同一子会话；权限/配置/依赖/网络等系统阻碍使用 `blocked`。
 - Worker 多步骤任务继续使用内置 `todo_write`；Host 监听子会话的 `todo/write` 事件（约 350ms 合并）并自动同步到 TaskRun 的步骤进度，任务看板会实时显示 `✓/▶/○` 与 `已完成/总数`。Worker 不需要为每个 todo 变化调用 `task_update`，todo 全完成也不会自动结束任务，终态仍以 `task_update` 为准。
-- 新建 Worker 会在当前主工作区下获得独立工作目录 `<主题>/`（同名冲突自动递增 `-2`、`-3`）；`dispatch.subject` 自动用于目录命名，也可传 `workspaceName` 覆盖。复用已有子会话时继续使用原目录。
+- 新建 Worker 会在当前主工作区下获得独立工作目录：派发时必须提供 `workspaceName`（英文小写短横线 slug，如 `daily-news`，正则 `^[a-z0-9][a-z0-9-]{0,79}$`；同名冲突自动递增 `-2`、`-3`）。复用已有子会话时继续使用原目录，无需再传。
 - `dispatch` 一律后台派发，不阻塞主对话；需要了解进展时由 Lead 主动调用 `orchestrator_list` / `orchestrator_get` 查询。记忆整理等后台维护任务可设 `silent: true`：终态（含失败）完全不向主会话投递，Lead 不跟进，看板仍显示状态并带“静默”徽标。
 - 完成、待操作、受阻、失败或被用户手动停止后通过持久 outbox 唤醒 Lead；改单接管和普通重启中断的旧任务不产生通知。
 - Lead 只以 Worker 的 `report.result` 为权威结果；`report.artifacts` 制品路径自动带工作区前缀。
@@ -42,16 +42,16 @@ Worker 的任务上报协议、安全红线（支付/删除等不可逆操作先
 
 ## Web 看板
 
-在主会话 header 点击“任务看板”。右侧栏按子会话展示状态、独立工作区名、轻量路由卡摘要、任务时间线（支持折叠，运行中的子会话高亮）、实时步骤进度、错误、结果和同步状态；点击“打开子会话”可查看完整子会话。静默工作流带 🔇 图标、整卡降透明度，标题计数拆分“N 个子会话 · M 个静默”。V1 看板只读。
+在主会话 header 点击“任务看板”。右侧栏按子会话展示状态徽标、独立工作区名、任务时间线（支持折叠，运行中的子会话高亮并有呼吸动效）、实时步骤进度（✓/●）、一句话进展、错误、结果和同步状态；完成任务的“展开详情”含摘要、完整结果与可点击打开的制品文件；点击“打开子会话”可查看完整子会话。静默任务带 🔇 图标、定时触发任务带 ⏰ 图标。V1 看板只读。
 
 ## 分发安装
 
 要求接收方已安装 DSH `0.2.1-rc.2` 或更高版本，并且使用 Web profile。
 
-把 `may-dsh-orchestrator-0.3.6.tgz` 发给对方后执行（安装后新会话自动进入主控助理预设，无需手改配置）：
+把 `may-dsh-orchestrator-0.3.11.tgz` 发给对方后执行（安装后新会话自动进入主控助理预设，无需手改配置）：
 
 ```sh
-dsh plugin --profile web add /path/to/may-dsh-orchestrator-0.3.6.tgz
+dsh plugin --profile web add /path/to/may-dsh-orchestrator-0.3.11.tgz
 dsh web --no-open --host 127.0.0.1 --port 3080
 ```
 
@@ -59,7 +59,7 @@ dsh web --no-open --host 127.0.0.1 --port 3080
 
 ```sh
 dsh plugin --profile web remove @may/dsh-orchestrator
-dsh plugin --profile web add /path/to/may-dsh-orchestrator-0.3.6.tgz
+dsh plugin --profile web add /path/to/may-dsh-orchestrator-0.3.11.tgz
 ```
 
 重新生成分发包：

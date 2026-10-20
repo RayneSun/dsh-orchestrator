@@ -89,7 +89,7 @@ export function revisionPrompt(task: TaskRecord): string {
 export function deliveryNotice(task: TaskRecord, workspaceName?: string): string {
   const base = `Orchestrator 后台任务结束：\n- conversationId: ${task.conversationId}\n- 状态：${task.status}\n- 主题：${task.subject}`
   if (task.status === 'completed') {
-    const result = task.report?.result ?? task.userAnswer ?? ''
+    const result = task.report?.result ?? ''
     const artifacts = task.report?.artifacts?.length
       ? `\n\n制品文件（相对主工作区）：\n${task.report.artifacts.map(a => `- ${workspaceName ? `${workspaceName}/` : ''}${a}`).join('\n')}`
       : ''

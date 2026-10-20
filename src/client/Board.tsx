@@ -63,7 +63,7 @@ const ACTIVE_TASK_STATUSES = ['queued', 'running']
 
 const taskStatusLabels: Record<string, string> = {
   queued: '排队中', running: '进行中', input_required: '待操作', blocked: '已受阻', completed: '已完成',
-  failed: '失败', cancelled: '已取消', interrupted: '已中断',
+  failed: '失败', interrupted: '已中断',
 }
 const blockReasonLabels: Record<string, string> = {
   permission_denied: '权限', configuration: '配置', dependency: '依赖',
@@ -88,11 +88,10 @@ function taskHeadline(task: TaskRecord): string {
       return task.remediation || task.error || '任务被系统环境阻碍'
     case 'completed':
       // 折叠条/兜底标题只取首行，避免整条 report 灌进一行摘要
-      return firstLine(task.report?.result) || firstLine(task.userAnswer) || '已完成'
+      return firstLine(task.report?.result) || '已完成'
     case 'failed':
       return task.error || '执行失败'
     case 'interrupted':
-    case 'cancelled':
       return task.cancelledReason || '已中断'
     case 'queued':
       return '排队等待执行'
@@ -123,7 +122,7 @@ interface TaskLineProps {
 function TaskLine({ task, conv, nowMs, onOpenArtifact }: TaskLineProps): React.ReactElement {
   const [expanded, setExpanded] = useState(false)
   const running = (ACTIVE_TASK_STATUSES as string[]).includes(task.status)
-  const result = task.report?.result ?? task.userAnswer
+  const result = task.report?.result
   const artifacts = task.report?.artifacts ?? []
   const live = running && !task.endedAt
   const duration = durationText(task, nowMs)
@@ -152,7 +151,7 @@ function TaskLine({ task, conv, nowMs, onOpenArtifact }: TaskLineProps): React.R
   </div>)
   if (task.delivery?.state === 'delivered') detailSections.push(<div key="dd" className="dsho-detailSec dsho-subtle">已同步回主会话 · {time(task.delivery.deliveredAt)}</div>)
 
-  if (task.status === 'interrupted' || task.status === 'cancelled') {
+  if (task.status === 'interrupted') {
     return <li className="dsho-task dsho-taskMuted">
       <div className="dsho-taskHead">
         <span className={`dsho-badge dsho-badge-${task.status}`}>{taskStatusLabels[task.status] ?? task.status}</span>

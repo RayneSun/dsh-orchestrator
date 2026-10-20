@@ -1,4 +1,4 @@
-import type { BlockReasonCode, ConversationRecord, OutlinePatch, TaskRecord, TaskReport, TaskStatus } from './types.ts'
+import type { BlockReasonCode, ConversationRecord, TaskRecord, TaskReport, TaskStatus } from './types.ts'
 import { deliverableTaskStatuses, taskUpdateFieldAllowList, terminalTaskStatuses } from './types.ts'
 
 export class StateError extends Error {
@@ -9,13 +9,12 @@ export class StateError extends Error {
 }
 
 const transitions: Record<TaskStatus, readonly TaskStatus[]> = {
-  queued: ['running', 'input_required', 'blocked', 'completed', 'failed', 'cancelled', 'interrupted'],
-  running: ['running', 'input_required', 'blocked', 'completed', 'failed', 'cancelled', 'interrupted'],
+  queued: ['running', 'input_required', 'blocked', 'completed', 'failed', 'interrupted'],
+  running: ['running', 'input_required', 'blocked', 'completed', 'failed', 'interrupted'],
   input_required: [],
   blocked: [],
   completed: [],
   failed: [],
-  cancelled: [],
   interrupted: [],
 }
 
@@ -92,33 +91,14 @@ export function settleConversation(
   return { ...touch(conv, at), state, activeTaskId: null, lastTaskId: task.id }
 }
 
-function uniqueList(values: readonly string[]): string[] {
-  return [...new Set(values.map(item => item.trim()).filter(Boolean))]
-}
-
-function mergeList(current: readonly string[], patch: readonly string[] | undefined, append: boolean): string[] {
-  if (patch === undefined) return [...current]
-  return append ? uniqueList([...current, ...patch]) : uniqueList(patch)
-}
-
-export function applyOutlinePatch(
+/** Worker 通过 task_update 的 summary 维护路由卡一句话摘要（其余 outline 字段保留兼容，不再写入）。 */
+export function updateOutlineSummary(
   conv: ConversationRecord,
-  patch: OutlinePatch,
+  summary: string,
   at = new Date().toISOString(),
 ): ConversationRecord {
   const next = touch(conv, at)
-  return {
-    ...next,
-    title: patch.title?.trim() || conv.title,
-    outline: {
-      summary: patch.summary ?? conv.outline.summary,
-      keyFacts: mergeList(conv.outline.keyFacts, patch.keyFacts, true),
-      entities: mergeList(conv.outline.entities, patch.entities, true),
-      tags: mergeList(conv.outline.tags, patch.tags, true),
-      artifacts: mergeList(conv.outline.artifacts, patch.artifacts, true),
-      openQuestions: mergeList(conv.outline.openQuestions, patch.openQuestions, false),
-    },
-  }
+  return { ...next, outline: { ...next.outline, summary } }
 }
 
 /** Worker 上报的终态自动挂起投递；静默任务与 interrupted 不投递。 */

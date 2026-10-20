@@ -22,7 +22,7 @@ import { orchestratorDomain } from './storage.ts'
 import { buildPresetDefinitions, LEAD_PRESET, LEAD_TOOL_ALLOW, WORKER_PRESET } from './presets.ts'
 import {
   activateConversation,
-  applyOutlinePatch,
+  updateOutlineSummary,
   interruptTaskForRevision,
   reviseConversation,
   failConversation,
@@ -41,7 +41,6 @@ import {
   createTask,
   timestamp,
   type ConversationRecord,
-  type OutlinePatch,
   type ProgressStep,
   type Snapshot,
   type TaskRecord,
@@ -520,8 +519,8 @@ export class OrchestratorService extends TypertRemoteService {
       const last = conv.lastTaskId ? this.taskById(conv.lastTaskId) : undefined
       const tail = active
         ? `｜进行中：${active.subject}`
-        : last?.report?.result || last?.resultSummary || last?.userAnswer
-          ? `｜最近结果：${(last.report?.result || last.resultSummary || last.userAnswer)!.slice(0, 80)}`
+        : last?.report?.result
+          ? `｜最近结果：${last.report.result.slice(0, 80)}`
           : ''
       return `- ${conv.id} [${conv.state}] ${conv.title}${rosterSummarySegment(conv.outline.summary)}｜创建 ${formatRosterTime(conv.createdAt)}｜更新 ${formatRosterTime(conv.updatedAt)}${tail}`
     })
@@ -543,7 +542,7 @@ export class OrchestratorService extends TypertRemoteService {
         createdAt: conv.createdAt,
         updatedAt: conv.updatedAt,
         ...active ? { active: active.subject } : {},
-        ...last && !active ? { lastStatus: last.status, lastResult: last.report?.result ?? last.resultSummary ?? last.userAnswer } : {},
+        ...last && !active ? { lastStatus: last.status, lastResult: last.report?.result } : {},
       }
     })
   }
@@ -584,7 +583,7 @@ export class OrchestratorService extends TypertRemoteService {
               status: task.status,
               ...task.progressNote ? { progressNote: task.progressNote } : {},
               ...task.question ? { question: task.question } : {},
-              ...task.report?.result ? { answer: task.report.result } : task.userAnswer ? { answer: task.userAnswer } : {},
+              ...task.report?.result ? { answer: task.report.result } : {},
               ...task.report?.artifacts?.length ? { artifacts: task.report.artifacts } : {},
               ...task.reasonCode ? { reasonCode: task.reasonCode } : {},
               ...task.remediation ? { remediation: task.remediation } : {},
@@ -596,12 +595,7 @@ export class OrchestratorService extends TypertRemoteService {
             state: conv.state,
             createdAt: conv.createdAt,
             updatedAt: conv.updatedAt,
-            outline: {
-              summary: conv.outline.summary,
-              keyFacts: conv.outline.keyFacts.slice(-5),
-              artifacts: conv.outline.artifacts.slice(-5),
-              openQuestions: conv.outline.openQuestions,
-            },
+            outline: { summary: conv.outline.summary },
             tasks,
           })
         },
@@ -700,7 +694,8 @@ export class OrchestratorService extends TypertRemoteService {
       const childSessionId = randomUUID()
       const parentCwd = parent.session.header.cwd
       if (!parentCwd) throw new Error('当前主会话缺少工作区，无法创建子会话工作区')
-      const workspace = await buildChildWorkspace(parentCwd, args.workspaceName ?? args.subject)
+      if (!args.workspaceName) throw new Error('新建子会话缺少 workspaceName（英文小写 slug）')
+      const workspace = await buildChildWorkspace(parentCwd, args.workspaceName)
       await mkdir(workspace.dir, { recursive: true })
       await this.shareMemoryWithRoot(workspace.dir, parentCwd)
       const provisional = createConversation({
@@ -951,7 +946,7 @@ export class OrchestratorService extends TypertRemoteService {
         // 定时触发的入站消息带 source.kind='schedule'，据此给上报任务打 ⏰ 标记（仅显示用）。
         const marked = this.lastInboundSource.get(childSessionId) === 'schedule'
         const task = transitionTask({ ...seeded, status: 'running', startedAt: seeded.createdAt, ...marked ? { scheduled: true } : {} }, args)
-        const patched = args.summary ? applyOutlinePatch(conv, { summary: args.summary }) : conv
+        const patched = args.summary ? updateOutlineSummary(conv, args.summary) : conv
         await this.putPair(settleConversation(patched, task), task)
         terminalTaskId = task.id
         shouldDeliver = task.delivery?.state === 'pending'
@@ -962,7 +957,7 @@ export class OrchestratorService extends TypertRemoteService {
 
       const task = transitionTask(previous, args)
       const terminal = (deliverableTaskStatuses as readonly string[]).includes(task.status)
-      const patched = args.summary ? applyOutlinePatch(conv, { summary: args.summary }) : conv
+      const patched = args.summary ? updateOutlineSummary(conv, args.summary) : conv
       // running 只更新路由卡，不能释放 activeTaskId；终态才 settle。
       const nextConv = terminal ? settleConversation(patched, task) : patched
       await this.putPair(nextConv, task)
