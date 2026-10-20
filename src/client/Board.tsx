@@ -74,6 +74,10 @@ const convStateLabels: Record<string, string> = {
 }
 
 /** 折叠态展示的一行最新状态摘要。 */
+function firstLine(text: string | undefined): string {
+  return (text ?? '').split('\n').map(line => line.trim()).find(Boolean) ?? ''
+}
+
 function taskHeadline(task: TaskRecord): string {
   switch (task.status) {
     case 'running':
@@ -83,7 +87,8 @@ function taskHeadline(task: TaskRecord): string {
     case 'blocked':
       return task.remediation || task.error || '任务被系统环境阻碍'
     case 'completed':
-      return task.report?.result || task.userAnswer || '已完成'
+      // 折叠条/兜底标题只取首行，避免整条 report 灌进一行摘要
+      return firstLine(task.report?.result) || firstLine(task.userAnswer) || '已完成'
     case 'failed':
       return task.error || '执行失败'
     case 'interrupted':
@@ -247,11 +252,13 @@ export function Board({ sessionId: propSessionId, useTabInfo, orchestrator, remo
   useEffect(() => () => clearTimeout(toastTimer.current), [])
 
   const openArtifact = useCallback(async (conv: ConversationRecord, artifact: string) => {
-    const opener = remoteEvents.session?.openWorkspacePath
-    if (!opener) { showToast('当前环境不支持打开文件'); return }
-    if (!conv.workspaceDir) { showToast('缺少工作区路径，无法打开'); return }
-    const path = `${conv.workspaceDir.replace(/\/+$/, '')}/${artifact}`
+    // 注意：remoteEvents.session 的 getter 本身就可能抛错（cordis inject 可见性），
+    // 必须把整个函数体包进 try，否则点击静默无反馈。
     try {
+      const opener = remoteEvents.session?.openWorkspacePath
+      if (!opener) { showToast('当前环境不支持打开文件'); return }
+      if (!conv.workspaceDir) { showToast('缺少工作区路径，无法打开'); return }
+      const path = `${conv.workspaceDir.replace(/\/+$/, '')}/${artifact}`
       const opened = await opener({ path })
       if (opened?.ok) { showToast(`已打开：${artifact}`); return }
       const revealed = await opener({ path, action: 'reveal' })
@@ -287,7 +294,8 @@ export function Board({ sessionId: propSessionId, useTabInfo, orchestrator, remo
         || tasks.some(task => (ACTIVE_TASK_STATUSES as string[]).includes(task.status))
       const displayState = conv.state === 'idle' && latest?.status === 'blocked' ? 'blocked' : conv.state
       const collapsed = collapsedOverride[conv.id] ?? !active
-      const headline = latest ? taskHeadline(latest) : ''
+      const rawHeadline = latest ? taskHeadline(latest) : ''
+      const headline = rawHeadline.length > 80 ? `${rawHeadline.slice(0, 80)}…` : rawHeadline
       const toggle = (): void => setCollapsedOverride(prev => ({ ...prev, [conv.id]: !collapsed }))
       return <section
         className={`dsho-conv${active ? ' dsho-conv-active' : ''}${collapsed ? ' dsho-conv-collapsed' : ''}`}

@@ -88,7 +88,7 @@ export async function apply(ctx: Context): Promise<() => Promise<void>> {
   }
 
   const ui = client.inject(
-    ['remote.orchestrator', 'remote', 'slots', 'uiWorkspace', 'sidebarRightTabs', 'sidebarRight'],
+    ['remote.orchestrator', 'remote', 'remote.session', 'slots', 'uiWorkspace', 'sidebarRightTabs', 'sidebarRight'],
     registerUi,
   )
   try {
