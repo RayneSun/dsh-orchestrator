@@ -144,6 +144,8 @@ export class OrchestratorService extends TypertRemoteService {
   private readonly revisionTurnEnds = new Map<string, number>()
   /** childSessionId -> 是否绑定了活动定时任务（看板 badge 数据源，内存推导不落库）。 */
   private readonly scheduleMarks = new Map<string, boolean>()
+  /** childSessionId -> 最近一条入站消息的 source.kind（判定定时触发上报用）。 */
+  private readonly lastInboundSource = new Map<string, string>()
   /** childSessionId -> 已同步到 DSH 侧栏的标题（含 ⏰ 前缀），用于跳过无谓 rename。 */
   private readonly syncedTitles = new Map<string, string>()
   private scheduleSyncTimer: ReturnType<typeof setTimeout> | undefined
@@ -399,7 +401,12 @@ export class OrchestratorService extends TypertRemoteService {
     }
     this.keep(agent, scoped.on('session/event', (session, event) => {
       if (String(session.id) !== String(agent.session.id)) return
-      const ev = event as unknown as { type?: unknown; data?: { todos?: unknown; reason?: unknown } }
+      const ev = event as unknown as { type?: unknown; data?: { todos?: unknown; reason?: unknown; source?: { kind?: unknown } } }
+      if (ev.type === 'user/message') {
+        const kind = ev.data?.source?.kind
+        if (typeof kind === 'string') this.lastInboundSource.set(String(agent.session.id), kind)
+        return
+      }
       if (ev.type === 'todo/write') {
         this.queueTodoProgress(String(agent.session.id), ev.data?.todos)
         return
@@ -422,27 +429,21 @@ export class OrchestratorService extends TypertRemoteService {
       description: '向 Orchestrator Host 上报当前子会话活动 TaskRun 的状态。不接受 task id，Host 根据会话身份反查。无活动任务时仅允许 completed（定时触发后的结果上报）。',
       parameters: {
         status: { type: 'string', required: true, enum: [...taskUpdateStatuses] },
-        progressNote: { type: 'string', description: '进展说明' },
-        userAnswer: { type: 'string', description: 'completed 时必填：给 Lead 转述给用户的权威最终答案' },
-        resultSummary: { type: 'string', description: '一句话结果摘要' },
+        progressNote: { type: 'string', description: '一行精简进展（看板直接显示；信息优先，可带三分幽默）' },
+        summary: { type: 'string', description: '一句话路由摘要：这个子会话在做什么；任务方向变化时更新' },
+        report: {
+          type: 'object',
+          additionalProperties: false,
+          properties: {
+            result: { type: 'string', required: true, description: '完整结果，Lead 转述给用户的权威答案' },
+            artifacts: { type: 'array', items: { type: 'string' }, description: '用户会要看的产物文件，子工作区相对路径（禁止绝对路径和 ..）' },
+          },
+          description: 'completed 时必填：最终结果与产物',
+        },
         error: { type: 'string', description: 'failed/blocked 时必填：失败原因或系统阻碍' },
         question: { type: 'string', description: 'input_required 时必填：可直接转达给用户的问题/接管提示，需自包含、一次问清' },
         reasonCode: { type: 'string', enum: [...blockReasonCodes], description: 'blocked 的阻碍类别' },
         remediation: { type: 'string', description: 'blocked 时建议用户执行的补救动作' },
-        outlinePatch: {
-          type: 'object',
-          additionalProperties: false,
-          properties: {
-            title: { type: 'string' },
-            summary: { type: 'string' },
-            keyFacts: { type: 'array', items: { type: 'string' } },
-            entities: { type: 'array', items: { type: 'string' } },
-            tags: { type: 'array', items: { type: 'string' } },
-            artifacts: { type: 'array', items: { type: 'string' } },
-            openQuestions: { type: 'array', items: { type: 'string' } },
-          },
-          description: '更新轻量路由卡；不要提交子会话全文',
-        },
       },
       output: sharedJsonOutput,
       execute: async (args: any) => toJson(await this.updateFromWorker(args, String(agent.session.id))),
@@ -504,8 +505,8 @@ export class OrchestratorService extends TypertRemoteService {
       const last = conv.lastTaskId ? this.taskById(conv.lastTaskId) : undefined
       const tail = active
         ? `｜进行中：${active.subject}`
-        : last?.resultSummary || last?.userAnswer
-          ? `｜最近结果：${(last.resultSummary || last.userAnswer)!.slice(0, 80)}`
+        : last?.report?.result || last?.resultSummary || last?.userAnswer
+          ? `｜最近结果：${(last.report?.result || last.resultSummary || last.userAnswer)!.slice(0, 80)}`
           : ''
       return `- ${conv.id} [${conv.state}] ${conv.title}${rosterSummarySegment(conv.outline.summary)}｜创建 ${formatRosterTime(conv.createdAt)}｜更新 ${formatRosterTime(conv.updatedAt)}${tail}`
     })
@@ -527,7 +528,7 @@ export class OrchestratorService extends TypertRemoteService {
         createdAt: conv.createdAt,
         updatedAt: conv.updatedAt,
         ...active ? { active: active.subject } : {},
-        ...last && !active ? { lastStatus: last.status, lastResult: last.resultSummary ?? last.userAnswer } : {},
+        ...last && !active ? { lastStatus: last.status, lastResult: last.report?.result ?? last.resultSummary ?? last.userAnswer } : {},
       }
     })
   }
@@ -543,7 +544,6 @@ export class OrchestratorService extends TypertRemoteService {
           workspaceName: { type: 'string', description: '新建子会话时的工作区目录名，简短可文件系统使用；复用已有子会话时忽略；缺省由 subject 生成' },
           prompt: { type: 'string', required: true, description: '需求本身和验收点。Worker 与你共享同一工作区，不要重复工作目录、路径等环境声明，不要粘贴内部 ID' },
           conversationId: { type: 'string', description: '复用已有工作流时提供' },
-          conversationTitle: { type: 'string', description: '可选：重命名子会话标题（侧栏/看板同步），仅当会话主题漂移时使用' },
           acceptanceCriteria: { type: 'string', description: '可选验收标准' },
           silent: { type: 'boolean', description: '静默模式：记忆整理等后台维护任务使用；终态不会向主会话投递任何消息，看板仍可见状态' },
         },
@@ -576,7 +576,8 @@ export class OrchestratorService extends TypertRemoteService {
               status: task.status,
               ...task.progressNote ? { progressNote: task.progressNote } : {},
               ...task.question ? { question: task.question } : {},
-              ...task.userAnswer ? { answer: task.userAnswer } : {},
+              ...task.report?.result ? { answer: task.report.result } : task.userAnswer ? { answer: task.userAnswer } : {},
+              ...task.report?.artifacts?.length ? { artifacts: task.report.artifacts } : {},
               ...task.reasonCode ? { reasonCode: task.reasonCode } : {},
               ...task.remediation ? { remediation: task.remediation } : {},
               ...task.error ? { error: task.error } : {},
@@ -652,9 +653,9 @@ export class OrchestratorService extends TypertRemoteService {
       conv = interruptedTaskId
         ? reviseConversation(existing, task.id, at)
         : activateConversation(existing, task.id, at)
-      // 会话主题漂移：Lead 显式传 conversationTitle 才改名，标题保持克制不随每条任务措辞抖动。
-      const titleChanged = args.conversationTitle !== undefined && args.conversationTitle !== existing.title
-      if (titleChanged) conv = { ...conv, title: args.conversationTitle! }
+      // subject 与会话标题同源：复用时主题有变化则同步更新会话标题（看板/roster/侧栏一致）。
+      const titleChanged = args.subject !== existing.title
+      if (titleChanged) conv = { ...conv, title: args.subject }
       if (interruptedTaskId) {
         const active = this.taskById(interruptedTaskId)
         if (active) {
@@ -698,7 +699,7 @@ export class OrchestratorService extends TypertRemoteService {
         id: conversationId,
         childSessionId,
         parentSessionId,
-        title: args.conversationTitle ?? args.subject,
+        title: args.subject,
         workspaceName: workspace.name,
         workspaceDir: workspace.dir,
       })
@@ -930,7 +931,7 @@ export class OrchestratorService extends TypertRemoteService {
         if (args.status !== 'completed') {
           throw new Error('no active task: only completed task_update is allowed (e.g. schedule-fired reporting)')
         }
-        const subject = (args.outlinePatch?.title?.trim() || args.userAnswer?.trim().split('\n')[0] || '定时触发上报').slice(0, 60)
+        const subject = (args.report?.result?.trim().split('\n')[0] || '定时触发上报').slice(0, 60)
         const seeded = createTask({
           id: createId('task'),
           parentSessionId: conv.parentSessionId,
@@ -939,8 +940,10 @@ export class OrchestratorService extends TypertRemoteService {
           subject,
           prompt: '（定时触发或 Worker 自发上报）',
         })
-        const task = transitionTask({ ...seeded, status: 'running', startedAt: seeded.createdAt }, args)
-        const patched = args.outlinePatch ? applyOutlinePatch(conv, args.outlinePatch as OutlinePatch) : conv
+        // 定时触发的入站消息带 source.kind='schedule'，据此给上报任务打 ⏰ 标记（仅显示用）。
+        const marked = this.lastInboundSource.get(childSessionId) === 'schedule'
+        const task = transitionTask({ ...seeded, status: 'running', startedAt: seeded.createdAt, ...marked ? { scheduled: true } : {} }, args)
+        const patched = args.summary ? applyOutlinePatch(conv, { summary: args.summary }) : conv
         await this.putPair(settleConversation(patched, task), task)
         terminalTaskId = task.id
         shouldDeliver = task.delivery?.state === 'pending'
@@ -951,7 +954,7 @@ export class OrchestratorService extends TypertRemoteService {
 
       const task = transitionTask(previous, args)
       const terminal = (deliverableTaskStatuses as readonly string[]).includes(task.status)
-      const patched = args.outlinePatch ? applyOutlinePatch(conv, args.outlinePatch as OutlinePatch) : conv
+      const patched = args.summary ? applyOutlinePatch(conv, { summary: args.summary }) : conv
       // running 只更新路由卡，不能释放 activeTaskId；终态才 settle。
       const nextConv = terminal ? settleConversation(patched, task) : patched
       await this.putPair(nextConv, task)
@@ -1023,7 +1026,7 @@ export class OrchestratorService extends TypertRemoteService {
         const resolved = await this.hostCtx.sessionController.resolveAgent(task.parentSessionId as SessionId)
         if ('error' in resolved) throw resolved.error
         const message = createUserMessage({
-          content: [{ type: 'text', text: deliveryNotice(task) }],
+          content: [{ type: 'text', text: deliveryNotice(task, this.conversationById(task.conversationId)?.workspaceName) }],
           source: { kind: 'orchestrator', form: 'notice', summary: `orchestrator ${task.status}: ${task.subject}`.slice(0, 120) },
         })
         resolved.agent.followup(message)

@@ -1,4 +1,4 @@
-import type { BlockReasonCode, ConversationRecord, OutlinePatch, TaskRecord, TaskStatus } from './types.ts'
+import type { BlockReasonCode, ConversationRecord, OutlinePatch, TaskRecord, TaskReport, TaskStatus } from './types.ts'
 import { deliverableTaskStatuses, taskUpdateFieldAllowList, terminalTaskStatuses } from './types.ts'
 
 export class StateError extends Error {
@@ -131,23 +131,21 @@ function withTerminalDelivery(task: TaskRecord, status: TaskStatus): TaskRecord[
 export interface TaskTransitionInput {
   status: Extract<TaskStatus, 'running' | 'input_required' | 'blocked' | 'completed' | 'failed'>
   progressNote?: string
-  userAnswer?: string
-  resultSummary?: string
+  summary?: string
+  report?: TaskReport
   error?: string
   question?: string
   reasonCode?: BlockReasonCode
   remediation?: string
-  outlinePatch?: OutlinePatch
 }
 
 export function transitionTask(task: TaskRecord, input: TaskTransitionInput, at = new Date().toISOString()): TaskRecord {
   if (!canTransition(task.status, input.status)) {
     throw new StateError('invalid_task_transition', `task cannot move from ${task.status} to ${input.status}`)
   }
-  const userAnswer = input.userAnswer ?? task.userAnswer
   const error = input.error ?? task.error
-  if (input.status === 'completed' && !userAnswer?.trim()) {
-    throw new StateError('missing_user_answer', 'completed task_update requires userAnswer')
+  if (input.status === 'completed' && !(input.report ?? task.report)?.result?.trim()) {
+    throw new StateError('missing_report', 'completed task_update requires report.result')
   }
   if ((input.status === 'failed' || input.status === 'blocked') && !error?.trim()) {
     throw new StateError('missing_error', `${input.status} task_update requires error`)
@@ -167,20 +165,15 @@ export function transitionTask(task: TaskRecord, input: TaskTransitionInput, at 
   const isFailed = input.status === 'failed'
   const isCompleted = input.status === 'completed'
   const terminal = isTerminal(input.status)
-  const resultSummary = isCompleted
-    ? (input.resultSummary ?? task.resultSummary ?? userAnswer?.slice(0, 180))
-    : undefined
   return {
     ...touch(task, at),
     status: input.status,
     progressNote: input.progressNote ?? task.progressNote,
-    userAnswer: isCompleted ? (input.userAnswer ?? task.userAnswer) : undefined,
-    resultSummary,
+    report: isCompleted ? (input.report ?? task.report) : undefined,
     error: isBlocked || isFailed ? (input.error ?? task.error) : undefined,
     question: isInputRequired ? input.question : undefined,
     reasonCode: isBlocked ? input.reasonCode : undefined,
     remediation: isBlocked ? input.remediation : undefined,
-    outlinePatch: input.outlinePatch ?? task.outlinePatch,
     ...terminal
       ? { endedAt: at, delivery: withTerminalDelivery(task, input.status) }
       : { startedAt: task.startedAt ?? at },

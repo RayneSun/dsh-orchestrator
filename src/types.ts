@@ -16,11 +16,11 @@ const trimmed = z.string().trim().min(1)
 export const taskUpdateStatuses = ['running', 'input_required', 'blocked', 'completed', 'failed'] as const
 
 export const taskUpdateFieldAllowList: Record<(typeof taskUpdateStatuses)[number], readonly string[]> = {
-  running: ['progressNote', 'outlinePatch'],
-  input_required: ['progressNote', 'question', 'outlinePatch'],
-  blocked: ['progressNote', 'error', 'reasonCode', 'remediation', 'outlinePatch'],
-  completed: ['progressNote', 'userAnswer', 'resultSummary', 'outlinePatch'],
-  failed: ['progressNote', 'error', 'outlinePatch'],
+  running: ['progressNote', 'summary'],
+  input_required: ['progressNote', 'question', 'summary'],
+  blocked: ['progressNote', 'error', 'reasonCode', 'remediation', 'summary'],
+  completed: ['progressNote', 'report', 'summary'],
+  failed: ['progressNote', 'error', 'summary'],
 }
 
 const trimmedList = z.array(trimmed).max(50)
@@ -64,6 +64,22 @@ export const outlinePatchSchema = z.object({
   openQuestions: trimmedList.optional(),
 }).strict()
 
+/** 制品路径：子工作区内相对路径，拒绝绝对路径、盘符与 .. 逃逸。 */
+const artifactPath = z.string().trim().min(1).max(500).refine(
+  (value) => {
+    if (value.startsWith('/') || /^[a-zA-Z]:[\\/]/.test(value)) return false
+    return !value.split(/[\\/]/).includes('..')
+  },
+  { message: 'artifacts 必须是子工作区内的相对路径' },
+)
+
+/** completed 上报：result 给主会话转述；artifacts 是用户会要看的产物文件（相对路径）。 */
+export const reportSchema = z.object({
+  result: trimmed.max(50_000),
+  artifacts: z.array(artifactPath).max(20).optional(),
+}).strict()
+export type TaskReport = z.infer<typeof reportSchema>
+
 const baseConversationSchema = z.object({
   id: trimmed,
   childSessionId: trimmed,
@@ -102,6 +118,9 @@ const baseTaskSchema = z.object({
   outlinePatch: outlinePatchSchema.optional(),
   progressSteps: z.array(progressStepSchema).default([]),
   silent: z.boolean().default(false),
+  report: reportSchema.optional(),
+  /** 定时触发产生的上报任务（宿主按入站消息来源自动判定，看板 ⏰ 标识）。 */
+  scheduled: z.boolean().optional(),
   delivery: deliverySchema.optional(),
   revision: z.number().int().nonnegative().default(0),
   createdAt: z.string(),
@@ -215,24 +234,22 @@ export const dispatchInputSchema = z.object({
   workspaceName: z.string().trim().min(1).max(80).optional(),
   prompt: z.string().trim().min(1).max(100_000),
   conversationId: z.string().trim().min(1).optional(),
-  conversationTitle: z.string().trim().min(1).max(200).optional(),
   acceptanceCriteria: z.string().trim().min(1).max(10_000).optional(),
   silent: z.boolean().optional(),
 }).strict()
 
 export const taskUpdateInputSchema = z.object({
   status: z.enum(taskUpdateStatuses),
-  progressNote: trimmed.max(5_000).optional(),
-  userAnswer: trimmed.max(50_000).optional(),
-  resultSummary: trimmed.max(1_000).optional(),
+  progressNote: trimmed.max(500).optional(),
+  summary: trimmed.max(300).optional(),
+  report: reportSchema.optional(),
   error: trimmed.max(10_000).optional(),
   question: trimmed.max(5_000).optional(),
   reasonCode: z.enum(blockReasonCodes).optional(),
   remediation: trimmed.max(5_000).optional(),
-  outlinePatch: outlinePatchSchema.optional(),
 }).strict().superRefine((value, ctx) => {
-  if (value.status === 'completed' && !value.userAnswer) {
-    ctx.addIssue({ code: 'custom', path: ['userAnswer'], message: 'completed task_update requires userAnswer' })
+  if (value.status === 'completed' && !value.report) {
+    ctx.addIssue({ code: 'custom', path: ['report'], message: 'completed task_update requires report' })
   }
   if ((value.status === 'failed' || value.status === 'blocked') && !value.error) {
     ctx.addIssue({ code: 'custom', path: ['error'], message: `${value.status} task_update requires error` })

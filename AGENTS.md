@@ -122,7 +122,7 @@ dsh plugin --profile web add <tgz 绝对路径>
 
 ### Worker 上报协议
 
-- `task_update`：running(+progressNote?) / input_required(+question) / blocked(+error, reasonCode?, remediation?) / completed(+userAnswer) / failed(+error)。completed 的 userAnswer 是 Lead 转述的唯一权威答案。
+- `task_update`：running(+progressNote?, summary?) / input_required(+question) / blocked(+error, reasonCode?, remediation?) / completed(+report{result, artifacts?}, summary?) / failed(+error)。completed 的 report.result 是 Lead 转述的唯一权威答案；report.artifacts 为子工作区相对路径，投递到 Lead 时自动加工作区前缀。progressNote 是定期刷新的一句话进展（允许三分幽默），驱动看板实时状态。
 - Worker 不能直接向用户提问（ask-user 工具被 guard 拦且不进预设）。
 - todo_write 是内部步骤清单：Host 监听 `todo/write` 事件，350ms 防抖写入 `task.progressSteps` 驱动看板；Worker 无需为 todo 调 task_update，todo 全完成不等于任务完成。
 

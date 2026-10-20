@@ -64,23 +64,28 @@ describe('工具输入 Zod 校验', () => {
     }).success).toBe(false)
     expect(taskUpdateInputSchema.safeParse({ status: 'running', error: '意外错误' }).success).toBe(false)
     expect(taskUpdateInputSchema.safeParse({ status: 'running', question: '需要选择吗？' }).success).toBe(false)
-    expect(taskUpdateInputSchema.safeParse({ status: 'completed', userAnswer: '完成', error: '旧错误' }).success).toBe(false)
+    expect(taskUpdateInputSchema.safeParse({ status: 'completed', report: { result: '完成' }, error: '旧错误' }).success).toBe(false)
     expect(taskUpdateInputSchema.safeParse({ status: 'failed', error: '失败', remediation: '请安装依赖' }).success).toBe(false)
-    expect(taskUpdateInputSchema.safeParse({ status: 'blocked', error: '缺少依赖', userAnswer: '完成' }).success).toBe(false)
+    expect(taskUpdateInputSchema.safeParse({ status: 'blocked', error: '缺少依赖', report: { result: '完成' } }).success).toBe(false)
     expect(taskUpdateInputSchema.parse({ status: 'blocked', error: '缺少依赖', progressNote: '已定位到 bsk 缺失' }).status).toBe('blocked')
   })
 
-  it('outlinePatch 拒绝空字符串但允许空数组清空未决问题', () => {
+  it('completed 要求 report.result；artifacts 只允许相对路径', () => {
+    expect(taskUpdateInputSchema.safeParse({ status: 'completed' }).success).toBe(false)
     expect(taskUpdateInputSchema.safeParse({
-      status: 'running',
-      outlinePatch: { tags: [' '] },
+      status: 'completed', report: { result: '  ' },
     }).success).toBe(false)
     const parsed = taskUpdateInputSchema.parse({
-      status: 'running',
-      outlinePatch: { tags: ['天气', '天气'], openQuestions: [] },
+      status: 'completed',
+      report: { result: '完成', artifacts: ['out/index.html', 'docs/summary.md'] },
+      summary: '产物已就绪',
     })
-    expect(parsed.outlinePatch?.tags).toEqual(['天气', '天气'])
-    expect(parsed.outlinePatch?.openQuestions).toEqual([])
+    expect(parsed.report?.artifacts).toEqual(['out/index.html', 'docs/summary.md'])
+    for (const bad of ['/abs/path.html', '../escape.html', 'a/../../b', '']) {
+      expect(taskUpdateInputSchema.safeParse({
+        status: 'completed', report: { result: 'r', artifacts: [bad] },
+      }).success).toBe(false)
+    }
   })
 
   it('持久化工厂初始化 provisioning；新建任务不预挂投递（终态时才挂起）', () => {
@@ -120,11 +125,9 @@ describe('工具输入 Zod 校验', () => {
   })
 
 
-  it('dispatch 接受可选 conversationTitle 并拒绝空白', () => {
-    expect(dispatchInputSchema.parse({ subject: 's', prompt: 'p', conversationTitle: '每日热点新闻' }).conversationTitle).toBe('每日热点新闻')
-    expect(dispatchInputSchema.parse({ subject: 's', prompt: 'p' }).conversationTitle).toBeUndefined()
-    expect(dispatchInputSchema.safeParse({ subject: 's', prompt: 'p', conversationTitle: '  ' }).success).toBe(false)
-    expect(dispatchInputSchema.safeParse({ subject: 's', prompt: 'p', conversationTitle: 'a'.repeat(201) }).success).toBe(false)
+  it('dispatch 已移除 conversationTitle（subject 即会话标题）', () => {
+    expect(dispatchInputSchema.parse({ subject: '每日热点新闻', prompt: 'p' }).subject).toBe('每日热点新闻')
+    expect(dispatchInputSchema.safeParse({ subject: 's', prompt: 'p', conversationTitle: 'x' }).success).toBe(false)
   })
 
   it('conversation 记录允许可选 hasActiveSchedule 快照标记', () => {

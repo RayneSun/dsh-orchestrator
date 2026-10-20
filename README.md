@@ -36,7 +36,7 @@ Worker 的任务上报协议、安全红线（支付/删除等不可逆操作先
 - 新建 Worker 会在当前主工作区下获得独立工作目录 `<主题>/`（同名冲突自动递增 `-2`、`-3`）；`dispatch.subject` 自动用于目录命名，也可传 `workspaceName` 覆盖。复用已有子会话时继续使用原目录。
 - `dispatch` 一律后台派发，不阻塞主对话；需要了解进展时由 Lead 主动调用 `orchestrator_list` / `orchestrator_get` 查询。记忆整理等后台维护任务可设 `silent: true`：终态（含失败）完全不向主会话投递，Lead 不跟进，看板仍显示状态并带“静默”徽标。
 - 完成、待操作、受阻、失败或被用户手动停止后通过持久 outbox 唤醒 Lead；改单接管和普通重启中断的旧任务不产生通知。
-- Lead 只以 Worker 的 `userAnswer` 为权威结果。
+- Lead 只以 Worker 的 `report.result` 为权威结果；`report.artifacts` 制品路径自动带工作区前缀。
 - 定时/周期任务由 Worker 的 schedule 工具创建并绑定其自身子会话；到点触发后 Worker 执行并上报，Lead 转述给用户。
 - 重启后恢复看板；普通未完成任务标记 interrupted，无法确认持久化状态时标记 blocked；未投递的后台终态会重试唤醒 Lead。
 

@@ -15,9 +15,9 @@ describe('roster 摘要段', () => {
 })
 
 describe('prompt 编排约定', () => {
-  it('Lead prompt 约定定时任务编排与 conversationTitle 改名', () => {
+  it('Lead prompt 约定定时任务编排与 subject 改名', () => {
     expect(LEAD_PROMPT).toContain('schedule_create 绑定它自己的会话')
-    expect(LEAD_PROMPT).toContain('conversationTitle')
+    expect(LEAD_PROMPT).toContain('subject 写成新主题')
     expect(LEAD_PROMPT).toContain('优先复用其 conversationId')
   })
 
