@@ -13,6 +13,11 @@ describe('Orchestrator agent presets', () => {
   it('Lead 全局工具白名单：提问、记忆、只读查询；不含执行类工具', () => {
     expect(LEAD_TOOL_ALLOW).toContain('ask_user_question')
     expect(LEAD_TOOL_ALLOW).toContain('memory_search')
+    expect(LEAD_TOOL_ALLOW).toContain('memory_read')
+    expect(LEAD_TOOL_ALLOW).toContain('memory_update')
+    expect(LEAD_TOOL_ALLOW).toContain('memory_home')
+    // 记忆整理（dream）属后台维护，由 Worker 持有，不放行给 Lead
+    expect(LEAD_TOOL_ALLOW).not.toContain('memory_dream')
     for (const name of ['web_search', 'web_fetch', 'read', 'glob', 'grep']) {
       expect(LEAD_TOOL_ALLOW).toContain(name)
     }
