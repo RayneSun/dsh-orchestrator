@@ -17,6 +17,7 @@ export const CSS = `
 .dsho-strip{display:flex;flex-direction:column;gap:3px;padding:0 13px 11px 26px;min-width:0}
 .dsho-stripRow{display:flex;align-items:center;gap:8px;min-width:0}
 .dsho-stripRow .dsho-badge{flex:none}
+.dsho-stripRow .dsho-noteTitle{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis}
 .dsho-stripTitle{flex:1;min-width:0;font-size:12px;font-weight:600;color:var(--dsw-alias-label-primary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .dsho-stripTime{flex:none;font-size:10px;color:var(--dsw-alias-label-tertiary)}
 .dsho-stripNote{font-size:11px;line-height:1.5;color:var(--dsw-alias-label-secondary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}

@@ -380,7 +380,9 @@ export function Board({ sessionId: propSessionId, useTabInfo, orchestrator, remo
         {collapsed && latest && <div className="dsho-strip">
           <div className="dsho-stripRow">
             <span className={`dsho-badge dsho-badge-${latest.status}`}>{taskStatusLabels[latest.status] ?? latest.status}</span>
-            <span className="dsho-stripTitle" title={latest.title ?? headline}>{latest.title ?? headline}</span>
+            {latest.title
+              ? <span className="dsho-noteTitle" title={latest.title}>{latest.title}</span>
+              : <span className="dsho-stripTitle" title={headline}>{headline}</span>}
             <span className="dsho-stripTime">{time(latest.updatedAt ?? conv.updatedAt)}</span>
           </div>
           {latest.progressNote && <div className={`dsho-stripNote${(activeTaskStatuses as readonly string[]).includes(latest.status) && !latest.endedAt ? ' dsho-stripNote-live' : ''}`} title={latest.progressNote}>{latest.progressNote}</div>}

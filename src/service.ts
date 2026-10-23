@@ -408,8 +408,12 @@ export class OrchestratorService extends TypertRemoteService {
     // Worker 切换为完全访问权限（沙箱全开放 + 审批 never）：后台执行无人值守，
     // 默认 workspace-write+ask 会让敏感操作停在审批上永远等不到人。
     // 该选择按会话持久化（sandbox/mode 与 approval/policy 事件），重复调用为 no-op；Lead 不受影响。
+    // 注意：cordis 4 的 context proxy 对未 inject 的服务属性访问直接抛错
+    // （cannot get property "permissionPresets" without inject），可选服务必须用 ctx.get。
     try {
-      ;(this.hostCtx as any).permissionPresets?.set(agent.session, 'danger-full-access')
+      const presets = this.hostCtx.get?.('permissionPresets') as { set(session: unknown, name: string): void } | undefined
+      if (!presets) this.hostCtx.logger.warn('orchestrator: permissionPresets service unavailable; worker stays on default preset')
+      else presets.set(agent.session, 'danger-full-access')
     } catch (error) {
       this.hostCtx.logger.warn(`orchestrator: worker permission preset unavailable: ${String(error)}`)
     }
@@ -537,7 +541,13 @@ export class OrchestratorService extends TypertRemoteService {
         : last?.report?.result
           ? `｜最近结果：${last.report.result.slice(0, 80)}`
           : ''
-      return `- ${conv.id} [${conv.state}] ${conv.title}${rosterSummarySegment(conv.outline.summary)}｜创建 ${formatRosterTime(conv.createdAt)}｜更新 ${formatRosterTime(conv.updatedAt)}${tail}`
+      const pending = conv.todos.filter(todo => todo.status === 'pending')
+      const todoSegment = conv.todos.length === 0
+        ? ''
+        : pending.length > 0
+          ? `｜待办 ${pending.length} 项待处理：${pending.slice(0, 3).map(todo => todo.title).join('、')}${pending.length > 3 ? '…' : ''}`
+          : `｜待办 ${conv.todos.length} 项全部完成`
+      return `- ${conv.id} [${conv.state}] ${conv.title}${rosterSummarySegment(conv.outline.summary)}｜创建 ${formatRosterTime(conv.createdAt)}｜更新 ${formatRosterTime(conv.updatedAt)}${tail}${todoSegment}`
     })
     return `Orchestrator roster（dispatch 用 conversationId 复用子会话；get 看详情）：\n${lines.join('\n')}`
   }
@@ -558,6 +568,7 @@ export class OrchestratorService extends TypertRemoteService {
         updatedAt: conv.updatedAt,
         ...active ? { active: active.subject } : {},
         ...last && !active ? { lastStatus: last.status, lastResult: last.report?.result?.slice(0, 240) } : {},
+        ...conv.todos.length ? { todos: { pending: conv.todos.filter(todo => todo.status === 'pending').length, total: conv.todos.length } } : {},
       }
     })
   }
@@ -775,7 +786,7 @@ export class OrchestratorService extends TypertRemoteService {
 
   /** 宿主 schedule 服务（本地结构化类型，组合未挂载时整体降级为无标记）。 */
   private scheduleService(): ScheduleServiceLike | undefined {
-    return (this.hostCtx as unknown as { schedule?: ScheduleServiceLike }).schedule
+    return this.hostCtx.get?.('schedule') as ScheduleServiceLike | undefined
   }
 
   private queueScheduleMarkSync(): void {

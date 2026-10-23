@@ -92,7 +92,7 @@ dsh plugin --profile web add <tgz 绝对路径>
 - Lead：**不裁剪**（0.3.13 移除 restrict 白名单）。宿主与用户安装的全部全局工具可见，后装工具自动生效；白名单时代曾导致 meow-memory 新版工具（memory_read/update/home）对 Lead 静默缺失，不再走回头路。编排纪律（轻查询直接做、执行一律派发、不自建 schedule）由 persona 约束。
 - Worker：`scoped.tools.guard(isWorkerToolForbidden)`（worker-policy.ts）。编排/派生类禁止项见 `workerForbiddenPatterns`（workflow/ralph/orchestrator），直接向用户提问类见 `workerQuestionPatterns`（ask_user 系，命中时引导改走 task_update input_required）；新增"禁止类"工具只改这两张表。子智能体工具由 Worker 预设的 delegation 组显式组合（与平台 standard 预设同款，spawn/fork 后端驻留宿主平面）。
 - 不要用白名单裁剪 Worker——用户后装工具（MCP/浏览器/技能）必须默认可用。
-- 会话权限：Worker 在 configureWorker 时切 `danger-full-access`（permissionPresets.set，沙箱全开放+审批 never）：后台无人值守，默认 workspace-write+ask 会把敏感操作永远卡在审批上；Lead 保持默认。
+- 会话权限：Worker 在 configureWorker 时切 `danger-full-access`（沙箱全开放+审批 never）：后台无人值守，默认 workspace-write+ask 会把敏感操作永远卡在审批上；Lead 保持默认。**注意**：cordis 4 的 context proxy 对未 inject 的服务属性访问直接抛错（cannot get property without inject），permissionPresets/schedule 这类不在 static inject 里的可选服务必须用 `ctx.get(name)` 访问，否则 silently 失效（权限切换曾因此从未生效，⏰ 标记同步同因）。
 
 ### 定时任务
 
