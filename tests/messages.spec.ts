@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { deliveryNotice } from '../src/messages.ts'
+import { deliveryNotice, todoStatusSection } from '../src/messages.ts'
 import { createConversation, createTask, type ConversationRecord, type TaskRecord } from '../src/types.ts'
 import { LEAD_PROMPT, rosterSummarySegment, WORKER_PROMPT } from '../src/messages.ts'
 
@@ -42,6 +42,28 @@ describe('deliveryNotice 用户待办段', () => {
     expect(text).not.toContain('todo_2')
     const without = deliveryNotice(baseTask(), { ...conv, todos: [] })
     expect(without).not.toContain('用户待办')
+  })
+})
+
+describe('todoStatusSection 投递附言', () => {
+  const base = {
+    createdAt: '2026-10-23T00:00:00Z', updatedAt: '2026-10-23T00:00:00Z',
+  }
+  it('pending 全列含 id；用户标完成的列出防重复代办；worker 标完成与 cancelled 不提', () => {
+    const text = todoStatusSection([
+      { ...base, id: 'todo_1', title: '买火车票', dueDate: '2026-10-25', status: 'pending' },
+      { ...base, id: 'todo_2', title: '取快递', status: 'done', completedBy: 'user' as const },
+      { ...base, id: 'todo_3', title: '已代办的', status: 'done', completedBy: 'worker' as const },
+      { ...base, id: 'todo_4', title: '作废的', status: 'cancelled' },
+    ])
+    expect(text).toContain('[todo_1] 买火车票（截止 2026-10-25） — 待处理')
+    expect(text).toContain('[todo_2] 取快递 — 用户已自行标记完成，不要重复代办')
+    expect(text).not.toContain('todo_3')
+    expect(text).not.toContain('todo_4')
+  })
+  it('空清单或全无可提项时不产生片段', () => {
+    expect(todoStatusSection([])).toBe('')
+    expect(todoStatusSection([{ ...base, id: 'todo_1', title: 'x', status: 'cancelled' }])).toBe('')
   })
 })
 

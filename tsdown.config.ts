@@ -4,11 +4,12 @@ import { defineConfig } from 'tsdown'
 const require = createRequire(import.meta.url)
 const pkg = require('./package.json') as {
   name: string
-  dsh: { client: { inject: string[] } }
+  dsh: { client: { inject: string[]; external?: string[] } }
 }
 
 const deepseekExternal = /^@deepseek-ai\//
-const clientInject = new Set<string>(pkg.dsh.client.inject)
+// inject（cordis 服务包）与 external（前端 ModuleLoader 运行时模块表）都不内联进 client bundle。
+const clientInject = new Set<string>([...pkg.dsh.client.inject, ...pkg.dsh.client.external ?? []])
 const esm = {
   format: ['esm'] as const,
   platform: 'node' as const,

@@ -2,13 +2,14 @@ import React from 'react'
 import type { Context } from '@deepseek-ai/cordis'
 import remoteContribution from '../remote.ts'
 import { Board } from './Board.tsx'
+import { registerSettingsCard } from './settings-card.tsx'
 import { adoptStyles } from './styles.ts'
 
 const PLUGIN_ID = '@may/dsh-orchestrator'
 const TAB_ID = `${PLUGIN_ID}/board`
 const KIND = 'orchestratorBoard'
 
-export const inject = ['remote', 'slots', 'uiWorkspace', 'sidebarRightTabs', 'sidebarRight']
+export const inject = ['remote', 'slots', 'uiWorkspace', 'sidebarRightTabs', 'sidebarRight', 'configForms']
 
 function HeaderButton(props: any): React.ReactElement {
   return <button
@@ -85,6 +86,13 @@ export async function apply(ctx: Context): Promise<() => Promise<void>> {
   } catch (error) {
     console.error('orchestrator remote mount failed', error)
     throw error
+  }
+
+  // 设置卡片（终态投递开关）挂载失败不拖垮看板。
+  try {
+    registerSettingsCard(client)
+  } catch (error) {
+    console.error('orchestrator settings card mount failed', error)
   }
 
   const ui = client.inject(

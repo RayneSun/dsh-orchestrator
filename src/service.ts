@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { mkdir, rmdir } from 'node:fs/promises'
 import { dirname } from 'node:path'
 import { Context, Service } from '@deepseek-ai/cordis'
+import sz from '@deepseek-ai/schemastery'
 import { createUserMessage, type ContextFormed } from '@deepseek-ai/dsh-llm'
 import { delegationDepthOf } from '@deepseek-ai/dsh-subagent'
 import { defineTool } from '@deepseek-ai/dsh-tools'
@@ -12,8 +13,8 @@ import type { SessionId } from '@deepseek-ai/dsh-session'
 import type {} from '@deepseek-ai/dsh-agent-preset-registry'
 import type {} from '@deepseek-ai/dsh-api-session-controller'
 import type {} from '@deepseek-ai/dsh-session-persistence'
-import { deliveryNotice, revisionPrompt, rosterSummarySegment, workerPrompt } from './messages.ts'
-import { applyScheduleMark, type ScheduleServiceLike, type SessionActivityGroup } from './schedule-marks.ts'
+import { deliveryNotice, revisionPrompt, rosterSummarySegment, todoProjection, todoStatusSection, workerPrompt } from './messages.ts'
+import { type ScheduleServiceLike, type SessionActivityGroup } from './schedule-marks.ts'
 import { toJson } from './json.ts'
 import { isWorkerToolForbidden } from './worker-policy.ts'
 import { normalizeProgressSteps } from './progress.ts'
@@ -31,6 +32,8 @@ import {
   interruptTaskAfterRestart,
   settleConversation,
   startConversation,
+  deliveryEnabledFor,
+  gateTaskDelivery,
   classifyWorkerTurnEnd,
   statusConcludesTurn,
   transitionTask,
@@ -48,6 +51,7 @@ import {
   activeTaskStatuses,
   blockReasonCodes,
   deliverableTaskStatuses,
+  type DeliveryToggles,
   taskUpdateStatuses,
   dispatchInputSchema,
   conversationIdInputSchema,
@@ -150,12 +154,34 @@ export const DISPATCH_TOOL_PARAMETERS = {
   silent: { type: 'boolean', description: '静默模式：记忆整理等后台维护任务使用；终态不会向主会话投递任何消息，看板仍可见状态' },
 } as const
 
+/** 设置页（插件管理 → 本包行配置）的 volatile 配置引用：.get() 读实时值，改动即时生效不重启。 */
+interface OrchestratorConfigRefs {
+  deliverOnCompleted?: { get(): boolean }
+  deliverOnFailed?: { get(): boolean }
+  deliverOnInputRequired?: { get(): boolean }
+  deliverOnBlocked?: { get(): boolean }
+  deliverOnInterrupted?: { get(): boolean }
+}
+
 export class OrchestratorService extends TypertRemoteService {
   static inject = [
     'agents', 'sessions', 'storageDomain',
     'sessionController', 'sessionPersistence', 'agentPresets', 'sessionTitle',
     'sessionProjections', 'agentDefaultModel',
   ]
+
+  /**
+   * 终态投递开关（设置页可配，全部默认开）。
+   * 只决定"终态消息是否回投主会话"：task_update 的状态/摘要/待办总是持久化，
+   * roster 与看板照常更新——与 silent 的语义分界一致（silent 是整会话不投，开关是按状态不投）。
+   */
+  static Config = sz.object({
+    deliverOnCompleted: sz.boolean().default(true).volatile(),
+    deliverOnFailed: sz.boolean().default(true).volatile(),
+    deliverOnInputRequired: sz.boolean().default(true).volatile(),
+    deliverOnBlocked: sz.boolean().default(true).volatile(),
+    deliverOnInterrupted: sz.boolean().default(true).volatile(),
+  })
 
   private ready: Promise<void>
   private domain: DomainType | undefined
@@ -170,15 +196,28 @@ export class OrchestratorService extends TypertRemoteService {
   private readonly scheduleMarks = new Map<string, boolean>()
   /** childSessionId -> 最近一条入站消息的 source.kind（判定定时触发上报用）。 */
   private readonly lastInboundSource = new Map<string, string>()
-  /** childSessionId -> 已同步到 DSH 侧栏的标题（含 ⏰ 前缀），用于跳过无谓 rename。 */
+  /** childSessionId -> 已同步到 DSH 侧栏的标题（含定时标记前缀），用于跳过无谓 rename。 */
   private readonly syncedTitles = new Map<string, string>()
   private scheduleSyncTimer: ReturnType<typeof setTimeout> | undefined
   private recoveryTimer: ReturnType<typeof setInterval> | undefined
 
-  constructor(private readonly hostCtx: Context) {
+  constructor(private readonly hostCtx: Context, private readonly configRefs?: OrchestratorConfigRefs) {
     super(hostCtx, 'orchestrator', { namespace: 'orchestrator' })
     this.markRemote('snapshot')
     this.ready = this.start()
+  }
+
+  /** 从 volatile 引用实时解析投递开关（设置页改动立即反映到下一次判定）。 */
+  private deliveryToggles(): DeliveryToggles {
+    const refs = this.configRefs
+    const read = (ref?: { get(): boolean }) => ref?.get() !== false
+    return {
+      completed: read(refs?.deliverOnCompleted),
+      failed: read(refs?.deliverOnFailed),
+      inputRequired: read(refs?.deliverOnInputRequired),
+      blocked: read(refs?.deliverOnBlocked),
+      interrupted: read(refs?.deliverOnInterrupted),
+    }
   }
 
   async [Service.init](): Promise<void> {
@@ -455,7 +494,7 @@ export class OrchestratorService extends TypertRemoteService {
       if (ev.type === 'turn/end') {
         const childId = String(agent.session.id)
         // 定时标记双触发：轮次内可能创建/修改/删除了 schedule，turn/end 后必已提交，
-        // 不依赖 schedule/changed 的传播即可让 ⏰ 标记及时刷新。
+        // 不依赖 schedule/changed 的传播即可让定时标记及时刷新。
         this.queueScheduleMarkSync()
         const until = this.revisionTurnEnds.get(childId)
         if (until) {
@@ -708,7 +747,7 @@ export class OrchestratorService extends TypertRemoteService {
         }
       }
       try {
-        const text = interruptedTaskId ? revisionPrompt(task) : workerPrompt(task)
+        const text = (interruptedTaskId ? revisionPrompt(task) : workerPrompt(task)) + todoStatusSection(conv.todos)
         // 取消后的 followup 会排队并在被中止轮次收敛为 idle 后开启新一轮（agent-loop 的 wake 收敛语义）。
         await this.deliverToWorker(
           conv.childSessionId, text,
@@ -741,7 +780,7 @@ export class OrchestratorService extends TypertRemoteService {
       await this.putPair(conv, task)
       try {
         await this.createWorkerAgent(childSessionId, workspace.dir, parent, conv.title)
-        await this.deliverToWorker(childSessionId, workerPrompt(task), `orchestrator task ${task.subject}`)
+        await this.deliverToWorker(childSessionId, workerPrompt(task) + todoStatusSection(conv.todos), `orchestrator task ${task.subject}`)
       } catch (error) {
         return { ok: false, result: await this.failLaunch(conv, task, error) }
       }
@@ -801,8 +840,8 @@ export class OrchestratorService extends TypertRemoteService {
   }
 
   /**
-   * 核对全部受管子会话的活动定时任务：更新看板标记（hasActiveSchedule）并把
-   * DSH 侧栏标题同步为「看板标题 + ⏰ 前缀」。单会话 list 失败跳过该会话，不影响其余。
+   * 核对全部受管子会话的活动定时任务：更新看板标记（hasActiveSchedule）。
+   * 单会话 list 失败跳过该会话，不影响其余；DSH 侧栏标题不加图标前缀。
    */
   private async syncScheduleMarks(): Promise<void> {
     const schedule = this.scheduleService()
@@ -817,19 +856,18 @@ export class OrchestratorService extends TypertRemoteService {
       }
       const previous = this.scheduleMarks.get(conv.childSessionId) ?? false
       this.scheduleMarks.set(conv.childSessionId, marked)
-      await this.renameWorkerSession(conv.childSessionId)
       if (previous !== marked) this.emitChanged()
     }
   }
 
   /**
-   * 子会话标题同步：DSH 侧栏标题 = 看板标题 + 定时标记 ⏰ 前缀；与上次同步值一致则跳过，
-   * rename 失败仅告警（下次 schedule/changed 核对时按 diff 重试）。
+   * 子会话标题同步：DSH 侧栏标题 = 看板标题（dispatch 改主题时调用）；与上次同步值一致则跳过，
+   * rename 失败仅告警。
    */
   private async renameWorkerSession(childSessionId: string): Promise<void> {
     const conv = this.conversationByChild(childSessionId)
     if (!conv) return
-    const desired = applyScheduleMark(conv.title, this.scheduleMarks.get(childSessionId) ?? false)
+    const desired = conv.title
     if (this.syncedTitles.get(childSessionId) === desired) return
     try {
       await this.withAgent(childSessionId, agent => this.hostCtx.sessionTitle.rename(agent.session, desired))
@@ -931,10 +969,10 @@ export class OrchestratorService extends TypertRemoteService {
   private async failLaunch(conv: ConversationRecord, task: TaskRecord, error: unknown): Promise<unknown> {
     const now = timestamp()
     if (conv.workspaceDir) await rmdir(conv.workspaceDir).catch(() => undefined)
-    const failedTask = failTask(task, String(error), now)
+    const failedTask = gateTaskDelivery(failTask(task, String(error), now), this.deliveryToggles())
     const failedConv = failConversation(settleConversation(conv, failedTask, now), now)
     await this.putPair(failedConv, failedTask)
-    if (!failedTask.silent) void this.deliverPendingTask(failedTask.id)
+    if (failedTask.delivery?.state === 'pending') void this.deliverPendingTask(failedTask.id)
     return { kind: 'error', error: String(error) }
   }
 
@@ -976,8 +1014,9 @@ export class OrchestratorService extends TypertRemoteService {
             ...update.status !== undefined
               ? {
                   status: update.status,
-                  completedBy: update.status === 'done' ? 'worker' as const : undefined,
-                  completedAt: update.status === 'done' ? now : undefined,
+                  // done/cancelled 都是 Worker 侧的终结标记；回到 pending 则清除
+                  completedBy: update.status !== 'pending' ? 'worker' as const : undefined,
+                  completedAt: update.status !== 'pending' ? now : undefined,
                 }
               : {},
             updatedAt: now,
@@ -1011,19 +1050,22 @@ export class OrchestratorService extends TypertRemoteService {
           subject,
           prompt: '（定时触发或 Worker 自发上报）',
         })
-        // 定时触发的入站消息带 source.kind='schedule'，据此给上报任务打 ⏰ 标记（仅显示用）。
+        // 定时触发的入站消息带 source.kind='schedule'，据此给上报任务打定时标记（仅显示用）。
         const marked = this.lastInboundSource.get(childSessionId) === 'schedule'
-        const task = transitionTask({ ...seeded, status: 'running', startedAt: seeded.createdAt, ...marked ? { scheduled: true } : {} }, args)
+        const task = gateTaskDelivery(
+          transitionTask({ ...seeded, status: 'running', startedAt: seeded.createdAt, ...marked ? { scheduled: true } : {} }, args),
+          this.deliveryToggles(),
+        )
         const patched = this.applyUpdateSideEffects(conv, args)
         await this.putPair(settleConversation(patched, task), task)
         terminalTaskId = task.id
         shouldDeliver = task.delivery?.state === 'pending'
-        return { ok: true as const, status: task.status }
+        return { ok: true as const, status: task.status, todos: todoProjection(patched.todos) }
       }
       const previous = this.taskById(conv.activeTaskId)
       if (!previous) throw new Error('active task record is missing')
 
-      const task = transitionTask(previous, args)
+      const task = gateTaskDelivery(transitionTask(previous, args), this.deliveryToggles())
       const terminal = (deliverableTaskStatuses as readonly string[]).includes(task.status)
       const patched = this.applyUpdateSideEffects(conv, args)
       // running 只更新路由卡，不能释放 activeTaskId；终态才 settle。
@@ -1033,7 +1075,7 @@ export class OrchestratorService extends TypertRemoteService {
         terminalTaskId = task.id
         shouldDeliver = task.delivery?.state === 'pending'
       }
-      return { ok: true as const, status: task.status }
+      return { ok: true as const, status: task.status, todos: todoProjection(patched.todos) }
     })
     if (shouldDeliver && terminalTaskId) void this.deliverPendingTask(terminalTaskId)
     return result
@@ -1057,8 +1099,8 @@ export class OrchestratorService extends TypertRemoteService {
       let nextConv: ConversationRecord
       if (endCause === 'manual_stop') {
         task = interruptTaskForRevision(previous, '子会话执行被手动停止；工作流已保留，可继续派发新需求', now)
-        // 手动停止需要通知主会话：挂起投递，由 deliverPendingTask 发通知；静默任务除外。
-        if (!task.silent) {
+        // 手动停止需要通知主会话：挂起投递，由 deliverPendingTask 发通知；静默任务与设置页关闭 interrupted 投递时除外。
+        if (!task.silent && deliveryEnabledFor(this.deliveryToggles(), 'interrupted')) {
           task = { ...task, delivery: { state: 'pending', attempts: 0 } }
           shouldDeliver = true
         }
@@ -1069,9 +1111,12 @@ export class OrchestratorService extends TypertRemoteService {
         nextConv = settleConversation(conv, task, now)
         outcome = 'revision'
       } else {
-        task = failTask(previous, previous.status === 'queued' ? '子会话在任务开始前结束' : '子会话结束前未提交终态 task_update', now)
+        task = gateTaskDelivery(
+          failTask(previous, previous.status === 'queued' ? '子会话在任务开始前结束' : '子会话结束前未提交终态 task_update', now),
+          this.deliveryToggles(),
+        )
         nextConv = failConversation(settleConversation(conv, task, now), now)
-        shouldDeliver = true
+        shouldDeliver = task.delivery?.state === 'pending'
         outcome = 'failed'
       }
       await this.putPair(nextConv, task)
@@ -1103,6 +1148,11 @@ export class OrchestratorService extends TypertRemoteService {
     const task = this.taskById(taskId)
     if (!task || task.silent || task.delivery?.state !== 'pending') return
     if (!(deliverableTaskStatuses as readonly string[]).includes(task.status)) return
+    if (!deliveryEnabledFor(this.deliveryToggles(), task.status)) {
+      // 设置页已关闭该状态的投递：清掉存量 pending（不补投），状态本身已持久化、roster/看板照常可见。
+      await this.patchDelivery(taskId, () => undefined)
+      return
+    }
     this.delivering.add(taskId)
     try {
       await this.withAgent(task.parentSessionId, async (agent) => {

@@ -119,18 +119,20 @@ function TodoList({ todos, onToggle }: { todos: UserTodo[]; onToggle: (todo: Use
     <div className="dsho-todosHead">待办 <span className="dsho-todosCount">{pending > 0 ? `${pending} 项待处理` : '全部完成'}</span></div>
     {todos.map(todo => {
       const done = todo.status === 'done'
+      const cancelled = todo.status === 'cancelled'
       const due = todo.dueDate ? dueLabel(todo.dueDate) : undefined
-      return <div key={todo.id} className={`dsho-todo${done ? ' dsho-todo-done' : ''}${openId === todo.id ? ' dsho-todo-open' : ''}`}>
+      return <div key={todo.id} className={`dsho-todo${done ? ' dsho-todo-done' : ''}${cancelled ? ' dsho-todo-cancelled' : ''}${openId === todo.id ? ' dsho-todo-open' : ''}`}>
         <button
           type="button"
           className="dsho-todoCheck"
-          title={done ? '取消完成' : '标记完成'}
+          title={cancelled ? '已作废' : done ? '取消完成' : '标记完成'}
+          disabled={cancelled}
           onClick={event => { event.stopPropagation(); onToggle(todo) }}
-        >{done ? '✓' : ''}</button>
+        >{done ? '✓' : cancelled ? '×' : ''}</button>
         <div className="dsho-todoBody" onClick={() => setOpenId(openId === todo.id ? undefined : todo.id)}>
           <div className="dsho-todoLine">
-            <span className="dsho-todoTitle">{todo.title}</span>
-            {due && <span className={`dsho-todoDue${due.soon && !done ? ' dsho-todoDue-soon' : ''}`}>截止 {due.text}</span>}
+            <span className="dsho-todoTitle">{todo.title}{cancelled && <span className="dsho-todoCancelledTag">已作废</span>}</span>
+            {due && <span className={`dsho-todoDue${due.soon && !done && !cancelled ? ' dsho-todoDue-soon' : ''}`}>截止 {due.text}</span>}
           </div>
           {todo.detail && <div className="dsho-todoDetail">{todo.detail}</div>}
         </div>

@@ -111,6 +111,10 @@ export const CSS = `
 .dsho-todo-done .dsho-todoDue{opacity:.55;text-decoration:line-through}
 .dsho-todoDetail{display:none;font-size:11px;color:var(--dsw-alias-label-secondary);line-height:1.55;padding:3px 0 1px;white-space:pre-wrap}
 .dsho-todo-open .dsho-todoDetail{display:block}
+.dsho-todo-cancelled .dsho-todoCheck{background:transparent;border-color:transparent;color:var(--dsw-alias-label-tertiary);cursor:default;opacity:.7}
+.dsho-todo-cancelled .dsho-todoTitle{color:var(--dsw-alias-label-tertiary);text-decoration:line-through;font-weight:400}
+.dsho-todo-cancelled .dsho-todoDue{opacity:.55;text-decoration:line-through}
+.dsho-todoCancelledTag{margin-left:6px;font-size:10px;font-weight:400;color:var(--dsw-alias-label-tertiary);border:.5px solid var(--dsho-line);border-radius:999px;padding:0 6px;line-height:14px;text-decoration:none;display:inline-block}
 `
 export function adoptStyles(): void {
   if (typeof document === 'undefined' || document.getElementById(STYLE_ID)) return

@@ -63,6 +63,8 @@ export const WORKER_PROMPT = `你是执行 Worker，在持久子会话的独立�
 - 任务收尾时在 report.todos 里提出“需要用户本人推进”的待办：只有助理代替不了的事才提（用户本人操作、线下事务、待用户决策）；title 极简（≤30 字），detail 写清背景与操作方式，有截止时间给 dueDate（YYYY-MM-DD）。助理自己能做的事不要列成待办。
 - 待办属于会话级清单，看板对用户可见、可画勾；一次任务没有需要用户推进的事就不提。
 - 用户可能把某条待办交回给你代办：被派回代办时按任务执行，完成时在同一个 task_update 里用 todoUpdates:[{id, status:'done'}] 标记该待办。
+- 需求变更导致旧待办不再适用时，用 todoUpdates:[{id, status:'cancelled'}] 逐条作废，不要留着误导用户；只是内容要改（标题/详情/截止日期）则用 todoUpdates 直接改字段。
+- 待办现状你随时可见：新任务投递会附"会话待办现状"（含用户自己勾掉的），task_update 的返回值也带最新清单。
 
 # 定时任务
 - 需要定时或周期触发时用 schedule_create：提醒绑定本会话，到点作为新消息发回本会话；不要用 sleep、后台 job 或系统 cron 代替。
@@ -125,6 +127,27 @@ export function deliveryNotice(task: TaskRecord, conv?: ConversationRecord): str
     return `${base}${category}\n\n任务受阻：${task.error ?? '未知系统阻碍'}${remediation}\n\n请简短告知用户遇到的系统阻碍；用户可能在手机端、无法操作本机，不要指导其手动修改文件、配置或执行命令，给出可远程完成的选项；障碍消除后复用同一 conversationId 继续，不要新建工作流。`
   }
   return `${base}\n\n任务失败：${task.error ?? '未知错误'}\n\n请向用户简要说明失败原因；用户要求重试或调整时复用同一 conversationId。`
+}
+
+/** task_update 返回值里的待办投影：极简三字段，Worker 每次上报后可见最新清单。 */
+export function todoProjection(todos: ConversationRecord['todos']): Array<{ id: string, title: string, status: string }> {
+  return todos.map(todo => ({ id: todo.id, title: todo.title, status: todo.status }))
+}
+
+/** 投递给 Worker 时附带的会话待办现状：pending 全列（含 id，供 todoUpdates 引用），
+ * 用户已标完成的也列出（防止重复代办）；cancelled 不再提及。空清单不产生片段。 */
+export function todoStatusSection(todos: ConversationRecord['todos']): string {
+  if (todos.length === 0) return ''
+  const lines: string[] = []
+  for (const todo of todos) {
+    if (todo.status === 'pending') {
+      lines.push(`- [${todo.id}] ${todo.title}${todo.dueDate ? `（截止 ${todo.dueDate}）` : ''} — 待处理`)
+    } else if (todo.status === 'done' && todo.completedBy === 'user') {
+      lines.push(`- [${todo.id}] ${todo.title} — 用户已自行标记完成，不要重复代办`)
+    }
+  }
+  if (lines.length === 0) return ''
+  return `\n\n# 会话待办现状\n${lines.join('\n')}`
 }
 
 /** roster 行的主题摘要段：截断 60 字，空摘要不产生片段。 */

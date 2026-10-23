@@ -3,6 +3,7 @@ import {
   conversationSchema,
   createConversation,
   createTask,
+  userTodoSchema,
   conversationIdInputSchema,
   dispatchInputSchema,
   taskSchema,
@@ -193,12 +194,27 @@ describe('task_update 待办与标题协议', () => {
     }
   })
 
-  it('todoUpdates 全状态允许；title 是状态无关的待办字段', () => {
+  it('todoUpdates 允许 running/input_required/completed，禁止 failed/blocked', () => {
+    const updates = [{ id: 'todo_1', status: 'done' }, { id: 'todo_2', title: '改标题', detail: 'd', dueDate: '2026-11-01' }]
+    expect(taskUpdateInputSchema.safeParse({ status: 'running', todoUpdates: updates }).success).toBe(true)
+    expect(taskUpdateInputSchema.safeParse({ status: 'input_required', question: 'q', todoUpdates: updates }).success).toBe(true)
+    expect(taskUpdateInputSchema.safeParse({ status: 'completed', report: { result: 'r' }, todoUpdates: updates }).success).toBe(true)
+    expect(taskUpdateInputSchema.safeParse({ status: 'failed', error: 'e', todoUpdates: updates }).success).toBe(false)
+    expect(taskUpdateInputSchema.safeParse({ status: 'blocked', error: 'e', todoUpdates: updates }).success).toBe(false)
+  })
+
+  it('待办状态支持 cancelled（Worker 作废旧待办）', () => {
     const parsed = taskUpdateInputSchema.safeParse({
-      status: 'running',
-      todoUpdates: [{ id: 'todo_1', status: 'done' }, { id: 'todo_2', title: '改标题', detail: 'd', dueDate: '2026-11-01' }],
+      status: 'completed',
+      report: { result: 'r' },
+      todoUpdates: [{ id: 'todo_1', status: 'cancelled' }],
     })
     expect(parsed.success).toBe(true)
+    const todo = userTodoSchema.parse({
+      id: 'todo_1', title: 'x', status: 'cancelled', completedBy: 'worker',
+      createdAt: '2026-10-23T00:00:00Z', updatedAt: '2026-10-23T00:00:00Z',
+    })
+    expect(todo.status).toBe('cancelled')
   })
 
   it('旧会话记录无 todos 字段时默认空清单', () => {

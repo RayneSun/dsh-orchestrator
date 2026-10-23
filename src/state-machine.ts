@@ -1,4 +1,4 @@
-import type { BlockReasonCode, ConversationRecord, TaskRecord, TaskReport, TaskStatus } from './types.ts'
+import type { BlockReasonCode, ConversationRecord, DeliveryToggles, TaskRecord, TaskReport, TaskStatus } from './types.ts'
 import { deliverableTaskStatuses, taskUpdateFieldAllowList, terminalTaskStatuses } from './types.ts'
 
 export class StateError extends Error {
@@ -99,6 +99,32 @@ function withTerminalDelivery(task: TaskRecord, status: TaskStatus): TaskRecord[
   return !task.silent && (deliverableTaskStatuses as readonly TaskStatus[]).includes(status)
     ? { state: 'pending', attempts: 0 }
     : undefined
+}
+
+/**
+ * 投递开关判定（设置页，volatile 即时生效）：关闭的终态不投递。
+ * toggles 缺失（未注入配置）时按默认全开处理，与历史行为一致。
+ */
+export function deliveryEnabledFor(toggles: DeliveryToggles | undefined, status: TaskStatus): boolean {
+  if (!toggles) return true
+  switch (status) {
+    case 'input_required': return toggles.inputRequired
+    case 'blocked': return toggles.blocked
+    case 'completed': return toggles.completed
+    case 'failed': return toggles.failed
+    case 'interrupted': return toggles.interrupted
+    default: return true
+  }
+}
+
+/**
+ * 投递开关在服务层的统一闸门：开关关闭的终态剥掉 pending（与 silent 同效）。
+ * 只影响"消息是否回投主会话"，任务状态/摘要/待办的持久化与 roster、看板更新不受影响。
+ */
+export function gateTaskDelivery(task: TaskRecord, toggles: DeliveryToggles | undefined): TaskRecord {
+  if (task.delivery?.state !== 'pending' || deliveryEnabledFor(toggles, task.status)) return task
+  const { delivery: _dropped, ...rest } = task
+  return rest
 }
 
 /** task_update 成功后是否直接结束本轮推理：终态全部结束，仅 running 继续。 */

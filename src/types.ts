@@ -5,10 +5,29 @@ const taskStatuses = ['queued', 'running', 'input_required', 'blocked', 'complet
 export const activeTaskStatuses = ['queued', 'running'] as const
 /** 单条 TaskRun 的终态；input_required/blocked 结束本次执行，等待 Lead 后续派发新的 TaskRun。 */
 export const terminalTaskStatuses = ['input_required', 'blocked', 'completed', 'failed', 'interrupted'] as const
-/** 需要向主会话投递通知的终态。 */
+/** 允许向主会话投递通知的终态。 */
 // interrupted 是否投递取决于产生路径：改单/重启不投递，手动停止才投递通知。
-// 因此该表只表示"允许带 delivery"，pending 由具体路径挂起。
+// 因此该表只表示"允许带 delivery"，pending 由具体路径挂起；
+// 最终是否真正投递还受设置页投递开关（DeliveryToggles）与 silent 约束。
 export const deliverableTaskStatuses = ['input_required', 'blocked', 'completed', 'failed', 'interrupted'] as const
+
+/** 设置页的终态投递开关（volatile，即时生效）：关闭的状态只更新状态，不向主会话投递消息。 */
+export interface DeliveryToggles {
+  inputRequired: boolean
+  blocked: boolean
+  completed: boolean
+  failed: boolean
+  interrupted: boolean
+}
+
+/** 默认全部投递（未注入配置时的行为，与历史版本一致）。 */
+export const defaultDeliveryToggles: DeliveryToggles = {
+  inputRequired: true,
+  blocked: true,
+  completed: true,
+  failed: true,
+  interrupted: true,
+}
 export const blockReasonCodes = ['permission_denied', 'configuration', 'dependency', 'network', 'resource', 'runtime'] as const
 
 const trimmed = z.string().trim().min(1)
@@ -18,9 +37,9 @@ export const taskUpdateStatuses = ['running', 'input_required', 'blocked', 'comp
 export const taskUpdateFieldAllowList: Record<(typeof taskUpdateStatuses)[number], readonly string[]> = {
   running: ['title', 'progressNote', 'summary', 'todoUpdates'],
   input_required: ['title', 'progressNote', 'question', 'summary', 'todoUpdates'],
-  blocked: ['title', 'progressNote', 'error', 'reasonCode', 'remediation', 'summary', 'todoUpdates'],
+  blocked: ['title', 'progressNote', 'error', 'reasonCode', 'remediation', 'summary'],
   completed: ['title', 'progressNote', 'report', 'summary', 'todoUpdates'],
-  failed: ['title', 'progressNote', 'error', 'summary', 'todoUpdates'],
+  failed: ['title', 'progressNote', 'error', 'summary'],
 }
 
 const trimmedList = z.array(trimmed).max(50)
@@ -43,7 +62,7 @@ export const userTodoSchema = z.object({
   title: trimmed.max(30),
   detail: z.string().trim().max(2_000).optional(),
   dueDate: dueDateSchema.optional(),
-  status: z.enum(['pending', 'done']).default('pending'),
+  status: z.enum(['pending', 'done', 'cancelled']).default('pending'),
   completedBy: z.enum(['user', 'worker']).optional(),
   createdAt: z.string(),
   updatedAt: z.string(),
@@ -54,7 +73,7 @@ export type UserTodo = z.infer<typeof userTodoSchema>
 /** task_update 最外层的待办更新：按 id 标 done 或改内容。 */
 export const todoUpdateSchema = z.object({
   id: trimmed,
-  status: z.enum(['pending', 'done']).optional(),
+  status: z.enum(['pending', 'done', 'cancelled']).optional(),
   title: trimmed.max(30).optional(),
   detail: z.string().trim().max(2_000).optional(),
   dueDate: dueDateSchema.optional(),
@@ -145,7 +164,7 @@ const baseTaskSchema = z.object({
   progressSteps: z.array(progressStepSchema).default([]),
   silent: z.boolean().default(false),
   report: reportSchema.optional(),
-  /** 定时触发产生的上报任务（宿主按入站消息来源自动判定，看板 ⏰ 标识）。 */
+  /** 定时触发产生的上报任务（宿主按入站消息来源自动判定，看板定时标识）。 */
   scheduled: z.boolean().optional(),
   delivery: deliverySchema.optional(),
   revision: z.number().int().nonnegative().default(0),
