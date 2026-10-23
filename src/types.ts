@@ -134,7 +134,7 @@ const baseTaskSchema = z.object({
   prompt: trimmed,
   acceptanceCriteria: z.string().optional(),
   status: z.enum(taskStatuses).default('queued'),
-  /** 极简状态标题（手机端/折叠态展示），progressNote 的压缩版。 */
+  /** 极简状态标题（最多 8 个字，手机端/折叠态展示），progressNote 的压缩版。长度只在 task_update 输入边界限制，存储层不加约束（旧记录兼容）。 */
   title: z.string().optional(),
   progressNote: z.string().optional(),
   error: z.string().optional(),
@@ -288,7 +288,7 @@ export const dispatchInputSchema = z.object({
 
 export const taskUpdateInputSchema = z.object({
   status: z.enum(taskUpdateStatuses),
-  title: trimmed.max(30).optional(),
+  title: trimmed.max(8).optional(),
   progressNote: trimmed.max(500).optional(),
   summary: trimmed.max(300).optional(),
   report: reportSchema.optional(),

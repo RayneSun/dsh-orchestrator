@@ -456,24 +456,7 @@ export class OrchestratorService extends TypertRemoteService {
     this.keep(agent, scoped.tools.register(defineTool({
       name: 'task_update',
       description: '向 Orchestrator Host 上报当前子会话活动 TaskRun 的状态。不接受 task id，Host 根据会话身份反查。无活动任务时仅允许 completed（定时触发后的结果上报）。',
-      parameters: {
-        status: { type: 'string', required: true, enum: [...taskUpdateStatuses] },
-        progressNote: { type: 'string', description: '一行精简进展（看板直接显示；信息优先，可带三分幽默）' },
-        summary: { type: 'string', description: '一句话路由摘要：这个子会话在做什么；任务方向变化时更新' },
-        report: {
-          type: 'object',
-          additionalProperties: false,
-          properties: {
-            result: { type: 'string', required: true, description: '完整结果，Lead 转述给用户的权威答案' },
-            artifacts: { type: 'array', items: { type: 'string' }, description: '用户会要看的产物文件，子工作区相对路径（禁止绝对路径和 ..）' },
-          },
-          description: 'completed 时必填：最终结果与产物',
-        },
-        error: { type: 'string', description: 'failed/blocked 时必填：失败原因或系统阻碍' },
-        question: { type: 'string', description: 'input_required 时必填：可直接转达给用户的问题/接管提示，需自包含、一次问清' },
-        reasonCode: { type: 'string', enum: [...blockReasonCodes], description: 'blocked 的阻碍类别' },
-        remediation: { type: 'string', description: 'blocked 时建议用户执行的补救动作' },
-      },
+      parameters: TASK_UPDATE_TOOL_PARAMETERS,
       output: sharedJsonOutput,
       execute: async (args: any, exec: { concludeTurn?: () => void }) => {
         const result = await this.updateFromWorker(args, String(agent.session.id))
@@ -1229,5 +1212,55 @@ export class OrchestratorService extends TypertRemoteService {
     })
   }
 }
+
+/** task_update 的模型可见参数 DSL（defineTool parameters）。与 taskUpdateInputSchema 双写：
+ * 模型只能看到这里的字段——zod 加了字段而这里没加，模型就永远不知道（v0.3.13 前踩过）。 */
+export const TASK_UPDATE_TOOL_PARAMETERS = {
+  status: { type: 'string', required: true, enum: [...taskUpdateStatuses] },
+  title: { type: 'string', description: '极度精简的状态标题（最多 8 个字，看板加粗展示），如"抓取新闻源""已查到 3 家"' },
+  progressNote: { type: 'string', description: '一行精简进展（看板直接显示；信息优先，可带三分幽默）' },
+  summary: { type: 'string', description: '一句话路由摘要：这个子会话在做什么；任务方向变化时更新' },
+  report: {
+    type: 'object',
+    additionalProperties: false,
+    properties: {
+      result: { type: 'string', required: true, description: '完整结果，Lead 转述给用户的权威答案' },
+      artifacts: { type: 'array', items: { type: 'string' }, description: '用户会要看的产物文件，子工作区相对路径（禁止绝对路径和 ..）' },
+      todos: {
+        type: 'array',
+        items: {
+          type: 'object',
+          additionalProperties: false,
+          properties: {
+            title: { type: 'string', required: true, description: '待办标题（极简，≤30 字）' },
+            detail: { type: 'string', description: '背景与操作方式' },
+            dueDate: { type: 'string', description: '截止日期 YYYY-MM-DD' },
+          },
+        },
+        description: '需要用户本人推进的待办（本人操作/线下事务/待用户决策）；没有就不给',
+      },
+    },
+    description: 'completed 时必填：最终结果与产物',
+  },
+  todoUpdates: {
+    type: 'array',
+    items: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        id: { type: 'string', required: true, description: '待办 id（提出待办时由系统分配，见投递/查询结果）' },
+        status: { type: 'string', enum: ['pending', 'done'], description: '代办完成后标 done' },
+        title: { type: 'string' },
+        detail: { type: 'string' },
+        dueDate: { type: 'string', description: 'YYYY-MM-DD' },
+      },
+    },
+    description: '更新本会话已有待办：被派回代办时完成后标记 done',
+  },
+  error: { type: 'string', description: 'failed/blocked 时必填：失败原因或系统阻碍' },
+  question: { type: 'string', description: 'input_required 时必填：可直接转达给用户的问题/接管提示，需自包含、一次问清' },
+  reasonCode: { type: 'string', enum: [...blockReasonCodes], description: 'blocked 的阻碍类别' },
+  remediation: { type: 'string', description: 'blocked 时建议用户执行的补救动作' },
+} as const
 
 export default OrchestratorService

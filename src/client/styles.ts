@@ -63,6 +63,8 @@ export const CSS = `
 .dsho-tag-silent{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-tertiary)}
 .dsho-tag-scheduled{background:color-mix(in srgb,var(--dsho-brand) 13%,transparent);color:var(--dsho-brand-ink)}
 .dsho-note{display:flex;gap:6px;align-items:baseline}
+.dsho-noteTitle{flex:none;font-weight:600;font-size:11px;line-height:16px;padding:0 6px;border:.5px solid var(--dsho-line);border-radius:6px;background:var(--dsw-alias-bg-layer-3);color:var(--dsw-alias-label-primary);white-space:nowrap}
+.dsho-noteSep{flex:none;color:var(--dsw-alias-label-tertiary)}
 .dsho-noteText{flex:1;min-width:0;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
 .dsho-note-live .dsho-noteText{background:linear-gradient(90deg,var(--dsw-alias-label-primary) 30%,var(--dsho-brand) 50%,var(--dsw-alias-label-primary) 70%);background-size:200% 100%;-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent;animation:dsho-shimmer 1.8s linear infinite}
 @keyframes dsho-shimmer{0%{background-position:120% 0}100%{background-position:-80% 0}}

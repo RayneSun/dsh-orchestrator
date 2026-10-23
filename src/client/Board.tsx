@@ -211,7 +211,8 @@ function TaskLine({ task, conv, nowMs, onOpenArtifact }: TaskLineProps): React.R
       <span className="dsho-taskSubject" title={task.subject}>{task.subject}</span>
     </div>
     <StepList steps={task.progressSteps ?? []} />
-    {(task.progressNote || detailSections.length > 0) && <div className={`dsho-note${live ? ' dsho-note-live' : ''}`}>
+    {(task.title || task.progressNote || detailSections.length > 0) && <div className={`dsho-note${live ? ' dsho-note-live' : ''}`}>
+      {task.title && <><span className="dsho-noteTitle">{task.title}</span><span className="dsho-noteSep">:</span></>}
       <span className="dsho-noteText">{task.progressNote || (live ? '正在推进…' : taskHeadline(task))}</span>
       {detailSections.length > 0 && <button type="button" className="dsho-expander" onClick={() => setExpanded(v => !v)}>{expanded ? '收起' : '展开详情'}</button>}
     </div>}

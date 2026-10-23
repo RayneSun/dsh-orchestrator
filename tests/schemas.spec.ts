@@ -165,15 +165,15 @@ describe('工具输入 Zod 校验', () => {
 })
 
 describe('task_update 待办与标题协议', () => {
-  it('title 全状态可选，≤30 字；超长拒绝', () => {
+  it('title 全状态可选，最多 8 个字；超长拒绝', () => {
     for (const status of ['running', 'input_required', 'blocked', 'completed', 'failed'] as const) {
-      const base: Record<string, unknown> = { status, title: '已查到 3 家距离' }
+      const base: Record<string, unknown> = { status, title: '已查到 3 家' }
       if (status === 'completed') base.report = { result: '答案' }
       if (status === 'failed' || status === 'blocked') base.error = '原因'
       if (status === 'input_required') base.question = '问题'
       const ok = taskUpdateInputSchema.safeParse(base)
       expect(ok.success).toBe(true)
-      const tooLong = taskUpdateInputSchema.safeParse({ ...base, title: 'x'.repeat(31) })
+      const tooLong = taskUpdateInputSchema.safeParse({ ...base, title: 'x'.repeat(9) })
       expect(tooLong.success).toBe(false)
     }
   })
