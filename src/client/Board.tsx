@@ -132,6 +132,7 @@ function TodoList({ todos, onToggle }: { todos: UserTodo[]; onToggle: (todo: Use
         <div className="dsho-todoBody" onClick={() => setOpenId(openId === todo.id ? undefined : todo.id)}>
           <div className="dsho-todoLine">
             <span className="dsho-todoTitle">{todo.title}{cancelled && <span className="dsho-todoCancelledTag">已作废</span>}</span>
+            <span className={`dsho-todoPriority dsho-todoPriority-${todo.priority}`} title={{ P0: '紧急且重要', P1: '重要不紧急', P2: '紧急不重要', P3: '有空再做' }[todo.priority]}>{todo.priority}</span>
             {due && <span className={`dsho-todoDue${due.soon && !done && !cancelled ? ' dsho-todoDue-soon' : ''}`}>截止 {due.text}</span>}
           </div>
           {todo.detail && <div className="dsho-todoDetail">{todo.detail}</div>}

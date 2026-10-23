@@ -60,7 +60,7 @@ export const WORKER_PROMPT = `你是执行 Worker，在持久子会话的独立�
 - 终态（completed/failed/input_required/blocked）task_update 成功后本轮立即结束：要交付的内容必须写进 report/question/error，之后再发的消息不会被处理。
 
 # 用户待办
-- 任务收尾时在 report.todos 里提出“需要用户本人推进”的待办：只有助理代替不了的事才提（用户本人操作、线下事务、待用户决策）；title 极简（≤30 字），detail 写清背景与操作方式，有截止时间给 dueDate（YYYY-MM-DD）。助理自己能做的事不要列成待办。
+- 任务收尾时在 report.todos 里提出“需要用户本人推进”的待办：只有助理代替不了的事才提（用户本人操作、线下事务、待用户决策）；title 极简（≤30 字），detail 写清背景与操作方式，有截止时间给 dueDate（YYYY-MM-DD），按四象限给 priority：P0 紧急且重要 / P1 重要不紧急 / P2 紧急不重要 / P3 有空再做（默认 P3，不确定就不给）。助理自己能做的事不要列成待办。
 - 待办属于会话级清单，看板对用户可见、可画勾；一次任务没有需要用户推进的事就不提。
 - 用户可能把某条待办交回给你代办：被派回代办时按任务执行，完成时在同一个 task_update 里用 todoUpdates:[{id, status:'done'}] 标记该待办。
 - 需求变更导致旧待办不再适用时，用 todoUpdates:[{id, status:'cancelled'}] 逐条作废，不要留着误导用户；只是内容要改（标题/详情/截止日期）则用 todoUpdates 直接改字段。
@@ -107,7 +107,7 @@ export function deliveryNotice(task: TaskRecord, conv?: ConversationRecord): str
       : ''
     const pendingTodos = conv?.todos?.filter(todo => todo.status === 'pending') ?? []
     const todos = pendingTodos.length > 0
-      ? `\n\n用户待办（需要用户本人推进，请用自然语言转述，不要暴露 id）：\n${pendingTodos.map(todo => `- [${todo.id}] ${todo.title}${todo.dueDate ? `（截止 ${todo.dueDate}）` : ''}${todo.detail ? `：${todo.detail}` : ''}`).join('\n')}\n用户让你代办某条待办时，复用上面的 conversationId 派发，prompt 带上待办 id 与内容，要求 Worker 完成后用 todoUpdates 标记 done。`
+      ? `\n\n用户待办（需要用户本人推进，请用自然语言转述，不要暴露 id）：\n${pendingTodos.map(todo => `- [${todo.id}] ${todo.title}${todo.priority !== 'P3' ? `（${todo.priority}）` : ''}${todo.dueDate ? `（截止 ${todo.dueDate}）` : ''}${todo.detail ? `：${todo.detail}` : ''}`).join('\n')}\n用户让你代办某条待办时，复用上面的 conversationId 派发，prompt 带上待办 id 与内容，要求 Worker 完成后用 todoUpdates 标记 done。`
       : ''
     return `${base}\n\nWorker 结果：\n${result}${artifacts}${todos}\n\n请结合主会话语境，用自然语言把结果回复用户。`
   }
@@ -130,8 +130,8 @@ export function deliveryNotice(task: TaskRecord, conv?: ConversationRecord): str
 }
 
 /** task_update 返回值里的待办投影：极简三字段，Worker 每次上报后可见最新清单。 */
-export function todoProjection(todos: ConversationRecord['todos']): Array<{ id: string, title: string, status: string }> {
-  return todos.map(todo => ({ id: todo.id, title: todo.title, status: todo.status }))
+export function todoProjection(todos: ConversationRecord['todos']): Array<{ id: string, title: string, status: string, priority: string }> {
+  return todos.map(todo => ({ id: todo.id, title: todo.title, status: todo.status, priority: todo.priority }))
 }
 
 /** 投递给 Worker 时附带的会话待办现状：pending 全列（含 id，供 todoUpdates 引用），
@@ -141,7 +141,7 @@ export function todoStatusSection(todos: ConversationRecord['todos']): string {
   const lines: string[] = []
   for (const todo of todos) {
     if (todo.status === 'pending') {
-      lines.push(`- [${todo.id}] ${todo.title}${todo.dueDate ? `（截止 ${todo.dueDate}）` : ''} — 待处理`)
+      lines.push(`- [${todo.id}] ${todo.title}${todo.priority !== 'P3' ? `（${todo.priority}）` : ''}${todo.dueDate ? `（截止 ${todo.dueDate}）` : ''} — 待处理`)
     } else if (todo.status === 'done' && todo.completedBy === 'user') {
       lines.push(`- [${todo.id}] ${todo.title} — 用户已自行标记完成，不要重复代办`)
     }

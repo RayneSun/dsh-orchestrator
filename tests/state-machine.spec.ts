@@ -3,7 +3,7 @@ import { createConversation, createTask } from '../src/types.ts'
 import {
   StateError, activateConversation, statusConcludesTurn, updateOutlineSummary, classifyWorkerTurnEnd,
   failConversation, interruptTaskForRevision, reviseConversation, canTransition, blockTask, failTask, interruptTaskAfterRestart,
-  isTerminal, settleConversation, startConversation, transitionTask,
+  isTerminal, settleConversation, transitionTask,
 } from '../src/state-machine.ts'
 
 function pair() {

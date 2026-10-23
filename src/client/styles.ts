@@ -108,6 +108,11 @@ export const CSS = `
 .dsho-todo-done .dsho-todoTitle{color:var(--dsw-alias-label-tertiary);text-decoration:line-through;font-weight:400}
 .dsho-todoDue{flex:none;font-size:10px;color:var(--dsw-alias-label-tertiary);border:.5px solid var(--dsho-line);border-radius:999px;padding:0 7px;line-height:15px;background:var(--dsw-alias-bg-layer-2,#fff)}
 .dsho-todoDue-soon{color:var(--dsho-warn);border-color:color-mix(in srgb,var(--dsho-warn) 35%,transparent);background:color-mix(in srgb,var(--dsho-warn) 6%,transparent)}
+.dsho-todoPriority{flex:none;font-size:10px;font-weight:600;border-radius:999px;padding:0 7px;line-height:15px;border:.5px solid transparent}
+.dsho-todoPriority-P0{color:#d5483f;border-color:color-mix(in srgb,#d5483f 35%,transparent);background:color-mix(in srgb,#d5483f 8%,transparent)}
+.dsho-todoPriority-P1{color:#e08300;border-color:color-mix(in srgb,#e08300 35%,transparent);background:color-mix(in srgb,#e08300 8%,transparent)}
+.dsho-todoPriority-P2{color:#b59a00;border-color:color-mix(in srgb,#b59a00 35%,transparent);background:color-mix(in srgb,#b59a00 8%,transparent)}
+.dsho-todoPriority-P3{color:#3d9a50;border-color:color-mix(in srgb,#3d9a50 35%,transparent);background:color-mix(in srgb,#3d9a50 8%,transparent)}
 .dsho-todo-done .dsho-todoDue{opacity:.55;text-decoration:line-through}
 .dsho-todoDetail{display:none;font-size:11px;color:var(--dsw-alias-label-secondary);line-height:1.55;padding:3px 0 1px;white-space:pre-wrap}
 .dsho-todo-open .dsho-todoDetail{display:block}

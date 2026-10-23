@@ -194,6 +194,21 @@ describe('task_update 待办与标题协议', () => {
     }
   })
 
+  it('priority 默认 P3；可指定 P0~P3；todoUpdates 可调整 priority', () => {
+    const parsed = taskUpdateInputSchema.parse({
+      status: 'completed',
+      report: { result: '答案', todos: [{ title: '默认' }, { title: '加急', priority: 'P0' }] },
+      todoUpdates: [{ id: 'todo_1', priority: 'P1' }],
+    })
+    expect(parsed.report?.todos?.[0]?.priority).toBe('P3')
+    expect(parsed.report?.todos?.[1]?.priority).toBe('P0')
+    expect(parsed.todoUpdates?.[0]?.priority).toBe('P1')
+    expect(taskUpdateInputSchema.safeParse({
+      status: 'completed',
+      report: { result: '答案', todos: [{ title: 'x', priority: 'P9' }] },
+    }).success).toBe(false)
+  })
+
   it('todoUpdates 允许 running/input_required/completed，禁止 failed/blocked', () => {
     const updates = [{ id: 'todo_1', status: 'done' }, { id: 'todo_2', title: '改标题', detail: 'd', dueDate: '2026-11-01' }]
     expect(taskUpdateInputSchema.safeParse({ status: 'running', todoUpdates: updates }).success).toBe(true)

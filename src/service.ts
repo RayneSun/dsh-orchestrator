@@ -53,6 +53,7 @@ import {
   deliverableTaskStatuses,
   type DeliveryToggles,
   taskUpdateStatuses,
+  todoPriorities,
   dispatchInputSchema,
   conversationIdInputSchema,
   taskUpdateInputSchema,
@@ -204,6 +205,7 @@ export class OrchestratorService extends TypertRemoteService {
   constructor(private readonly hostCtx: Context, private readonly configRefs?: OrchestratorConfigRefs) {
     super(hostCtx, 'orchestrator', { namespace: 'orchestrator' })
     this.markRemote('snapshot')
+    this.markRemote('setTodoStatus')
     this.ready = this.start()
   }
 
@@ -225,8 +227,8 @@ export class OrchestratorService extends TypertRemoteService {
   }
 
   /** Standalone tsdown does not run Typert's decorator lowering; use its public decorator API once per instance. */
-  private markRemote(method: 'snapshot'): void {
-    const prototype = Object.getPrototypeOf(this) as Record<'snapshot', unknown>
+  private markRemote(method: 'snapshot' | 'setTodoStatus'): void {
+    const prototype = Object.getPrototypeOf(this) as Record<'snapshot' | 'setTodoStatus', unknown>
     let initializer: (() => void) | undefined
     Remote(method)(prototype.snapshot as never, {
       kind: 'method',
@@ -399,7 +401,7 @@ export class OrchestratorService extends TypertRemoteService {
     await this.ready
     const conv = this.conversationByChild(String(agent.session.id))
     if (conv) {
-      await this.configureWorker(agent, conv)
+      await this.configureWorker(agent)
       return
     }
     if (delegationDepthOf(agent) === 0 && this.composedPreset(agent) === LEAD_PRESET) {
@@ -442,7 +444,7 @@ export class OrchestratorService extends TypertRemoteService {
     for (const tool of this.leadTools(agent)) this.keep(agent, scoped.tools.register(tool as any))
   }
 
-  private async configureWorker(agent: Agent, conv: ConversationRecord): Promise<void> {
+  private async configureWorker(agent: Agent): Promise<void> {
     await this.resetInstalled(String(agent.session.id))
     // Worker 切换为完全访问权限（沙箱全开放 + 审批 never）：后台执行无人值守，
     // 默认 workspace-write+ask 会让敏感操作停在审批上永远等不到人。
@@ -996,6 +998,7 @@ export class OrchestratorService extends TypertRemoteService {
         title: input.title,
         ...input.detail !== undefined ? { detail: input.detail } : {},
         ...input.dueDate !== undefined ? { dueDate: input.dueDate } : {},
+        priority: input.priority,
         status: 'pending' as const,
         createdAt: now,
         updatedAt: now,
@@ -1011,6 +1014,7 @@ export class OrchestratorService extends TypertRemoteService {
             ...update.title !== undefined ? { title: update.title } : {},
             ...update.detail !== undefined ? { detail: update.detail } : {},
             ...update.dueDate !== undefined ? { dueDate: update.dueDate } : {},
+            ...update.priority !== undefined ? { priority: update.priority } : {},
             ...update.status !== undefined
               ? {
                   status: update.status,
@@ -1287,6 +1291,7 @@ export const TASK_UPDATE_TOOL_PARAMETERS = {
             title: { type: 'string', required: true, description: '待办标题（极简，≤30 字）' },
             detail: { type: 'string', description: '背景与操作方式' },
             dueDate: { type: 'string', description: '截止日期 YYYY-MM-DD' },
+            priority: { type: 'string', enum: [...todoPriorities], description: '优先级：P0 紧急且重要 / P1 重要不紧急 / P2 紧急不重要 / P3 有空再做（默认 P3）' },
           },
         },
         description: '需要用户本人推进的待办（本人操作/线下事务/待用户决策）；没有就不给',
@@ -1301,10 +1306,11 @@ export const TASK_UPDATE_TOOL_PARAMETERS = {
       additionalProperties: false,
       properties: {
         id: { type: 'string', required: true, description: '待办 id（提出待办时由系统分配，见投递/查询结果）' },
-        status: { type: 'string', enum: ['pending', 'done'], description: '代办完成后标 done' },
+        status: { type: 'string', enum: ['pending', 'done', 'cancelled'], description: '代办完成后标 done；不再适用标 cancelled' },
         title: { type: 'string' },
         detail: { type: 'string' },
         dueDate: { type: 'string', description: 'YYYY-MM-DD' },
+        priority: { type: 'string', enum: [...todoPriorities], description: '调整优先级 P0~P3' },
       },
     },
     description: '更新本会话已有待办：被派回代办时完成后标记 done',

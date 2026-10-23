@@ -48,13 +48,17 @@ const now = () => new Date().toISOString()
 /** 严格日期：YYYY-MM-DD。 */
 const dueDateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'dueDate 必须是 YYYY-MM-DD 格式')
 
+/** 待办优先级：P0 紧急且重要 / P1 重要不紧急 / P2 紧急不重要 / P3 有空再做（默认）。 */
+export const todoPriorities = ['P0', 'P1', 'P2', 'P3'] as const
+export const todoPrioritySchema = z.enum(todoPriorities)
+
 /** 子会话提出的用户待办（report.todos 元素）：需要用户本人推进的事。 */
 export const newTodoSchema = z.object({
   title: trimmed.max(30),
   detail: z.string().trim().max(2_000).optional(),
   dueDate: dueDateSchema.optional(),
+  priority: todoPrioritySchema.default('P3'),
 }).strict()
-export type NewTodo = z.infer<typeof newTodoSchema>
 
 /** 持久化的用户待办：属于会话级清单，用户与子会话双向画勾。 */
 export const userTodoSchema = z.object({
@@ -62,6 +66,7 @@ export const userTodoSchema = z.object({
   title: trimmed.max(30),
   detail: z.string().trim().max(2_000).optional(),
   dueDate: dueDateSchema.optional(),
+  priority: todoPrioritySchema.default('P3'),
   status: z.enum(['pending', 'done', 'cancelled']).default('pending'),
   completedBy: z.enum(['user', 'worker']).optional(),
   createdAt: z.string(),
@@ -77,8 +82,8 @@ export const todoUpdateSchema = z.object({
   title: trimmed.max(30).optional(),
   detail: z.string().trim().max(2_000).optional(),
   dueDate: dueDateSchema.optional(),
+  priority: todoPrioritySchema.optional(),
 }).strict()
-export type TodoUpdate = z.infer<typeof todoUpdateSchema>
 
 export const progressStepSchema = z.object({
   content: z.string().trim().min(1).max(300),
@@ -180,7 +185,7 @@ const baseTaskSchema = z.object({
  * - ≤0.3.10：userAnswer/resultSummary → report.result（内容保留，旧任务的结果在看板和 roster 仍可读）；
  *   outlinePatch 从未写入过，直接剥离；cancelled 状态从未产生过，防御性并入 interrupted。
  */
-function migrateRecord<T>(raw: unknown): unknown {
+function migrateRecord(raw: unknown): unknown {
   if (!raw || typeof raw !== 'object') return raw
   const record = { ...(raw as Record<string, unknown>) }
   const legacyTaskBlocked = record.status === 'blocked'
@@ -212,8 +217,6 @@ export type ConversationRecord = z.infer<typeof baseConversationSchema>
 export type TaskRecord = z.infer<typeof baseTaskSchema>
 export type TaskStatus = TaskRecord['status']
 export type BlockReasonCode = NonNullable<TaskRecord['reasonCode']>
-export type ConversationState = ConversationRecord['state']
-export type Delivery = z.infer<typeof deliverySchema>
 
 export interface Snapshot {
   conversations: ConversationRecord[]
