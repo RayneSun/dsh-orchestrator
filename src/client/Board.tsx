@@ -1,10 +1,13 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import type { ConversationRecord, ProgressStep, Snapshot, TaskRecord } from '../types.ts'
+import type { ConversationRecord, ProgressStep, Snapshot, TaskRecord, UserTodo } from '../types.ts'
 
 interface BoardProps {
   sessionId?: string
   useTabInfo?: () => { tab: { navigation?: { params?: unknown } } }
-  orchestrator: { snapshot(request: { parentSessionId: string }): Promise<{ ok: true; value: Snapshot } | { ok: false; error?: { message?: string } }> }
+  orchestrator: {
+    snapshot(request: { parentSessionId: string }): Promise<{ ok: true; value: Snapshot } | { ok: false; error?: { message?: string } }>
+    setTodoStatus(request: { todoId: string; status: 'pending' | 'done' }): Promise<{ ok: true }>
+  }
   remoteEvents: {
     $on(event: string, listener: () => void): () => void
     session?: {
@@ -98,6 +101,42 @@ function taskHeadline(task: TaskRecord): string {
     default:
       return ''
   }
+}
+
+/** YYYY-MM-DD → MM-DD 展示；3 天内（含已过期）为临期。 */
+function dueLabel(dueDate: string): { text: string; soon: boolean } {
+  const due = Date.parse(`${dueDate}T23:59:59`)
+  if (Number.isNaN(due)) return { text: dueDate, soon: false }
+  const soon = due - Date.now() <= 3 * 24 * 3600 * 1000
+  return { text: dueDate.slice(5), soon }
+}
+
+/** 会话级用户待办框：折叠/展开都显示，用户画勾走 setTodoStatus RPC，点行展开 detail。 */
+function TodoList({ todos, onToggle }: { todos: UserTodo[]; onToggle: (todo: UserTodo) => void }): React.ReactElement {
+  const [openId, setOpenId] = useState<string>()
+  const pending = todos.filter(todo => todo.status === 'pending').length
+  return <div className="dsho-todos">
+    <div className="dsho-todosHead">待办 <span className="dsho-todosCount">{pending > 0 ? `${pending} 项待处理` : '全部完成'}</span></div>
+    {todos.map(todo => {
+      const done = todo.status === 'done'
+      const due = todo.dueDate ? dueLabel(todo.dueDate) : undefined
+      return <div key={todo.id} className={`dsho-todo${done ? ' dsho-todo-done' : ''}${openId === todo.id ? ' dsho-todo-open' : ''}`}>
+        <button
+          type="button"
+          className="dsho-todoCheck"
+          title={done ? '取消完成' : '标记完成'}
+          onClick={event => { event.stopPropagation(); onToggle(todo) }}
+        >{done ? '✓' : ''}</button>
+        <div className="dsho-todoBody" onClick={() => setOpenId(openId === todo.id ? undefined : todo.id)}>
+          <div className="dsho-todoLine">
+            <span className="dsho-todoTitle">{todo.title}</span>
+            {due && <span className={`dsho-todoDue${due.soon && !done ? ' dsho-todoDue-soon' : ''}`}>截止 {due.text}</span>}
+          </div>
+          {todo.detail && <div className="dsho-todoDetail">{todo.detail}</div>}
+        </div>
+      </div>
+    })}
+  </div>
 }
 
 function StepList({ steps }: { steps: ProgressStep[] }): React.ReactElement | null {
@@ -267,6 +306,16 @@ export function Board({ sessionId: propSessionId, useTabInfo, orchestrator, remo
     }
   }, [remoteEvents, showToast])
 
+  // 用户画勾/取消待办：走 RPC 持久化后立刻刷新看板。
+  const toggleTodo = useCallback(async (todo: UserTodo) => {
+    try {
+      await orchestrator.setTodoStatus({ todoId: todo.id, status: todo.status === 'done' ? 'pending' : 'done' })
+      void load(++requestSeq.current)
+    } catch (err) {
+      showToast(`更新待办失败：${err instanceof Error ? err.message : String(err)}`)
+    }
+  }, [orchestrator, load, showToast])
+
   if (!sessionId) return <div className="dsho-board"><p className="dsho-empty dsho-error">无法确定主会话 ID。</p></div>
   if (error) return <div className="dsho-board"><h2 className="dsho-title">任务看板</h2><p className="dsho-empty dsho-error" role="alert">{error}</p></div>
   if (!snapshot) return <div className="dsho-board"><h2 className="dsho-title">任务看板</h2><p className="dsho-empty">正在加载任务看板…</p></div>
@@ -327,11 +376,15 @@ export function Board({ sessionId: propSessionId, useTabInfo, orchestrator, remo
             }
           }}>打开子会话</button>
         </header>
-        {collapsed && headline && <div className="dsho-strip" title={headline}>
-          {latest && <span className={`dsho-badge dsho-badge-${latest.status}`}>{taskStatusLabels[latest.status] ?? latest.status}</span>}
-          <span className="dsho-stripText">{headline}</span>
-          <span className="dsho-stripTime">{time(latest?.updatedAt ?? conv.updatedAt)}</span>
+        {collapsed && latest && <div className="dsho-strip">
+          <div className="dsho-stripRow">
+            <span className={`dsho-badge dsho-badge-${latest.status}`}>{taskStatusLabels[latest.status] ?? latest.status}</span>
+            <span className="dsho-stripTitle" title={latest.title ?? headline}>{latest.title ?? headline}</span>
+            <span className="dsho-stripTime">{time(latest.updatedAt ?? conv.updatedAt)}</span>
+          </div>
+          {latest.progressNote && <div className={`dsho-stripNote${(ACTIVE_TASK_STATUSES as string[]).includes(latest.status) && !latest.endedAt ? ' dsho-stripNote-live' : ''}`} title={latest.progressNote}>{latest.progressNote}</div>}
         </div>}
+        {conv.todos.length > 0 && <TodoList todos={conv.todos} onToggle={toggleTodo} />}
         <div className="dsho-body"><div>
           {conv.workspaceName && <div className="dsho-meta">工作区：{conv.workspaceName}</div>}
           <ul className="dsho-tasks">

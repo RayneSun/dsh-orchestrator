@@ -122,7 +122,9 @@ dsh plugin --profile web add <tgz 绝对路径>
 
 ### Worker 上报协议
 
-- `task_update`：running(+progressNote?, summary?) / input_required(+question) / blocked(+error, reasonCode?, remediation?) / completed(+report{result, artifacts?}, summary?) / failed(+error)。completed 的 report.result 是 Lead 转述的唯一权威答案；report.artifacts 为子工作区相对路径，投递到 Lead 时自动加工作区前缀。progressNote 是定期刷新的一句话进展（允许三分幽默），驱动看板实时状态。
+- `task_update`：running / input_required(+question) / blocked(+error, reasonCode?, remediation?) / completed(+report) / failed(+error)；全状态可带 title（≤30 字极简状态标题，折叠态/手机端展示）、progressNote（一句话进展，允许三分幽默）、summary、todoUpdates（按 id 更新会话待办）。completed 的 report{result, artifacts?, todos?}：result 是 Lead 转述的唯一权威答案；artifacts 为子工作区相对路径，投递时自动加工作区前缀；todos 提出"需要用户本人推进"的待办。
+- 用户待办清单：会话级 `conv.todos`（UserTodo：id/title/detail/dueDate(YYYY-MM-DD)/status/completedBy），Worker 在 report.todos 提出、用 todoUpdates 画勾；用户在任务看板画勾走 `setTodoStatus` RPC；待办框在"工作区"行上方，折叠也显示。Lead 把待办转述给用户；用户让代办时复用原 conversationId 派发并要求 Worker 完成后 todoUpdates 标 done。
+- Worker 会话在 configureWorker 时切到 `danger-full-access` 权限预设（permissionPresets.set，沙箱全开放+审批 never）：后台无人值守，默认 workspace-write+ask 会把敏感操作卡在审批上。Lead 保持默认。
 - Worker 不能直接向用户提问（ask-user 工具被 guard 拦且不进预设）。
 - todo_write 是内部步骤清单：Host 监听 `todo/write` 事件，350ms 防抖写入 `task.progressSteps` 驱动看板；Worker 无需为 todo 调 task_update，todo 全完成不等于任务完成。
 
@@ -153,4 +155,4 @@ dsh plugin --profile web add <tgz 绝对路径>
 ## 背景材料
 
 - README.md：用户面说明，发版时随版本号更新。
-- git log：0.2.0（background/单 Worker 预设）→ 0.2.1（路由追问兜底/改单 steer/blocked 提问）→ 0.2.2（todo 进度桥接看板）→ 0.2.3（interrupted 改单语义）→ 0.2.4（手动停止捕获、看板与话术精简）→ 0.2.5（白名单、input_required、上下文瘦身、鲁棒性）→ 0.2.6（手动中断通知、状态配色、Worker 提示词瘦身）→ 0.2.7（子会话折叠、柔光动效、按钮突出、提示词/恢复加固）→ 0.3.0（个人助理能力 bundle）→ 0.3.2（Worker 根会话化、blocked 系统受阻语义、默认 Lead 预设免手改）→ 0.3.3（DSH 0.2.1-rc.2 适配、移除 dsh-market）→ 0.3.4（记忆共享、settled 死代码清理、文档重写）→ 0.3.5（Worker 放开子智能体与后台任务）→ 0.3.6（标题更新/同主题复用/定时编排/定时标记）→ 0.3.7（模型选择透传、打开子会话寻址修复）→ 0.3.8（看板重构、task_update v2：report/progressNote/summary）→ 0.3.9（workspaceName 英文 slug 必填、mock 对齐）→ 0.3.10（dispatch 工具参数 DSL pattern 崩溃修复）→ 0.3.11（死字段 userAnswer/resultSummary/outlinePatch/cancelled 清理与数据迁移、outline 摘要写入简化、看板 API 文档）。
+- git log：0.2.0（background/单 Worker 预设）→ 0.2.1（路由追问兜底/改单 steer/blocked 提问）→ 0.2.2（todo 进度桥接看板）→ 0.2.3（interrupted 改单语义）→ 0.2.4（手动停止捕获、看板与话术精简）→ 0.2.5（白名单、input_required、上下文瘦身、鲁棒性）→ 0.2.6（手动中断通知、状态配色、Worker 提示词瘦身）→ 0.2.7（子会话折叠、柔光动效、按钮突出、提示词/恢复加固）→ 0.3.0（个人助理能力 bundle）→ 0.3.2（Worker 根会话化、blocked 系统受阻语义、默认 Lead 预设免手改）→ 0.3.3（DSH 0.2.1-rc.2 适配、移除 dsh-market）→ 0.3.4（记忆共享、settled 死代码清理、文档重写）→ 0.3.5（Worker 放开子智能体与后台任务）→ 0.3.6（标题更新/同主题复用/定时编排/定时标记）→ 0.3.7（模型选择透传、打开子会话寻址修复）→ 0.3.8（看板重构、task_update v2：report/progressNote/summary）→ 0.3.9（workspaceName 英文 slug 必填、mock 对齐）→ 0.3.10（dispatch 工具参数 DSL pattern 崩溃修复）→ 0.3.11（死字段 userAnswer/resultSummary/outlinePatch/cancelled 清理与数据迁移、outline 摘要写入简化、看板 API 文档）→ 0.3.12（Lead 白名单补 memory_read/update/home）→ 未发布（Lead 移除工具白名单；一事一会拆分、task_update title、用户待办清单、Worker 完全访问权限）。

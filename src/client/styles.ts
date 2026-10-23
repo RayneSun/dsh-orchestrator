@@ -13,11 +13,15 @@ export const CSS = `
 .dsho-chevron{flex:none;width:7px;height:7px;margin:0 2px 0 1px;border-right:1.5px solid var(--dsw-alias-label-tertiary);border-bottom:1.5px solid var(--dsw-alias-label-tertiary);transform:rotate(45deg) translateY(-1px);transition:transform .22s ease}
 .dsho-conv-collapsed .dsho-chevron{transform:rotate(-45deg) translateY(-1px)}
 .dsho-convTitle{min-width:0;flex:1;font-size:13px;font-weight:620;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-/* 折叠态摘要行 */
-.dsho-strip{display:flex;align-items:center;gap:8px;padding:0 13px 11px 26px;min-width:0}
-.dsho-strip .dsho-badge{flex:none}
-.dsho-stripText{flex:1;min-width:0;font-size:11px;line-height:1.5;color:var(--dsw-alias-label-secondary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+/* 折叠态摘要：第一行 badge + title + 时间，第二行 progressNote（运行中带扫光） */
+.dsho-strip{display:flex;flex-direction:column;gap:3px;padding:0 13px 11px 26px;min-width:0}
+.dsho-stripRow{display:flex;align-items:center;gap:8px;min-width:0}
+.dsho-stripRow .dsho-badge{flex:none}
+.dsho-stripTitle{flex:1;min-width:0;font-size:12px;font-weight:600;color:var(--dsw-alias-label-primary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .dsho-stripTime{flex:none;font-size:10px;color:var(--dsw-alias-label-tertiary)}
+.dsho-stripNote{font-size:11px;line-height:1.5;color:var(--dsw-alias-label-secondary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.dsho-stripNote-live{background:linear-gradient(90deg,var(--dsw-alias-label-primary) 30%,var(--dsho-brand) 50%,var(--dsw-alias-label-primary) 70%);background-size:200% 100%;-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent;animation:dsho-shimmer 1.8s linear infinite}
+@media (prefers-reduced-motion:reduce){.dsho-stripNote-live{animation:none;background:none;-webkit-text-fill-color:currentcolor}}
 /* 高度折叠动画（grid 0fr/1fr） */
 .dsho-body{display:grid;grid-template-rows:1fr;transition:grid-template-rows .24s ease}
 .dsho-conv-collapsed .dsho-body{grid-template-rows:0fr}
@@ -59,7 +63,7 @@ export const CSS = `
 .dsho-tag-silent{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-tertiary)}
 .dsho-tag-scheduled{background:color-mix(in srgb,var(--dsho-brand) 13%,transparent);color:var(--dsho-brand-ink)}
 .dsho-note{display:flex;gap:6px;align-items:baseline}
-.dsho-noteText{flex:1;min-width:0}
+.dsho-noteText{flex:1;min-width:0;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
 .dsho-note-live .dsho-noteText{background:linear-gradient(90deg,var(--dsw-alias-label-primary) 30%,var(--dsho-brand) 50%,var(--dsw-alias-label-primary) 70%);background-size:200% 100%;-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent;animation:dsho-shimmer 1.8s linear infinite}
 @keyframes dsho-shimmer{0%{background-position:120% 0}100%{background-position:-80% 0}}
 @media (prefers-reduced-motion:reduce){.dsho-note-live .dsho-noteText{animation:none;background:none;-webkit-text-fill-color:currentcolor}}
@@ -85,6 +89,25 @@ export const CSS = `
 .dsho-stepIcon{flex:none;width:14px;height:14px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;font-size:10px;border:1.5px solid var(--dsw-alias-border-l4)}
 .dsho-step-completed .dsho-stepIcon{background:color-mix(in srgb,var(--dsho-pos) 15%,transparent);color:var(--dsho-pos-ink);border-color:transparent}
 .dsho-step-in_progress .dsho-stepIcon{background:color-mix(in srgb,var(--dsho-brand) 15%,transparent);color:var(--dsho-brand-ink);border-color:transparent;animation:dsho-pulse 1.5s ease-in-out infinite}
+/* 用户待办框：折叠/展开都显示，位于工作区行上方 */
+.dsho-todos{margin:10px 13px 0;border:.5px solid var(--dsw-alias-border-l4);border-radius:10px;background:var(--dsw-alias-bg-layer-3);padding:6px 10px 8px}
+.dsho-conv-collapsed .dsho-todos{margin-top:0;margin-bottom:11px}
+.dsho-todosHead{display:flex;align-items:center;gap:6px;font-size:11px;font-weight:600;color:var(--dsw-alias-label-secondary);padding:2px 0 5px}
+.dsho-todosCount{font-weight:500;color:var(--dsw-alias-label-tertiary)}
+.dsho-todo{display:flex;align-items:flex-start;gap:8px;padding:5px 0;border-top:.5px dashed var(--dsw-alias-border-l2)}
+.dsho-todo:first-of-type{border-top:none}
+.dsho-todoCheck{flex:none;width:15px;height:15px;margin-top:1px;border-radius:50%;border:1.5px solid var(--dsw-alias-border-l4);background:var(--dsw-alias-bg-layer-2,#fff);display:inline-flex;align-items:center;justify-content:center;font-size:10px;color:transparent;cursor:pointer;padding:0;transition:border-color .15s}
+.dsho-todoCheck:hover{border-color:var(--dsho-pos)}
+.dsho-todo-done .dsho-todoCheck{background:color-mix(in srgb,var(--dsho-pos) 15%,transparent);border-color:transparent;color:var(--dsho-pos-ink)}
+.dsho-todoBody{flex:1;min-width:0;cursor:pointer}
+.dsho-todoLine{display:flex;align-items:baseline;gap:8px;min-width:0}
+.dsho-todoTitle{min-width:0;font-size:12px;font-weight:550;color:var(--dsw-alias-label-primary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.dsho-todo-done .dsho-todoTitle{color:var(--dsw-alias-label-tertiary);text-decoration:line-through;font-weight:400}
+.dsho-todoDue{flex:none;font-size:10px;color:var(--dsw-alias-label-tertiary);border:.5px solid var(--dsho-line);border-radius:999px;padding:0 7px;line-height:15px;background:var(--dsw-alias-bg-layer-2,#fff)}
+.dsho-todoDue-soon{color:var(--dsho-warn);border-color:color-mix(in srgb,var(--dsho-warn) 35%,transparent);background:color-mix(in srgb,var(--dsho-warn) 6%,transparent)}
+.dsho-todo-done .dsho-todoDue{opacity:.55;text-decoration:line-through}
+.dsho-todoDetail{display:none;font-size:11px;color:var(--dsw-alias-label-secondary);line-height:1.55;padding:3px 0 1px;white-space:pre-wrap}
+.dsho-todo-open .dsho-todoDetail{display:block}
 `
 export function adoptStyles(): void {
   if (typeof document === 'undefined' || document.getElementById(STYLE_ID)) return

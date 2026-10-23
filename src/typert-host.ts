@@ -15,6 +15,11 @@ export const TYPERT = {
         name: 'snapshot',
         signature: 'snapshot(request: SnapshotRequest): Promise<Snapshot>',
         tags: [],
+      }, {
+        kind: 'method' as const,
+        name: 'setTodoStatus',
+        signature: 'setTodoStatus(request: SetTodoStatusRequest): Promise<SetTodoStatusResult>',
+        tags: [],
       }],
       types: [],
     }],

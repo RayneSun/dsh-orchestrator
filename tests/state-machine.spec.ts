@@ -85,6 +85,19 @@ describe('任务状态机', () => {
   })
 })
 
+describe('task_update title', () => {
+  it('title 随状态迁移更新，未提供时保留旧值', () => {
+    const conv = createConversation({ id: 'c1', childSessionId: 's1', parentSessionId: 'p1', title: 't' })
+    let task = createTask({ id: 't1', parentSessionId: 'p1', conversationId: conv.id, predecessorTaskId: null, subject: 's', prompt: 'p' })
+    task = transitionTask(task, { status: 'running', title: '开始抓取' })
+    expect(task.title).toBe('开始抓取')
+    task = transitionTask(task, { status: 'running', progressNote: '抓到一半' })
+    expect(task.title).toBe('开始抓取')
+    task = transitionTask(task, { status: 'completed', title: '抓取完成', report: { result: '答案' } })
+    expect(task.title).toBe('抓取完成')
+  })
+})
+
 describe('状态迁移和修订号', () => {
   it('input_required 必须带问题，failed/blocked 必须带 error', () => {
     const queued = bgTask()

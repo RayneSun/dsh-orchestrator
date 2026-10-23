@@ -1,4 +1,6 @@
 import { describe, expect, it } from 'vitest'
+import { deliveryNotice } from '../src/messages.ts'
+import { createConversation, createTask, type ConversationRecord, type TaskRecord } from '../src/types.ts'
 import { LEAD_PROMPT, rosterSummarySegment, WORKER_PROMPT } from '../src/messages.ts'
 
 describe('roster 摘要段', () => {
@@ -14,11 +16,41 @@ describe('roster 摘要段', () => {
   })
 })
 
+describe('deliveryNotice 用户待办段', () => {
+  const baseTask = (): TaskRecord => ({
+    ...createTask({ id: 't1', parentSessionId: 'p1', conversationId: 'c1', predecessorTaskId: null, subject: '查距离', prompt: 'p' }),
+    status: 'completed',
+    report: { result: '安贞最近' },
+  })
+
+  it('有待办时附带 pending 清单与代办指引；无待办不带该段', () => {
+    const conv: ConversationRecord = {
+      ...createConversation({ id: 'c1', childSessionId: 's1', parentSessionId: 'p1', title: '体检' }),
+      todos: [{
+        id: 'todo_1', title: '拨打预约电话', detail: '工作日 8:00-17:00', dueDate: '2026-10-27',
+        status: 'pending', createdAt: '2026-10-23T00:00:00Z', updatedAt: '2026-10-23T00:00:00Z',
+      }, {
+        id: 'todo_2', title: '已完成事项', status: 'done', completedBy: 'user',
+        createdAt: '2026-10-23T00:00:00Z', updatedAt: '2026-10-23T00:00:00Z',
+      }],
+    }
+    const text = deliveryNotice(baseTask(), conv)
+    expect(text).toContain('用户待办')
+    expect(text).toContain('[todo_1] 拨打预约电话')
+    expect(text).toContain('截止 2026-10-27')
+    expect(text).toContain('todoUpdates')
+    expect(text).not.toContain('todo_2')
+    const without = deliveryNotice(baseTask(), { ...conv, todos: [] })
+    expect(without).not.toContain('用户待办')
+  })
+})
+
 describe('prompt 编排约定', () => {
-  it('Lead prompt 约定定时任务编排与 subject 改名', () => {
+  it('Lead prompt 约定一事一会、定时任务编排与 subject 改名', () => {
     expect(LEAD_PROMPT).toContain('schedule_create 绑定它自己的会话')
     expect(LEAD_PROMPT).toContain('subject 写成新主题')
-    expect(LEAD_PROMPT).toContain('优先复用其 conversationId')
+    expect(LEAD_PROMPT).toContain('一事一会')
+    expect(LEAD_PROMPT).toContain('复用它的 conversationId')
   })
 
   it('Worker prompt 约定 progressNote 拟人化幽默风格', () => {

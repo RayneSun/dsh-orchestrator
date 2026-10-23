@@ -164,6 +164,51 @@ describe('工具输入 Zod 校验', () => {
 
 })
 
+describe('task_update 待办与标题协议', () => {
+  it('title 全状态可选，≤30 字；超长拒绝', () => {
+    for (const status of ['running', 'input_required', 'blocked', 'completed', 'failed'] as const) {
+      const base: Record<string, unknown> = { status, title: '已查到 3 家距离' }
+      if (status === 'completed') base.report = { result: '答案' }
+      if (status === 'failed' || status === 'blocked') base.error = '原因'
+      if (status === 'input_required') base.question = '问题'
+      const ok = taskUpdateInputSchema.safeParse(base)
+      expect(ok.success).toBe(true)
+      const tooLong = taskUpdateInputSchema.safeParse({ ...base, title: 'x'.repeat(31) })
+      expect(tooLong.success).toBe(false)
+    }
+  })
+
+  it('report.todos 接受 title/detail/dueDate；dueDate 必须 YYYY-MM-DD', () => {
+    const ok = taskUpdateInputSchema.safeParse({
+      status: 'completed',
+      report: { result: '答案', todos: [{ title: '去购买火车票', detail: 'G123 二等座', dueDate: '2026-10-25' }] },
+    })
+    expect(ok.success).toBe(true)
+    for (const bad of ['明天', '2026/10/25', '10-25']) {
+      const parsed = taskUpdateInputSchema.safeParse({
+        status: 'completed',
+        report: { result: '答案', todos: [{ title: 'x', dueDate: bad }] },
+      })
+      expect(parsed.success).toBe(false)
+    }
+  })
+
+  it('todoUpdates 全状态允许；title 是状态无关的待办字段', () => {
+    const parsed = taskUpdateInputSchema.safeParse({
+      status: 'running',
+      todoUpdates: [{ id: 'todo_1', status: 'done' }, { id: 'todo_2', title: '改标题', detail: 'd', dueDate: '2026-11-01' }],
+    })
+    expect(parsed.success).toBe(true)
+  })
+
+  it('旧会话记录无 todos 字段时默认空清单', () => {
+    const conv = createConversation({ id: 'c1', childSessionId: 's1', parentSessionId: 'p1', title: 't' })
+    const { todos, ...legacy } = conv
+    const parsed = conversationSchema.parse(legacy)
+    expect(parsed.todos).toEqual([])
+  })
+})
+
 describe('旧版本存储记录迁移', () => {
   const baseTask = {
     id: 'task_1', parentSessionId: 'p', conversationId: 'c', predecessorTaskId: null,

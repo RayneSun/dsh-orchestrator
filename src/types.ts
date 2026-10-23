@@ -16,15 +16,50 @@ const trimmed = z.string().trim().min(1)
 export const taskUpdateStatuses = ['running', 'input_required', 'blocked', 'completed', 'failed'] as const
 
 export const taskUpdateFieldAllowList: Record<(typeof taskUpdateStatuses)[number], readonly string[]> = {
-  running: ['progressNote', 'summary'],
-  input_required: ['progressNote', 'question', 'summary'],
-  blocked: ['progressNote', 'error', 'reasonCode', 'remediation', 'summary'],
-  completed: ['progressNote', 'report', 'summary'],
-  failed: ['progressNote', 'error', 'summary'],
+  running: ['title', 'progressNote', 'summary', 'todoUpdates'],
+  input_required: ['title', 'progressNote', 'question', 'summary', 'todoUpdates'],
+  blocked: ['title', 'progressNote', 'error', 'reasonCode', 'remediation', 'summary', 'todoUpdates'],
+  completed: ['title', 'progressNote', 'report', 'summary', 'todoUpdates'],
+  failed: ['title', 'progressNote', 'error', 'summary', 'todoUpdates'],
 }
 
 const trimmedList = z.array(trimmed).max(50)
 const now = () => new Date().toISOString()
+
+/** 严格日期：YYYY-MM-DD。 */
+const dueDateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'dueDate 必须是 YYYY-MM-DD 格式')
+
+/** 子会话提出的用户待办（report.todos 元素）：需要用户本人推进的事。 */
+export const newTodoSchema = z.object({
+  title: trimmed.max(30),
+  detail: z.string().trim().max(2_000).optional(),
+  dueDate: dueDateSchema.optional(),
+}).strict()
+export type NewTodo = z.infer<typeof newTodoSchema>
+
+/** 持久化的用户待办：属于会话级清单，用户与子会话双向画勾。 */
+export const userTodoSchema = z.object({
+  id: trimmed,
+  title: trimmed.max(30),
+  detail: z.string().trim().max(2_000).optional(),
+  dueDate: dueDateSchema.optional(),
+  status: z.enum(['pending', 'done']).default('pending'),
+  completedBy: z.enum(['user', 'worker']).optional(),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+  completedAt: z.string().optional(),
+}).strict()
+export type UserTodo = z.infer<typeof userTodoSchema>
+
+/** task_update 最外层的待办更新：按 id 标 done 或改内容。 */
+export const todoUpdateSchema = z.object({
+  id: trimmed,
+  status: z.enum(['pending', 'done']).optional(),
+  title: trimmed.max(30).optional(),
+  detail: z.string().trim().max(2_000).optional(),
+  dueDate: dueDateSchema.optional(),
+}).strict()
+export type TodoUpdate = z.infer<typeof todoUpdateSchema>
 
 export const progressStepSchema = z.object({
   content: z.string().trim().min(1).max(300),
@@ -67,6 +102,7 @@ const artifactPath = z.string().trim().min(1).max(500).refine(
 export const reportSchema = z.object({
   result: trimmed.max(50_000),
   artifacts: z.array(artifactPath).max(20).optional(),
+  todos: z.array(newTodoSchema).max(20).optional(),
 }).strict()
 export type TaskReport = z.infer<typeof reportSchema>
 
@@ -78,6 +114,7 @@ const baseConversationSchema = z.object({
   workspaceName: z.string().trim().min(1).max(100).optional(),
   workspaceDir: z.string().trim().min(1).optional(),
   outline: outlineSchema,
+  todos: z.array(userTodoSchema).default([]),
   activeTaskId: z.string().nullable().default(null),
   lastTaskId: z.string().nullable().default(null),
   state: z.enum(conversationStates).default('provisioning'),
@@ -97,6 +134,8 @@ const baseTaskSchema = z.object({
   prompt: trimmed,
   acceptanceCriteria: z.string().optional(),
   status: z.enum(taskStatuses).default('queued'),
+  /** 极简状态标题（手机端/折叠态展示），progressNote 的压缩版。 */
+  title: z.string().optional(),
   progressNote: z.string().optional(),
   error: z.string().optional(),
   question: z.string().optional(),
@@ -186,6 +225,7 @@ export function createConversation(input: {
   return {
     ...input,
     outline: emptyOutline(),
+    todos: [],
     activeTaskId: null,
     lastTaskId: null,
     state: 'provisioning',
@@ -248,6 +288,7 @@ export const dispatchInputSchema = z.object({
 
 export const taskUpdateInputSchema = z.object({
   status: z.enum(taskUpdateStatuses),
+  title: trimmed.max(30).optional(),
   progressNote: trimmed.max(500).optional(),
   summary: trimmed.max(300).optional(),
   report: reportSchema.optional(),
@@ -255,6 +296,7 @@ export const taskUpdateInputSchema = z.object({
   question: trimmed.max(5_000).optional(),
   reasonCode: z.enum(blockReasonCodes).optional(),
   remediation: trimmed.max(5_000).optional(),
+  todoUpdates: z.array(todoUpdateSchema).max(50).optional(),
 }).strict().superRefine((value, ctx) => {
   if (value.status === 'completed' && !value.report) {
     ctx.addIssue({ code: 'custom', path: ['report'], message: 'completed task_update requires report' })

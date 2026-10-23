@@ -277,6 +277,30 @@ export class OrchestratorService extends TypertRemoteService {
     return this.snapshotFor(request.parentSessionId)
   }
 
+  /** 看板用户画勾/取消画勾待办；持久化并驱动看板刷新。 */
+  async setTodoStatus(request: { todoId: string, status: 'pending' | 'done' }): Promise<{ ok: true }> {
+    await this.ready
+    await this.serialize(async () => {
+      for (const [, conv] of this.conversations().entries()) {
+        if (!conv.todos.some(todo => todo.id === request.todoId)) continue
+        const now = timestamp()
+        const todos = conv.todos.map(todo => todo.id === request.todoId
+          ? {
+              ...todo,
+              status: request.status,
+              completedBy: request.status === 'done' ? 'user' as const : undefined,
+              completedAt: request.status === 'done' ? now : undefined,
+              updatedAt: now,
+            }
+          : todo)
+        await this.putPair({ ...conv, todos, updatedAt: now })
+        return
+      }
+      throw new Error(`todo not found: ${request.todoId}`)
+    })
+    return { ok: true as const }
+  }
+
   private conversationById(id: string): ConversationRecord | undefined {
     return this.conversations().get(id)
   }
@@ -369,6 +393,14 @@ export class OrchestratorService extends TypertRemoteService {
 
   private async configureWorker(agent: Agent, conv: ConversationRecord): Promise<void> {
     await this.resetInstalled(String(agent.session.id))
+    // Worker 切换为完全访问权限（沙箱全开放 + 审批 never）：后台执行无人值守，
+    // 默认 workspace-write+ask 会让敏感操作停在审批上永远等不到人。
+    // 该选择按会话持久化（sandbox/mode 与 approval/policy 事件），重复调用为 no-op；Lead 不受影响。
+    try {
+      ;(this.hostCtx as any).permissionPresets?.set(agent.session, 'danger-full-access')
+    } catch (error) {
+      this.hostCtx.logger.warn(`orchestrator: worker permission preset unavailable: ${String(error)}`)
+    }
     const wanted = WORKER_PRESET
     try {
       if (this.composedPreset(agent) !== wanted) await this.hostCtx.agentPresets.select(agent, wanted)
@@ -569,12 +601,20 @@ export class OrchestratorService extends TypertRemoteService {
               ...task.error ? { error: task.error } : {},
               updatedAt: task.updatedAt,
             }))
+          const todos = conv.todos.map(todo => ({
+            id: todo.id,
+            title: todo.title,
+            status: todo.status,
+            ...todo.detail ? { detail: todo.detail } : {},
+            ...todo.dueDate ? { dueDate: todo.dueDate } : {},
+          }))
           return toJson({
             title: conv.title,
             state: conv.state,
             createdAt: conv.createdAt,
             updatedAt: conv.updatedAt,
             outline: { summary: conv.outline.summary },
+            todos,
             tasks,
           })
         },
@@ -898,6 +938,48 @@ export class OrchestratorService extends TypertRemoteService {
   }
 
 
+  /**
+   * 应用 task_update 的待办变更：report.todos 追加新待办（Host 分配 id），
+   * todoUpdates 按 id 更新；未知 id 抛错（在持久化前，不产生部分写入）。
+   */
+  private applyTodoChanges(conv: ConversationRecord, args: TaskUpdateInput): ConversationRecord {
+    const now = timestamp()
+    let todos = conv.todos
+    for (const input of args.report?.todos ?? []) {
+      todos = [...todos, {
+        id: createId('todo'),
+        title: input.title,
+        ...input.detail !== undefined ? { detail: input.detail } : {},
+        ...input.dueDate !== undefined ? { dueDate: input.dueDate } : {},
+        status: 'pending' as const,
+        createdAt: now,
+        updatedAt: now,
+      }]
+    }
+    for (const update of args.todoUpdates ?? []) {
+      if (!todos.some(todo => todo.id === update.id)) {
+        throw new Error(`todo not found in this conversation: ${update.id}`)
+      }
+      todos = todos.map(todo => todo.id === update.id
+        ? {
+            ...todo,
+            ...update.title !== undefined ? { title: update.title } : {},
+            ...update.detail !== undefined ? { detail: update.detail } : {},
+            ...update.dueDate !== undefined ? { dueDate: update.dueDate } : {},
+            ...update.status !== undefined
+              ? {
+                  status: update.status,
+                  completedBy: update.status === 'done' ? 'worker' as const : undefined,
+                  completedAt: update.status === 'done' ? now : undefined,
+                }
+              : {},
+            updatedAt: now,
+          }
+        : todo)
+    }
+    return todos === conv.todos ? conv : { ...conv, todos, updatedAt: now }
+  }
+
   private async updateFromWorker(rawArgs: unknown, childSessionId: string): Promise<any> {
     const parsed = taskUpdateInputSchema.safeParse(rawArgs)
     if (!parsed.success) throw new Error(parsed.error.issues[0]?.message ?? 'invalid task_update arguments')
@@ -925,7 +1007,8 @@ export class OrchestratorService extends TypertRemoteService {
         // 定时触发的入站消息带 source.kind='schedule'，据此给上报任务打 ⏰ 标记（仅显示用）。
         const marked = this.lastInboundSource.get(childSessionId) === 'schedule'
         const task = transitionTask({ ...seeded, status: 'running', startedAt: seeded.createdAt, ...marked ? { scheduled: true } : {} }, args)
-        const patched = args.summary ? updateOutlineSummary(conv, args.summary) : conv
+        const outlined = args.summary ? updateOutlineSummary(conv, args.summary) : conv
+        const patched = this.applyTodoChanges(outlined, args)
         await this.putPair(settleConversation(patched, task), task)
         terminalTaskId = task.id
         shouldDeliver = task.delivery?.state === 'pending'
@@ -936,7 +1019,8 @@ export class OrchestratorService extends TypertRemoteService {
 
       const task = transitionTask(previous, args)
       const terminal = (deliverableTaskStatuses as readonly string[]).includes(task.status)
-      const patched = args.summary ? updateOutlineSummary(conv, args.summary) : conv
+      const outlined = args.summary ? updateOutlineSummary(conv, args.summary) : conv
+      const patched = this.applyTodoChanges(outlined, args)
       // running 只更新路由卡，不能释放 activeTaskId；终态才 settle。
       const nextConv = terminal ? settleConversation(patched, task) : patched
       await this.putPair(nextConv, task)
@@ -1008,7 +1092,7 @@ export class OrchestratorService extends TypertRemoteService {
         const resolved = await this.hostCtx.sessionController.resolveAgent(task.parentSessionId as SessionId)
         if ('error' in resolved) throw resolved.error
         const message = createUserMessage({
-          content: [{ type: 'text', text: deliveryNotice(task, this.conversationById(task.conversationId)?.workspaceName) }],
+          content: [{ type: 'text', text: deliveryNotice(task, this.conversationById(task.conversationId)) }],
           source: { kind: 'orchestrator', form: 'notice', summary: `orchestrator ${task.status}: ${task.subject}`.slice(0, 120) },
         })
         resolved.agent.followup(message)

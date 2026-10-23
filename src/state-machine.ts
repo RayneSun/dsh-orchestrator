@@ -110,6 +110,7 @@ function withTerminalDelivery(task: TaskRecord, status: TaskStatus): TaskRecord[
 
 export interface TaskTransitionInput {
   status: Extract<TaskStatus, 'running' | 'input_required' | 'blocked' | 'completed' | 'failed'>
+  title?: string
   progressNote?: string
   summary?: string
   report?: TaskReport
@@ -148,6 +149,7 @@ export function transitionTask(task: TaskRecord, input: TaskTransitionInput, at 
   return {
     ...touch(task, at),
     status: input.status,
+    title: input.title ?? task.title,
     progressNote: input.progressNote ?? task.progressNote,
     report: isCompleted ? (input.report ?? task.report) : undefined,
     error: isBlocked || isFailed ? (input.error ?? task.error) : undefined,
