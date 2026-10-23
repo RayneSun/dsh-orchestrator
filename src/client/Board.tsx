@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { activeTaskStatuses } from '../types.ts'
 import type { ConversationRecord, ProgressStep, Snapshot, TaskRecord, UserTodo } from '../types.ts'
 
 interface BoardProps {
@@ -62,7 +63,6 @@ function tabSessionId(useTabInfo?: BoardProps['useTabInfo']): string | undefined
   }
 }
 
-const ACTIVE_TASK_STATUSES = ['queued', 'running']
 
 const taskStatusLabels: Record<string, string> = {
   queued: '排队中', running: '进行中', input_required: '待操作', blocked: '已受阻', completed: '已完成',
@@ -151,6 +151,16 @@ function StepList({ steps }: { steps: ProgressStep[] }): React.ReactElement | nu
   </ul>
 }
 
+/** 任务行头：状态 badge + 静默/定时标识 + 主题；interrupted 的简化行与普通行共用。 */
+function TaskHead({ task }: { task: TaskRecord }): React.ReactElement {
+  return <div className="dsho-taskHead">
+    <span className={`dsho-badge dsho-badge-${task.status}`}>{taskStatusLabels[task.status] ?? task.status}</span>
+    {task.silent && <TagChip kind="silent" title="静默：终态不通知主会话" />}
+    {task.scheduled && <TagChip kind="scheduled" title="定时触发：由定时任务自动执行" />}
+    <span className="dsho-taskSubject" title={task.subject}>{task.subject}</span>
+  </div>
+}
+
 interface TaskLineProps {
   task: TaskRecord
   conv: ConversationRecord
@@ -160,7 +170,7 @@ interface TaskLineProps {
 
 function TaskLine({ task, conv, nowMs, onOpenArtifact }: TaskLineProps): React.ReactElement {
   const [expanded, setExpanded] = useState(false)
-  const running = (ACTIVE_TASK_STATUSES as string[]).includes(task.status)
+  const running = (activeTaskStatuses as readonly string[]).includes(task.status)
   const result = task.report?.result
   const artifacts = task.report?.artifacts ?? []
   const live = running && !task.endedAt
@@ -192,24 +202,14 @@ function TaskLine({ task, conv, nowMs, onOpenArtifact }: TaskLineProps): React.R
 
   if (task.status === 'interrupted') {
     return <li className="dsho-task dsho-taskMuted">
-      <div className="dsho-taskHead">
-        <span className={`dsho-badge dsho-badge-${task.status}`}>{taskStatusLabels[task.status] ?? task.status}</span>
-        {task.silent && <TagChip kind="silent" title="静默：终态不通知主会话" />}
-        {task.scheduled && <TagChip kind="scheduled" title="定时触发：由定时任务自动执行" />}
-        <span className="dsho-taskSubject" title={task.subject}>{task.subject}</span>
-      </div>
+      <TaskHead task={task} />
       {task.cancelledReason && <p className="dsho-subtle">{task.cancelledReason}</p>}
       <div className="dsho-taskFoot"><span>创建 {time(task.createdAt)}</span>{duration && <span className="dsho-dur">{duration}</span>}</div>
     </li>
   }
 
   return <li className="dsho-task">
-    <div className="dsho-taskHead">
-      <span className={`dsho-badge dsho-badge-${task.status}`}>{taskStatusLabels[task.status] ?? task.status}</span>
-      {task.silent && <TagChip kind="silent" title="静默：终态不通知主会话" />}
-      {task.scheduled && <TagChip kind="scheduled" title="定时触发：由定时任务自动执行" />}
-      <span className="dsho-taskSubject" title={task.subject}>{task.subject}</span>
-    </div>
+    <TaskHead task={task} />
     <StepList steps={task.progressSteps ?? []} />
     {(task.title || task.progressNote || detailSections.length > 0) && <div className={`dsho-note${live ? ' dsho-note-live' : ''}`}>
       {task.title && <><span className="dsho-noteTitle">{task.title}</span><span className="dsho-noteSep">:</span></>}
@@ -340,7 +340,7 @@ export function Board({ sessionId: propSessionId, useTabInfo, orchestrator, remo
       const latest = tasks[tasks.length - 1]
       const silentConv = isSilentConversation(conv.id)
       const active = conv.state === 'running' || conv.state === 'provisioning'
-        || tasks.some(task => (ACTIVE_TASK_STATUSES as string[]).includes(task.status))
+        || tasks.some(task => (activeTaskStatuses as readonly string[]).includes(task.status))
       const displayState = conv.state === 'idle' && latest?.status === 'blocked' ? 'blocked' : conv.state
       const collapsed = collapsedOverride[conv.id] ?? !active
       const rawHeadline = latest ? taskHeadline(latest) : ''
@@ -383,7 +383,7 @@ export function Board({ sessionId: propSessionId, useTabInfo, orchestrator, remo
             <span className="dsho-stripTitle" title={latest.title ?? headline}>{latest.title ?? headline}</span>
             <span className="dsho-stripTime">{time(latest.updatedAt ?? conv.updatedAt)}</span>
           </div>
-          {latest.progressNote && <div className={`dsho-stripNote${(ACTIVE_TASK_STATUSES as string[]).includes(latest.status) && !latest.endedAt ? ' dsho-stripNote-live' : ''}`} title={latest.progressNote}>{latest.progressNote}</div>}
+          {latest.progressNote && <div className={`dsho-stripNote${(activeTaskStatuses as readonly string[]).includes(latest.status) && !latest.endedAt ? ' dsho-stripNote-live' : ''}`} title={latest.progressNote}>{latest.progressNote}</div>}
         </div>}
         {conv.todos.length > 0 && <TodoList todos={conv.todos} onToggle={toggleTodo} />}
         <div className="dsho-body"><div>

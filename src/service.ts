@@ -75,7 +75,6 @@ type DispatchProvision =
   | { ok: true; conv: ConversationRecord; task: TaskRecord }
   | { ok: false; result: unknown }
 
-/** Worker 子会话用空 section 遮蔽的全局系统提示段（同名 scoped section shadow 全局）。 */
 /** schedule/changed 在任务创建/更新、删除、投递时都会触发，合并后再核对，避免每轮触发都全量 list。 */
 const SCHEDULE_SYNC_DEBOUNCE_MS = 500
 
@@ -92,6 +91,7 @@ interface SessionProjectionsLike {
 interface AgentDefaultModelLike {
   currentSelection(): ModelSelectionLike
 }
+/** Worker 子会话用空 section 遮蔽的全局系统提示段（同名 scoped section shadow 全局）。 */
 const WORKER_SUPPRESSED_SECTIONS = ['harness:source', 'app:web-surface', 'ui:deliverable-file-references'] as const
 const RECOVERY_INTERVAL_MS = 15_000
 const REVISION_GUARD_MS = 120_000
@@ -110,6 +110,17 @@ function isSessionNotFoundError(error: unknown): boolean {
 const sharedJsonOutput = {
   schema: { type: 'json' as const },
   render: (_args: unknown, value: unknown) => [{ type: 'text' as const, text: JSON.stringify(value) }],
+}
+
+/** dispatch 入参 -> TaskRecord：新建与复用分支共用，避免验收/静默样板双写。 */
+function buildTask(args: DispatchInput, ids: { id: string; parentSessionId: string; conversationId: string; predecessorTaskId: string | null }): TaskRecord {
+  return createTask({
+    ...ids,
+    subject: args.subject,
+    prompt: args.prompt,
+    ...args.acceptanceCriteria ? { acceptanceCriteria: args.acceptanceCriteria } : {},
+    ...args.silent ? { silent: true } : {},
+  })
 }
 
 function formatRosterTime(value: string): string {
@@ -546,7 +557,7 @@ export class OrchestratorService extends TypertRemoteService {
         createdAt: conv.createdAt,
         updatedAt: conv.updatedAt,
         ...active ? { active: active.subject } : {},
-        ...last && !active ? { lastStatus: last.status, lastResult: last.report?.result } : {},
+        ...last && !active ? { lastStatus: last.status, lastResult: last.report?.result?.slice(0, 240) } : {},
       }
     })
   }
@@ -654,15 +665,11 @@ export class OrchestratorService extends TypertRemoteService {
         }
       }
 
-      task = createTask({
+      task = buildTask(args, {
         id: createId('task'),
         parentSessionId,
         conversationId: existing.id,
         predecessorTaskId: existing.lastTaskId,
-        subject: args.subject,
-        prompt: args.prompt,
-        ...args.acceptanceCriteria ? { acceptanceCriteria: args.acceptanceCriteria } : {},
-        ...args.silent ? { silent: true } : {},
       })
       conv = interruptedTaskId
         ? reviseConversation(existing, task.id, at)
@@ -719,16 +726,7 @@ export class OrchestratorService extends TypertRemoteService {
         workspaceDir: workspace.dir,
       })
       conv = { ...provisional, activeTaskId: taskId, lastTaskId: taskId }
-      task = createTask({
-        id: taskId,
-        parentSessionId,
-        conversationId,
-        predecessorTaskId: null,
-        subject: args.subject,
-        prompt: args.prompt,
-        ...args.acceptanceCriteria ? { acceptanceCriteria: args.acceptanceCriteria } : {},
-        ...args.silent ? { silent: true } : {},
-      })
+      task = buildTask(args, { id: taskId, parentSessionId, conversationId, predecessorTaskId: null })
       await this.putPair(conv, task)
       try {
         await this.createWorkerAgent(childSessionId, workspace.dir, parent, conv.title)
@@ -758,6 +756,15 @@ export class OrchestratorService extends TypertRemoteService {
    * 记忆库共享：把 Worker 工作区的 .dsh-meow 链接到主工作区，Lead 与全部 Worker 共用
    * 同一份 meow-memory 长期记忆。失败（如 Windows 无 symlink 权限）降级为独立记忆，仅告警。
    */
+  /** 在 withoutInitiator 上下文里解析并操作一个会话 Agent；解析失败直接抛出。 */
+  private async withAgent<T>(sessionId: string, work: (agent: Agent) => T | Promise<T>): Promise<T> {
+    return this.hostCtx.agents.withoutInitiator(async () => {
+      const resolved = await this.hostCtx.sessionController.resolveAgent(sessionId as SessionId)
+      if ('error' in resolved) throw resolved.error
+      return work(resolved.agent)
+    })
+  }
+
   private async shareMemoryWithRoot(workspaceDir: string, rootCwd: string): Promise<void> {
     try {
       await ensureSharedMemoryLink(workspaceDir, rootCwd)
@@ -814,11 +821,7 @@ export class OrchestratorService extends TypertRemoteService {
     const desired = applyScheduleMark(conv.title, this.scheduleMarks.get(childSessionId) ?? false)
     if (this.syncedTitles.get(childSessionId) === desired) return
     try {
-      await this.hostCtx.agents.withoutInitiator(async () => {
-        const resolved = await this.hostCtx.sessionController.resolveAgent(childSessionId as SessionId)
-        if ('error' in resolved) throw resolved.error
-        this.hostCtx.sessionTitle.rename(resolved.agent.session, desired)
-      })
+      await this.withAgent(childSessionId, agent => this.hostCtx.sessionTitle.rename(agent.session, desired))
       this.syncedTitles.set(childSessionId, desired)
     } catch (error) {
       this.hostCtx.logger.warn(`orchestrator: rename worker session failed: ${String(error)}`)
@@ -898,26 +901,20 @@ export class OrchestratorService extends TypertRemoteService {
    * 与 dsh-schedule 的提醒投递是同一机制。
    */
   private async deliverToWorker(childSessionId: string, text: string, summary: string): Promise<void> {
-    await this.hostCtx.agents.withoutInitiator(async () => {
-      const resolved = await this.hostCtx.sessionController.resolveAgent(childSessionId as SessionId)
-      if ('error' in resolved) throw resolved.error
+    await this.withAgent(childSessionId, async (agent) => {
       const message = createUserMessage({
         content: [{ type: 'text', text }],
         source: { kind: 'orchestrator', form: 'notice', summary: summary.slice(0, 120) },
       })
-      resolved.agent.followup(message)
-      const flushed = await this.hostCtx.sessions.flush(resolved.agent.session)
+      agent.followup(message)
+      const flushed = await this.hostCtx.sessions.flush(agent.session)
       if (!flushed) throw new Error('Session persistence did not acknowledge orchestrator worker prompt')
     })
   }
 
   /** 取消 Worker 当前轮次（改单前置）：原因记为 parent，turn/end 据此归类为 revision。 */
   private async interruptWorker(childSessionId: string): Promise<void> {
-    await this.hostCtx.agents.withoutInitiator(async () => {
-      const resolved = await this.hostCtx.sessionController.resolveAgent(childSessionId as SessionId)
-      if ('error' in resolved) throw resolved.error
-      resolved.agent.cancel({ kind: 'parent' })
-    })
+    await this.withAgent(childSessionId, agent => agent.cancel({ kind: 'parent' }))
   }
 
   private async failLaunch(conv: ConversationRecord, task: TaskRecord, error: unknown): Promise<unknown> {
@@ -935,6 +932,12 @@ export class OrchestratorService extends TypertRemoteService {
    * 应用 task_update 的待办变更：report.todos 追加新待办（Host 分配 id），
    * todoUpdates 按 id 更新；未知 id 抛错（在持久化前，不产生部分写入）。
    */
+  /** task_update 的会话级副作用：summary 更新路由卡摘要，report.todos/todoUpdates 更新待办。 */
+  private applyUpdateSideEffects(conv: ConversationRecord, args: TaskUpdateInput): ConversationRecord {
+    const outlined = args.summary ? updateOutlineSummary(conv, args.summary) : conv
+    return this.applyTodoChanges(outlined, args)
+  }
+
   private applyTodoChanges(conv: ConversationRecord, args: TaskUpdateInput): ConversationRecord {
     const now = timestamp()
     let todos = conv.todos
@@ -1000,8 +1003,7 @@ export class OrchestratorService extends TypertRemoteService {
         // 定时触发的入站消息带 source.kind='schedule'，据此给上报任务打 ⏰ 标记（仅显示用）。
         const marked = this.lastInboundSource.get(childSessionId) === 'schedule'
         const task = transitionTask({ ...seeded, status: 'running', startedAt: seeded.createdAt, ...marked ? { scheduled: true } : {} }, args)
-        const outlined = args.summary ? updateOutlineSummary(conv, args.summary) : conv
-        const patched = this.applyTodoChanges(outlined, args)
+        const patched = this.applyUpdateSideEffects(conv, args)
         await this.putPair(settleConversation(patched, task), task)
         terminalTaskId = task.id
         shouldDeliver = task.delivery?.state === 'pending'
@@ -1012,8 +1014,7 @@ export class OrchestratorService extends TypertRemoteService {
 
       const task = transitionTask(previous, args)
       const terminal = (deliverableTaskStatuses as readonly string[]).includes(task.status)
-      const outlined = args.summary ? updateOutlineSummary(conv, args.summary) : conv
-      const patched = this.applyTodoChanges(outlined, args)
+      const patched = this.applyUpdateSideEffects(conv, args)
       // running 只更新路由卡，不能释放 activeTaskId；终态才 settle。
       const nextConv = terminal ? settleConversation(patched, task) : patched
       await this.putPair(nextConv, task)
@@ -1065,13 +1066,25 @@ export class OrchestratorService extends TypertRemoteService {
       await this.putPair(nextConv, task)
       taskId = task.id
     })
-    if (outcome === 'manual_stop') {
-      this.hostCtx.logger.info?.(`orchestrator: task ${taskId} interrupted by manual stop: ${childSessionId}`)
-    }
-    if (outcome === 'revision') {
-      this.hostCtx.logger.info?.(`orchestrator: task ${taskId} interrupted by revision: ${childSessionId}`)
+    if (outcome === 'manual_stop' || outcome === 'revision') {
+      this.hostCtx.logger.info?.(`orchestrator: task ${taskId} interrupted by ${outcome}: ${childSessionId}`)
     }
     if (shouldDeliver && taskId) await this.deliverPendingTask(taskId)
+  }
+
+  /** 串行回写任务的投递状态（成功 delivered / 失败 attempts+1），看板经 changed 事件刷新。 */
+  private async patchDelivery(taskId: string, delivery: (current: TaskRecord) => TaskRecord['delivery']): Promise<void> {
+    await this.serialize(async () => {
+      const current = this.taskById(taskId)
+      if (!current) return
+      await this.tasks().put(taskId, {
+        ...current,
+        revision: current.revision + 1,
+        updatedAt: timestamp(),
+        delivery: delivery(current),
+      })
+      this.emitChanged()
+    })
   }
 
   private async deliverPendingTask(taskId: string): Promise<void> {
@@ -1081,43 +1094,21 @@ export class OrchestratorService extends TypertRemoteService {
     if (!(deliverableTaskStatuses as readonly string[]).includes(task.status)) return
     this.delivering.add(taskId)
     try {
-      await this.hostCtx.agents.withoutInitiator(async () => {
-        const resolved = await this.hostCtx.sessionController.resolveAgent(task.parentSessionId as SessionId)
-        if ('error' in resolved) throw resolved.error
+      await this.withAgent(task.parentSessionId, async (agent) => {
         const message = createUserMessage({
           content: [{ type: 'text', text: deliveryNotice(task, this.conversationById(task.conversationId)) }],
           source: { kind: 'orchestrator', form: 'notice', summary: `orchestrator ${task.status}: ${task.subject}`.slice(0, 120) },
         })
-        resolved.agent.followup(message)
-        const flushed = await this.hostCtx.sessions.flush(resolved.agent.session)
+        agent.followup(message)
+        const flushed = await this.hostCtx.sessions.flush(agent.session)
         if (!flushed) throw new Error('Session persistence did not acknowledge orchestrator delivery')
-        await this.serialize(async () => {
-          const current = this.taskById(taskId)
-          if (!current) return
-          const now = timestamp()
-          await this.tasks().put(taskId, {
-            ...current,
-            revision: current.revision + 1,
-            updatedAt: now,
-            delivery: { state: 'delivered', deliveredAt: now, messageId: String(message.id) },
-          })
-          this.emitChanged()
-        })
+        await this.patchDelivery(taskId, () => ({ state: 'delivered', deliveredAt: timestamp(), messageId: String(message.id) }))
       })
     } catch (error) {
       try {
-        await this.serialize(async () => {
-          const current = this.taskById(taskId)
-          if (!current || current.delivery?.state !== 'pending') return
-          const attempts = current.delivery.attempts + 1
-          await this.tasks().put(taskId, {
-            ...current,
-            revision: current.revision + 1,
-            updatedAt: timestamp(),
-            delivery: { state: 'pending', attempts, lastError: String(error) },
-          })
-          this.emitChanged()
-        })
+        await this.patchDelivery(taskId, current => current.delivery?.state === 'pending'
+          ? { state: 'pending', attempts: current.delivery.attempts + 1, lastError: String(error) }
+          : current.delivery)
       } catch (markError) {
         this.hostCtx.logger.warn(`orchestrator: mark delivery failure ${taskId} failed: ${String(markError)}`)
       }

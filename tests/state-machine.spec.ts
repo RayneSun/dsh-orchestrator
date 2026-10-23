@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { createConversation, createTask } from '../src/types.ts'
 import {
-  StateError, activateConversation, statusConcludesTurn, updateOutlineSummary, assertRevision, classifyWorkerTurnEnd,
+  StateError, activateConversation, statusConcludesTurn, updateOutlineSummary, classifyWorkerTurnEnd,
   failConversation, interruptTaskForRevision, reviseConversation, canTransition, blockTask, failTask, interruptTaskAfterRestart,
   isTerminal, settleConversation, startConversation, transitionTask,
 } from '../src/state-machine.ts'
@@ -177,16 +177,6 @@ describe('状态迁移和修订号', () => {
     const { task } = pair()
     const done = transitionTask(task, { status: 'completed', report: { result: 'done' } })
     expect(failTask(done, 'later')).toBe(done)
-  })
-
-  it('expected revision 不一致时拒绝乐观更新', () => {
-    const conv = createConversation({
-      id: 'c', childSessionId: 'child', parentSessionId: 'p',
-      title: 't',
-    })
-    expect(() => assertRevision(conv, 3)).toThrowError(StateError)
-    expect(() => assertRevision(conv, 0)).not.toThrow()
-    expect(startConversation(conv).state).toBe('running')
   })
 
   it('重启恢复把后台活动任务标记 interrupted 且不主动投递；不确定持久化状态可 blocked', () => {

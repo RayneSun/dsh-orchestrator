@@ -46,13 +46,6 @@ function touch<T extends { revision: number; updatedAt: string }>(value: T, at: 
   return { ...value, revision: value.revision + 1, updatedAt: at }
 }
 
-/** V1 状态只在单进程串行队列中修改；该 helper 让存储层仍可做乐观锁检查。 */
-export function assertRevision(current: { revision: number }, expected: number | undefined): void {
-  if (expected !== undefined && current.revision !== expected) {
-    throw new StateError('revision_conflict', `expected revision ${expected}, found ${current.revision}`)
-  }
-}
-
 export function startConversation(conv: ConversationRecord, at = new Date().toISOString()): ConversationRecord {
   if (conv.state !== 'provisioning') throw new StateError('invalid_conversation_transition', 'conversation is not provisioning')
   return { ...touch(conv, at), state: 'running' }

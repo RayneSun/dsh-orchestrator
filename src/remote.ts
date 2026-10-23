@@ -19,57 +19,42 @@ export const setTodoStatusResultSchema = z.object({
   ok: z.literal(true),
 }).strict()
 
-const descriptor = {
-  id: '@may/dsh-orchestrator#orchestrator/snapshot',
-  service: 'orchestrator',
-  namespace: 'orchestrator',
-  method: 'snapshot',
-  invocation: { kind: 'direct' as const },
-  parameters: [{
-    name: 'request',
-    wire: 'request',
-    source: 'json' as const,
-    codec: {
-      mode: 'strict' as const,
-      typeSymbol: '@may/dsh-orchestrator/client#SnapshotRequest',
-      create: () => snapshotRequestSchema,
-    },
-  }],
-  result: {
-    mode: 'strict' as const,
-    typeSymbol: '@may/dsh-orchestrator#orchestrator/snapshot:result',
-    create: () => snapshotResultSchema,
-  },
-  sourceLocation: { file: 'src/service.ts', line: 277, column: 3 },
-}
+const PACKAGE = '@may/dsh-orchestrator'
 
-const setTodoStatusDescriptor = {
-  id: '@may/dsh-orchestrator#orchestrator/setTodoStatus',
-  service: 'orchestrator',
-  namespace: 'orchestrator',
-  method: 'setTodoStatus',
-  invocation: { kind: 'direct' as const },
-  parameters: [{
-    name: 'request',
-    wire: 'request',
-    source: 'json' as const,
-    codec: {
+/** 手写 typert descriptor 的公共骨架：方法之间只有 id/method 名与请求/结果 schema 不同。
+ * id 必须保持完整字符串字面量（verify-packaging 在产物里检索它做 strict descriptor 校验）。 */
+function buildDescriptor(id: string, method: string, requestType: string, requestSchema: z.ZodType, resultSchema: z.ZodType) {
+  return {
+    id,
+    service: 'orchestrator',
+    namespace: 'orchestrator',
+    method,
+    invocation: { kind: 'direct' as const },
+    parameters: [{
+      name: 'request',
+      wire: 'request',
+      source: 'json' as const,
+      codec: {
+        mode: 'strict' as const,
+        typeSymbol: `${PACKAGE}/client#${requestType}`,
+        create: () => requestSchema,
+      },
+    }],
+    result: {
       mode: 'strict' as const,
-      typeSymbol: '@may/dsh-orchestrator/client#SetTodoStatusRequest',
-      create: () => setTodoStatusRequestSchema,
+      typeSymbol: `${PACKAGE}#orchestrator/${method}:result`,
+      create: () => resultSchema,
     },
-  }],
-  result: {
-    mode: 'strict' as const,
-    typeSymbol: '@may/dsh-orchestrator#orchestrator/setTodoStatus:result',
-    create: () => setTodoStatusResultSchema,
-  },
-  sourceLocation: { file: 'src/service.ts', line: 282, column: 3 },
+    sourceLocation: { file: 'src/service.ts', line: 0, column: 0 },
+  }
 }
 
 export const TYPERT_REMOTE = {
-  package: '@may/dsh-orchestrator',
-  descriptors: [descriptor, setTodoStatusDescriptor],
+  package: PACKAGE,
+  descriptors: [
+    buildDescriptor('@may/dsh-orchestrator#orchestrator/snapshot', 'snapshot', 'SnapshotRequest', snapshotRequestSchema, snapshotResultSchema),
+    buildDescriptor('@may/dsh-orchestrator#orchestrator/setTodoStatus', 'setTodoStatus', 'SetTodoStatusRequest', setTodoStatusRequestSchema, setTodoStatusResultSchema),
+  ],
 }
 
 export default TYPERT_REMOTE
