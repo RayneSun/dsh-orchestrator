@@ -26,7 +26,7 @@
 ```bash
 ./node_modules/.bin/tsc -p tsconfig.json --noEmit
 ./node_modules/.bin/tsc -p tsconfig.client.json --noEmit
-./node_modules/.bin/vitest run        # 当前 85 个用例
+./node_modules/.bin/vitest run        # 当前 86 个用例
 ./node_modules/.bin/tsdown            # 应无弃用警告
 export npm_config_cache=/private/tmp/dsh-orchestrator-npm-cache
 node scripts/verify-packaging.mjs     # 校验 tgz 只含运行所需 lib/、vendor/、cordis.patch.yml 等
@@ -126,7 +126,7 @@ dsh plugin --profile web add <tgz 绝对路径>
 
 ### Worker 上报协议
 
-- `task_update`：running / input_required(+question) / blocked(+error, reasonCode?, remediation?) / completed(+report) / failed(+error)；全状态可带 title（最多 8 个字的极简状态标题，折叠态/手机端展示）、progressNote（一句话进展，允许三分幽默）、summary；todoUpdates（按 id 更新会话待办）仅 running/input_required/completed 允许（failed/blocked 禁止——终态失败/受阻不应再改待办）。completed 的 report{result, artifacts?, todos?}：result 是 Lead 转述的唯一权威答案；artifacts 为子工作区相对路径，投递时自动加工作区前缀；todos 提出"需要用户本人推进"的待办。task_update 返回值带 `todos` 极简投影（id/title/status，todoProjection），Worker 每次上报后可见最新清单。
+- `task_update`：running / input_required(+question) / blocked(+error, reasonCode?, remediation?) / completed(+report) / failed(+error)；全状态可带 title（最多 8 个字的极简状态标题，折叠态/手机端展示）、progressNote（一句话进展，允许三分幽默）、summary；todoUpdates（按 id 更新会话待办）仅 running/input_required/completed 允许（failed/blocked 禁止——终态失败/受阻不应再改待办）。completed 的 report{result, artifacts?, todos?}：result 是 Lead 转述的唯一权威答案；artifacts 为子工作区相对路径，投递时自动加工作区前缀；todos 提出"需要用户本人推进"的待办（元素 {title≤30/detail?/dueDate?/priority?}，priority 四象限 P0~P3 默认 P3；todoUpdates 可标 done、cancelled 作废、改 title/detail/dueDate/priority）。双向知情通道：新任务投递附"会话待办现状"（todoStatusSection，pending 全列+用户已勾的防重复代办），task_update 返回值带 `todos` 投影（id/title/status/priority，todoProjection）。用户在看板画勾走 setTodoStatus RPC（Host 持久化+看板刷新，Worker 不实时通知，靠上述两个通道知情）。
 - 终态（completed/failed/input_required/blocked）task_update 成功后调 `exec.concludeTurn()` 直接结束本轮（statusConcludesTurn），省掉末次全上下文推理；running 不结束。
 - **zod/DSL 双写**：模型可见的只有 defineTool 的 parameters DSL（`TASK_UPDATE_TOOL_PARAMETERS` 导出常量），zod（taskUpdateInputSchema）是 Host 侧校验；两处必须同步——zod 加了字段而 DSL 没加，模型永远不知道（0.3.13 踩过）。tool-params.spec 锁定 DSL 可编译且关键字段齐全。
 - title 的 8 字上限只在输入边界（taskUpdateInputSchema）限制；baseTaskSchema 用 z.string() 不加 max，防止存储层解析拒绝旧记录。
@@ -163,4 +163,4 @@ dsh plugin --profile web add <tgz 绝对路径>
 ## 背景材料
 
 - README.md：用户面说明，发版时随版本号更新。
-- git log：0.2.0（background/单 Worker 预设）→ 0.2.1（路由追问兜底/改单 steer/blocked 提问）→ 0.2.2（todo 进度桥接看板）→ 0.2.3（interrupted 改单语义）→ 0.2.4（手动停止捕获、看板与话术精简）→ 0.2.5（白名单、input_required、上下文瘦身、鲁棒性）→ 0.2.6（手动中断通知、状态配色、Worker 提示词瘦身）→ 0.2.7（子会话折叠、柔光动效、按钮突出、提示词/恢复加固）→ 0.3.0（个人助理能力 bundle）→ 0.3.2（Worker 根会话化、blocked 系统受阻语义、默认 Lead 预设免手改）→ 0.3.3（DSH 0.2.1-rc.2 适配、移除 dsh-market）→ 0.3.4（记忆共享、settled 死代码清理、文档重写）→ 0.3.5（Worker 放开子智能体与后台任务）→ 0.3.6（标题更新/同主题复用/定时编排/定时标记）→ 0.3.7（模型选择透传、打开子会话寻址修复）→ 0.3.8（看板重构、task_update v2：report/progressNote/summary）→ 0.3.9（workspaceName 英文 slug 必填、mock 对齐）→ 0.3.10（dispatch 工具参数 DSL pattern 崩溃修复）→ 0.3.11（死字段 userAnswer/resultSummary/outlinePatch/cancelled 清理与数据迁移、outline 摘要写入简化、看板 API 文档）→ 0.3.12（Lead 白名单补 memory_read/update/home）→ 未发布（Lead 移除工具白名单；一事一会拆分；task_update title（≤8 字）+ report.todos/todoUpdates 用户待办清单 + setTodoStatus RPC；Worker danger-full-access；定时标记 turn/end 双触发；终态 concludeTurn；task_update 参数 DSL 漂移修复与测试锁定；cordis 4 inject 陷阱修复（ctx.get 访问 permissionPresets/schedule）；待办 cancelled 作废 + 派发注入会话待办现状 + task_update 返回 todos 投影 + todoUpdates 收紧；终态投递开关与插件设置页（plugins.row.config）；DSH 侧栏定时图标前缀移除）。
+- git log：0.2.0（background/单 Worker 预设）→ 0.2.1（路由追问兜底/改单 steer/blocked 提问）→ 0.2.2（todo 进度桥接看板）→ 0.2.3（interrupted 改单语义）→ 0.2.4（手动停止捕获、看板与话术精简）→ 0.2.5（白名单、input_required、上下文瘦身、鲁棒性）→ 0.2.6（手动中断通知、状态配色、Worker 提示词瘦身）→ 0.2.7（子会话折叠、柔光动效、按钮突出、提示词/恢复加固）→ 0.3.0（个人助理能力 bundle）→ 0.3.2（Worker 根会话化、blocked 系统受阻语义、默认 Lead 预设免手改）→ 0.3.3（DSH 0.2.1-rc.2 适配、移除 dsh-market）→ 0.3.4（记忆共享、settled 死代码清理、文档重写）→ 0.3.5（Worker 放开子智能体与后台任务）→ 0.3.6（标题更新/同主题复用/定时编排/定时标记）→ 0.3.7（模型选择透传、打开子会话寻址修复）→ 0.3.8（看板重构、task_update v2：report/progressNote/summary）→ 0.3.9（workspaceName 英文 slug 必填、mock 对齐）→ 0.3.10（dispatch 工具参数 DSL pattern 崩溃修复）→ 0.3.11（死字段 userAnswer/resultSummary/outlinePatch/cancelled 清理与数据迁移、outline 摘要写入简化、看板 API 文档）→ 0.3.12（Lead 白名单补 memory_read/update/home）→ 未发布（Lead 移除工具白名单；一事一会拆分；task_update title（≤8 字）+ report.todos/todoUpdates 用户待办清单 + setTodoStatus RPC；Worker danger-full-access；定时标记 turn/end 双触发；终态 concludeTurn；task_update 参数 DSL 漂移修复与测试锁定；cordis 4 inject 陷阱修复（ctx.get 访问 permissionPresets/schedule）；待办 cancelled 作废 + 派发注入会话待办现状 + task_update 返回 todos 投影 + todoUpdates 收紧（failed/blocked 禁止）；待办 priority 四象限（P0~P3 默认 P3，看板彩色胶囊）；setTodoStatus markRemote 漏注册修复（独立 tsdown 无装饰器降级，每个 RPC 方法都必须手动 markRemote）；未使用导出类型清理（NewTodo/TodoUpdate/TodoPriority/Delivery/ConversationState）；终态投递开关与插件设置页（plugins.row.config）；DSH 侧栏定时图标前缀移除）。
