@@ -32,6 +32,7 @@ import {
   settleConversation,
   startConversation,
   classifyWorkerTurnEnd,
+  statusConcludesTurn,
   transitionTask,
   type WorkerTurnEndCause,
 } from './state-machine.ts'
@@ -438,6 +439,9 @@ export class OrchestratorService extends TypertRemoteService {
       }
       if (ev.type === 'turn/end') {
         const childId = String(agent.session.id)
+        // 定时标记双触发：轮次内可能创建/修改/删除了 schedule，turn/end 后必已提交，
+        // 不依赖 schedule/changed 的传播即可让 ⏰ 标记及时刷新。
+        this.queueScheduleMarkSync()
         const until = this.revisionTurnEnds.get(childId)
         if (until) {
           this.revisionTurnEnds.delete(childId)
@@ -471,7 +475,13 @@ export class OrchestratorService extends TypertRemoteService {
         remediation: { type: 'string', description: 'blocked 时建议用户执行的补救动作' },
       },
       output: sharedJsonOutput,
-      execute: async (args: any) => toJson(await this.updateFromWorker(args, String(agent.session.id))),
+      execute: async (args: any, exec: { concludeTurn?: () => void }) => {
+        const result = await this.updateFromWorker(args, String(agent.session.id))
+        // 终态（completed/failed/input_required/blocked）后无需再做一次全上下文推理：
+        // 标记 concludesTurn，agent loop 提交结果批次后直接结束本轮；running 继续。
+        if (statusConcludesTurn((result as { status?: string }).status)) exec.concludeTurn?.()
+        return toJson(result)
+      },
     })))
   }
 

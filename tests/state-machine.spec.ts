@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { createConversation, createTask } from '../src/types.ts'
 import {
-  StateError, activateConversation, updateOutlineSummary, assertRevision, classifyWorkerTurnEnd,
+  StateError, activateConversation, statusConcludesTurn, updateOutlineSummary, assertRevision, classifyWorkerTurnEnd,
   failConversation, interruptTaskForRevision, reviseConversation, canTransition, blockTask, failTask, interruptTaskAfterRestart,
   isTerminal, settleConversation, startConversation, transitionTask,
 } from '../src/state-machine.ts'
@@ -82,6 +82,16 @@ describe('任务状态机', () => {
     expect(next.outline.summary).toBe('新摘要')
     expect(next.outline.keyFacts).toEqual(['旧事实'])
     expect(next.revision).toBe(conv.revision + 1)
+  })
+})
+
+describe('statusConcludesTurn', () => {
+  it('终态全部结束本轮，仅 running 继续；undefined 不结束', () => {
+    for (const status of ['completed', 'failed', 'input_required', 'blocked']) {
+      expect(statusConcludesTurn(status)).toBe(true)
+    }
+    expect(statusConcludesTurn('running')).toBe(false)
+    expect(statusConcludesTurn(undefined)).toBe(false)
   })
 })
 

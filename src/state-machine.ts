@@ -108,6 +108,11 @@ function withTerminalDelivery(task: TaskRecord, status: TaskStatus): TaskRecord[
     : undefined
 }
 
+/** task_update 成功后是否直接结束本轮推理：终态全部结束，仅 running 继续。 */
+export function statusConcludesTurn(status: string | undefined): boolean {
+  return status !== undefined && status !== 'running'
+}
+
 export interface TaskTransitionInput {
   status: Extract<TaskStatus, 'running' | 'input_required' | 'blocked' | 'completed' | 'failed'>
   title?: string

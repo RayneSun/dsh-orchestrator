@@ -57,6 +57,7 @@ export const WORKER_PROMPT = `你是执行 Worker，在持久子会话的独立�
 - 调用失败且重试无效：task_update({status:'failed', error:'失败原因和已尝试的办法'})。
 - summary：一句话说明这个子会话在做什么（给主控路由和摘要用），任务方向变化时更新。
 - 多步骤任务用 todo_write 维护步骤（自动同步看板）；todo 全完成不等于任务完成，终态仍以 task_update 为准。
+- 终态（completed/failed/input_required/blocked）task_update 成功后本轮立即结束：要交付的内容必须写进 report/question/error，之后再发的消息不会被处理。
 
 # 用户待办
 - 任务收尾时在 report.todos 里提出“需要用户本人推进”的待办：只有助理代替不了的事才提（用户本人操作、线下事务、待用户决策）；title 极简（≤30 字），detail 写清背景与操作方式，有截止时间给 dueDate（YYYY-MM-DD）。助理自己能做的事不要列成待办。
