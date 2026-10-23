@@ -6,7 +6,7 @@
 
 `@may/dsh-orchestrator`：DSH（DeepSeek Harness，基线 `0.2.1-rc.2`）的编排插件。
 
-- **Lead**（主会话，预设 `may-orchestrator-lead`）：理解需求、路由、派发任务、向用户转述结果。工具**白名单**制：编排 + 提问 + 记忆 + 只读查询（web_search/web_fetch/read/glob/grep），一步查询直接做，有副作用的执行全部派发。
+- **Lead**（主会话，预设 `may-orchestrator-lead`）：理解需求、路由、派发任务、向用户转述结果。工具**不做裁剪**：宿主与用户安装的全部全局工具可见（后装工具自动生效）；编排纪律由 persona 约束——一步查询直接做，执行类工作全部派发，不给主会话自建 schedule。
 - **Worker**（持久**根会话**，预设 `may-orchestrator-worker`）：执行任务。不是 subagent——通过 `agents.create` 创建（无 origin/delegationDepth），与主会话同为一等会话，schedule 等仅 depth-0 可用的宿主能力对 Worker 开放。工具**黑名单**制（只禁派生/编排/直接提问），其余宿主与用户安装的工具默认可用。
 - 两层领域模型：**Conversation**（持久子会话/工作流）1—N **TaskRun**（一次派发）。
 - 技术栈：pnpm + TypeScript + Cordis + Zod + tsdown + vitest。4 个入口：主插件、client（看板 React）、typert host/remote（snapshot RPC）。

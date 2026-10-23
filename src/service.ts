@@ -19,7 +19,7 @@ import { isWorkerToolForbidden } from './worker-policy.ts'
 import { normalizeProgressSteps } from './progress.ts'
 import { buildChildWorkspace, ensureSharedMemoryLink } from './workspaces.ts'
 import { orchestratorDomain } from './storage.ts'
-import { buildPresetDefinitions, LEAD_PRESET, LEAD_TOOL_ALLOW, WORKER_PRESET } from './presets.ts'
+import { buildPresetDefinitions, LEAD_PRESET, WORKER_PRESET } from './presets.ts'
 import {
   activateConversation,
   updateOutlineSummary,
@@ -92,8 +92,6 @@ interface AgentDefaultModelLike {
   currentSelection(): ModelSelectionLike
 }
 const WORKER_SUPPRESSED_SECTIONS = ['harness:source', 'app:web-surface', 'ui:deliverable-file-references'] as const
-/** Lead 白名单不含邮件工具，但 qqmail 会全局公告工具能力；遮蔽避免主控看到却调不到而产生幻觉。 */
-const LEAD_SUPPRESSED_SECTIONS = ['plugin:dsh-qqmail'] as const
 const RECOVERY_INTERVAL_MS = 15_000
 const REVISION_GUARD_MS = 120_000
 const TODO_FLUSH_DELAY_MS = 350
@@ -366,26 +364,7 @@ export class OrchestratorService extends TypertRemoteService {
       order: 610,
       text: () => this.renderRoster(String(agent.session.id)),
     }))
-    this.applyLeadToolWhitelist(agent, scoped)
-    for (const sectionName of LEAD_SUPPRESSED_SECTIONS) {
-      this.keep(agent, scoped.systemPrompt.section({ name: sectionName, order: 0, text: '', interpolate: false }))
-    }
     for (const tool of this.leadTools(agent)) this.keep(agent, scoped.tools.register(tool as any))
-  }
-
-  /** Lead 白名单：只保留显式允许且当前确实注册的全局工具；用户后装的工具不会打扰主控。 */
-  private applyLeadToolWhitelist(agent: Agent, scoped: Agent['ctx']): void {
-    try {
-      // 必须在注册 orchestrator_* 之前枚举：此时作用域内只有继承自全局层的工具；
-      // restrict 只过滤全局层，scope 内的 orchestrator_* 始终可见。
-      const globalNames = new Set(scoped.tools.schemas().map(schema => schema.name))
-      const allow = LEAD_TOOL_ALLOW.filter(name => globalNames.has(name))
-      if (allow.length > 0) this.keep(agent, scoped.tools.restrict({ allow: [...allow] }))
-      else this.hostCtx.logger.warn('orchestrator: lead tool whitelist matched no global tools; skipping restriction')
-    } catch (error) {
-      // 枚举失败时退回无限制，避免主控完全失去工具。
-      this.hostCtx.logger.warn(`orchestrator: lead tool whitelist failed: ${String(error)}`)
-    }
   }
 
   private async configureWorker(agent: Agent, conv: ConversationRecord): Promise<void> {

@@ -4,7 +4,7 @@ DSH 主控助理编排插件，也是一个开箱即用的个人助理能力包�
 
 ## 预设
 
-- `may-orchestrator-lead`：主控助理。工具采用**白名单**：编排工具、向用户提问、长期记忆，以及只读轻量查询（web_search / web_fetch / read / glob / grep）——一步能完成的查询 Lead 直接做；写文件、跑命令等执行类全局工具（含用户后装的 MCP/插件）对 Lead 不可见，避免干扰路由。能直接回答的闲聊和解释类问题 Lead 直接回答，不派发。
+- `may-orchestrator-lead`：主控助理。工具**不做裁剪**：编排工具 + 宿主与用户安装的全部全局工具（记忆、网页、文件、浏览器、邮件、MCP 等）均可见，用户后装工具自动生效。编排纪律由 persona 约束——一步能完成的轻量查询 Lead 直接做，执行类工作（写文件、跑命令、浏览器操作、定时任务等）一律派发给 Worker；闲聊和解释类问题直接回答，不派发。
 - `may-orchestrator-worker`：统一执行 Worker，是与主会话同级的**一等根会话**（非子代理），因此定时任务（schedule）等平台能力对其开放。工具采用**黑名单**：文件、命令、网页、浏览器、技能、MCP、定时任务等宿主自带与用户安装的工具默认可用，可使用子智能体（subagent/fork）与后台任务（job）做并行、隔离或长耗时处理；仅禁止编排循环（workflow/ralph）、调用 orchestrator 编排工具和直接向用户提问。
 
 Worker 的任务上报协议、安全红线（支付/删除等不可逆操作先确认）、文件边界与整洁约束都固化在预设 persona 中，每次派发只传递任务本身（独立工作区由运行时自动绑定，不重复环境声明）。`task_update` 状态为 running、input_required、blocked、completed、failed。

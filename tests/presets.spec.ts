@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
-import { buildPresetDefinitions, LEAD_PRESET, LEAD_TOOL_ALLOW, WORKER_PRESET } from '../src/presets.ts'
+import { buildPresetDefinitions, LEAD_PRESET, WORKER_PRESET } from '../src/presets.ts'
 
 describe('Orchestrator agent presets', () => {
   const presets = buildPresetDefinitions()
@@ -8,25 +8,6 @@ describe('Orchestrator agent presets', () => {
 
   it('注册 Lead 和唯一的统一 Worker 预设', () => {
     expect(presets.map(preset => preset.id)).toEqual([LEAD_PRESET, WORKER_PRESET])
-  })
-
-  it('Lead 全局工具白名单：提问、记忆、只读查询；不含执行类工具', () => {
-    expect(LEAD_TOOL_ALLOW).toContain('ask_user_question')
-    expect(LEAD_TOOL_ALLOW).toContain('memory_search')
-    expect(LEAD_TOOL_ALLOW).toContain('memory_read')
-    expect(LEAD_TOOL_ALLOW).toContain('memory_update')
-    expect(LEAD_TOOL_ALLOW).toContain('memory_home')
-    // 记忆整理（dream）属后台维护，由 Worker 持有，不放行给 Lead
-    expect(LEAD_TOOL_ALLOW).not.toContain('memory_dream')
-    for (const name of ['web_search', 'web_fetch', 'read', 'glob', 'grep']) {
-      expect(LEAD_TOOL_ALLOW).toContain(name)
-    }
-    // 写文件、跑命令、浏览器/桌面/邮件等执行工具不得出现在主控白名单
-    for (const name of ['write', 'edit', 'bash', 'pwsh']) {
-      expect(LEAD_TOOL_ALLOW).not.toContain(name)
-    }
-    expect(LEAD_TOOL_ALLOW.some(name => name.startsWith('browser_'))).toBe(false)
-    expect(LEAD_TOOL_ALLOW.some(name => name.startsWith('qqmail_'))).toBe(false)
   })
 
   it('每个 agent-instructions 行都提供必需的 maxBytes', () => {
