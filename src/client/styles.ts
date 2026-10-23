@@ -94,7 +94,7 @@ export const CSS = `
 .dsho-step-in_progress .dsho-stepIcon{background:color-mix(in srgb,var(--dsho-brand) 15%,transparent);color:var(--dsho-brand-ink);border-color:transparent;animation:dsho-pulse 1.5s ease-in-out infinite}
 /* 用户待办框：折叠/展开都显示，位于工作区行上方 */
 .dsho-todos{margin:10px 13px 0;border:.5px solid var(--dsw-alias-border-l4);border-radius:10px;background:var(--dsw-alias-bg-layer-3);padding:6px 10px 8px}
-.dsho-conv-collapsed .dsho-todos{margin-top:0;margin-bottom:11px}
+.dsho-conv-collapsed .dsho-todos{margin-top:0;margin-bottom:10px}
 .dsho-todosHead{display:flex;align-items:center;gap:6px;font-size:11px;font-weight:600;color:var(--dsw-alias-label-secondary);padding:2px 0 5px}
 .dsho-todosCount{font-weight:500;color:var(--dsw-alias-label-tertiary)}
 .dsho-todo{display:flex;align-items:flex-start;gap:8px;padding:5px 0;border-top:.5px dashed var(--dsw-alias-border-l2)}

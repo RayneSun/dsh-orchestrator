@@ -380,6 +380,7 @@ export function Board({ sessionId: propSessionId, useTabInfo, orchestrator, remo
             }
           }}>打开子会话</button>
         </header>
+        {conv.todos.length > 0 && <TodoList todos={conv.todos} onToggle={toggleTodo} />}
         {collapsed && latest && <div className="dsho-strip">
           <div className="dsho-stripRow">
             <span className={`dsho-badge dsho-badge-${latest.status}`}>{taskStatusLabels[latest.status] ?? latest.status}</span>
@@ -390,7 +391,6 @@ export function Board({ sessionId: propSessionId, useTabInfo, orchestrator, remo
           </div>
           {latest.progressNote && <div className={`dsho-stripNote${(activeTaskStatuses as readonly string[]).includes(latest.status) && !latest.endedAt ? ' dsho-stripNote-live' : ''}`} title={latest.progressNote}>{latest.progressNote}</div>}
         </div>}
-        {conv.todos.length > 0 && <TodoList todos={conv.todos} onToggle={toggleTodo} />}
         <div className="dsho-body"><div>
           {conv.workspaceName && <div className="dsho-meta">工作区：{conv.workspaceName}</div>}
           <ul className="dsho-tasks">
