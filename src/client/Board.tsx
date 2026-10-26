@@ -111,16 +111,42 @@ function dueLabel(dueDate: string): { text: string; soon: boolean } {
   return { text: dueDate.slice(5), soon }
 }
 
-/** 会话级用户待办框：折叠/展开都显示，用户画勾走 setTodoStatus RPC，点行展开 detail。 */
-function TodoList({ todos, onToggle }: { todos: UserTodo[]; onToggle: (todo: UserTodo) => void }): React.ReactElement {
+/** ISO 8601 提醒时间 → "M-D HH:mm" 展示。 */
+function remindLabel(remindAt: string): string | undefined {
+  const time = Date.parse(remindAt)
+  if (Number.isNaN(time)) return undefined
+  const d = new Date(time)
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`
+}
+
+/** 链接显示名：label 缺省回退域名。 */
+function linkLabel(link: UserTodo['links'][number]): string {
+  if (link.label) return link.label
+  try { return new URL(link.url).hostname } catch { return link.url }
+}
+
+/** 会话级用户待办框：折叠/展开都显示，用户画勾走 setTodoStatus RPC，点行展开详情。
+ * 详情区一切皆胶囊：链接（蓝，点击打开）/ 附件（紫，点击打开文件）/ 联系人（青绿，点击复制电话或邮箱）/ 地址（灰）。 */
+function TodoList({ todos, onToggle, onOpenAttachment, showToast }: {
+  todos: UserTodo[]
+  onToggle: (todo: UserTodo) => void
+  onOpenAttachment: (path: string) => void
+  showToast: (text: string) => void
+}): React.ReactElement {
   const [openId, setOpenId] = useState<string>()
   const pending = todos.filter(todo => todo.status === 'pending').length
+  const copy = (text: string, what: string) => {
+    void navigator.clipboard?.writeText(text).then(() => showToast(`已复制${what}：${text}`), () => showToast(`${what}：${text}`))
+  }
   return <div className="dsho-todos">
     <div className="dsho-todosHead">待办 <span className="dsho-todosCount">{pending > 0 ? `${pending} 项待处理` : '全部完成'}</span></div>
     {todos.map(todo => {
       const done = todo.status === 'done'
       const cancelled = todo.status === 'cancelled'
       const due = todo.dueDate ? dueLabel(todo.dueDate) : undefined
+      const remind = todo.remindAt ? remindLabel(todo.remindAt) : undefined
+      const hasDetail = Boolean(todo.remark || todo.links.length || todo.attachments.length || todo.contacts.length || todo.location)
       return <div key={todo.id} className={`dsho-todo${done ? ' dsho-todo-done' : ''}${cancelled ? ' dsho-todo-cancelled' : ''}${openId === todo.id ? ' dsho-todo-open' : ''}`}>
         <button
           type="button"
@@ -129,13 +155,38 @@ function TodoList({ todos, onToggle }: { todos: UserTodo[]; onToggle: (todo: Use
           disabled={cancelled}
           onClick={event => { event.stopPropagation(); onToggle(todo) }}
         >{done ? '✓' : cancelled ? '×' : ''}</button>
-        <div className="dsho-todoBody" onClick={() => setOpenId(openId === todo.id ? undefined : todo.id)}>
+        <div className="dsho-todoBody" onClick={() => hasDetail && setOpenId(openId === todo.id ? undefined : todo.id)}>
           <div className="dsho-todoLine">
             <span className="dsho-todoTitle">{todo.title}{cancelled && <span className="dsho-todoCancelledTag">已作废</span>}</span>
             <span className={`dsho-todoPriority dsho-todoPriority-${todo.priority}`} title={{ P0: '紧急且重要', P1: '重要不紧急', P2: '紧急不重要', P3: '有空再做' }[todo.priority]}>{todo.priority}</span>
             {due && <span className={`dsho-todoDue${due.soon && !done && !cancelled ? ' dsho-todoDue-soon' : ''}`}>截止 {due.text}</span>}
           </div>
-          {todo.detail && <div className="dsho-todoDetail">{todo.detail}</div>}
+          {remind && <div className="dsho-todoMeta"><span className="dsho-todoRemind">⏰ {remind} 提醒</span></div>}
+          {hasDetail && <div className="dsho-todoDetail">
+            {todo.remark && <div className="dsho-dRow"><span className="dsho-dIcon">📝</span><span className="dsho-dText">{todo.remark}</span></div>}
+            {todo.links.length > 0 && <div className="dsho-dRow"><span className="dsho-dIcon">🔗</span><span className="dsho-dChips">
+              {todo.links.map((link, i) => <button key={i} type="button" className="dsho-chip dsho-chip-link" title={link.url}
+                onClick={event => { event.stopPropagation(); window.open(link.url, '_blank', 'noopener') }}>{linkLabel(link)}</button>)}
+            </span></div>}
+            {todo.attachments.length > 0 && <div className="dsho-dRow"><span className="dsho-dIcon">📎</span><span className="dsho-dChips">
+              {todo.attachments.map((file, i) => <button key={i} type="button" className="dsho-chip dsho-chip-file" title={file.path}
+                onClick={event => { event.stopPropagation(); onOpenAttachment(file.path) }}>{file.name ?? file.path.split('/').pop()}</button>)}
+            </span></div>}
+            {todo.contacts.length > 0 && <div className="dsho-dRow"><span className="dsho-dIcon">👤</span><span className="dsho-dChips">
+              {todo.contacts.map((contact, i) => {
+                const action = contact.phone ?? contact.email
+                const what = contact.phone ? '电话' : '邮箱'
+                return <button key={i} type="button" className="dsho-chip dsho-chip-person"
+                  title={`${contact.name}${action ? ` ${action}` : ''}${contact.note ? `（${contact.note}）` : ''}${action ? '，点击复制' : ''}`}
+                  onClick={event => { event.stopPropagation(); if (action) copy(action, what) }}>
+                  <b>{contact.name}</b>{action && <em>{action}</em>}
+                </button>
+              })}
+            </span></div>}
+            {todo.location && <div className="dsho-dRow"><span className="dsho-dIcon">📍</span><span className="dsho-dChips">
+              <span className="dsho-chip dsho-chip-place">{todo.location.name}{todo.location.address ? ` · ${todo.location.address}` : ''}</span>
+            </span></div>}
+          </div>}
         </div>
       </div>
     })}
@@ -380,7 +431,7 @@ export function Board({ sessionId: propSessionId, useTabInfo, orchestrator, remo
             }
           }}>打开子会话</button>
         </header>
-        {conv.todos.length > 0 && <TodoList todos={conv.todos} onToggle={toggleTodo} />}
+        {conv.todos.length > 0 && <TodoList todos={conv.todos} onToggle={toggleTodo} showToast={showToast} onOpenAttachment={path => void openArtifact(conv, path)} />}
         {collapsed && latest && <div className="dsho-strip">
           <div className="dsho-stripRow">
             <span className={`dsho-badge dsho-badge-${latest.status}`}>{taskStatusLabels[latest.status] ?? latest.status}</span>

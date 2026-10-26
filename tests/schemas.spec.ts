@@ -179,50 +179,65 @@ describe('task_update 待办与标题协议', () => {
     }
   })
 
-  it('report.todos 接受 title/detail/dueDate；dueDate 必须 YYYY-MM-DD', () => {
-    const ok = taskUpdateInputSchema.safeParse({
-      status: 'completed',
-      report: { result: '答案', todos: [{ title: '去购买火车票', detail: 'G123 二等座', dueDate: '2026-10-25' }] },
-    })
-    expect(ok.success).toBe(true)
-    for (const bad of ['明天', '2026/10/25', '10-25']) {
-      const parsed = taskUpdateInputSchema.safeParse({
-        status: 'completed',
-        report: { result: '答案', todos: [{ title: 'x', dueDate: bad }] },
-      })
-      expect(parsed.success).toBe(false)
-    }
-  })
-
-  it('priority 默认 P3；可指定 P0~P3；todoUpdates 可调整 priority', () => {
+  it('userTodos.create 新建：title 静态必填、priority 默认 P3、结构上无 id/status', () => {
     const parsed = taskUpdateInputSchema.parse({
       status: 'completed',
-      report: { result: '答案', todos: [{ title: '默认' }, { title: '加急', priority: 'P0' }] },
-      todoUpdates: [{ id: 'todo_1', priority: 'P1' }],
+      report: { result: '答案' },
+      userTodos: {
+        create: [
+          { title: '默认' },
+          { title: '加急', priority: 'P0', dueDate: '2026-10-30', remindAt: '2026-10-29T09:00:00+08:00',
+            links: [{ url: 'https://example.com', label: '订票页' }],
+            attachments: [{ path: 'shots/a.png' }],
+            contacts: [{ name: '前台', phone: '010-12345678' }],
+            location: { name: '安贞医院', address: '朝阳区安贞路2号' } },
+        ],
+      },
     })
-    expect(parsed.report?.todos?.[0]?.priority).toBe('P3')
-    expect(parsed.report?.todos?.[1]?.priority).toBe('P0')
-    expect(parsed.todoUpdates?.[0]?.priority).toBe('P1')
-    expect(taskUpdateInputSchema.safeParse({
-      status: 'completed',
-      report: { result: '答案', todos: [{ title: 'x', priority: 'P9' }] },
-    }).success).toBe(false)
+    expect(parsed.userTodos?.create?.[0]).toMatchObject({ title: '默认', priority: 'P3' })
+    expect(parsed.userTodos?.create?.[1]).toMatchObject({ title: '加急', priority: 'P0' })
+    // create 条目结构上接触不到 id/status（strict 拒绝）
+    expect(taskUpdateInputSchema.safeParse({ status: 'running', userTodos: { create: [{ title: 'x', id: 'todo_1' }] } }).success).toBe(false)
+    expect(taskUpdateInputSchema.safeParse({ status: 'running', userTodos: { create: [{ title: 'x', status: 'done' }] } }).success).toBe(false)
+    // create 缺 title
+    expect(taskUpdateInputSchema.safeParse({ status: 'running', userTodos: { create: [{}] } }).success).toBe(false)
   })
 
-  it('todoUpdates 允许 running/input_required/completed，禁止 failed/blocked', () => {
-    const updates = [{ id: 'todo_1', status: 'done' }, { id: 'todo_2', title: '改标题', detail: 'd', dueDate: '2026-11-01' }]
-    expect(taskUpdateInputSchema.safeParse({ status: 'running', todoUpdates: updates }).success).toBe(true)
-    expect(taskUpdateInputSchema.safeParse({ status: 'input_required', question: 'q', todoUpdates: updates }).success).toBe(true)
-    expect(taskUpdateInputSchema.safeParse({ status: 'completed', report: { result: 'r' }, todoUpdates: updates }).success).toBe(true)
-    expect(taskUpdateInputSchema.safeParse({ status: 'failed', error: 'e', todoUpdates: updates }).success).toBe(false)
-    expect(taskUpdateInputSchema.safeParse({ status: 'blocked', error: 'e', todoUpdates: updates }).success).toBe(false)
+  it('userTodos.update 更新：id 静态必填，可改 status/title/priority 等', () => {
+    const parsed = taskUpdateInputSchema.parse({
+      status: 'completed',
+      report: { result: 'r' },
+      userTodos: { update: [{ id: 'todo_1', status: 'done' }, { id: 'todo_2', status: 'cancelled' }, { id: 'todo_3', title: '改标题', priority: 'P1' }] },
+    })
+    expect(parsed.userTodos?.update?.[0]).toMatchObject({ id: 'todo_1', status: 'done' })
+    expect(taskUpdateInputSchema.safeParse({ status: 'running', userTodos: { update: [{ status: 'done' }] } }).success).toBe(false)
+    expect(taskUpdateInputSchema.safeParse({ status: 'running', userTodos: { update: [{ id: 'todo_1', priority: 'P9' }] } }).success).toBe(false)
+  })
+
+  it('userTodos 输入边界：dueDate 严格日期、链接必须 http(s)、附件禁绝对路径与 ..', () => {
+    const base = { status: 'running' as const }
+    for (const bad of ['明天', '2026/10/25', '10-25']) {
+      expect(taskUpdateInputSchema.safeParse({ ...base, userTodos: { create: [{ title: 'x', dueDate: bad }] } }).success).toBe(false)
+    }
+    expect(taskUpdateInputSchema.safeParse({ ...base, userTodos: { create: [{ title: 'x', links: [{ url: 'ftp://a' }] }] } }).success).toBe(false)
+    expect(taskUpdateInputSchema.safeParse({ ...base, userTodos: { create: [{ title: 'x', attachments: [{ path: '/etc/passwd' }] }] } }).success).toBe(false)
+    expect(taskUpdateInputSchema.safeParse({ ...base, userTodos: { create: [{ title: 'x', attachments: [{ path: '../a' }] }] } }).success).toBe(false)
+  })
+
+  it('userTodos 允许 running/input_required/completed，禁止 failed/blocked', () => {
+    const payload = { update: [{ id: 'todo_1', status: 'done' }] }
+    expect(taskUpdateInputSchema.safeParse({ status: 'running', userTodos: payload }).success).toBe(true)
+    expect(taskUpdateInputSchema.safeParse({ status: 'input_required', question: 'q', userTodos: payload }).success).toBe(true)
+    expect(taskUpdateInputSchema.safeParse({ status: 'completed', report: { result: 'r' }, userTodos: payload }).success).toBe(true)
+    expect(taskUpdateInputSchema.safeParse({ status: 'failed', error: 'e', userTodos: payload }).success).toBe(false)
+    expect(taskUpdateInputSchema.safeParse({ status: 'blocked', error: 'e', userTodos: payload }).success).toBe(false)
   })
 
   it('待办状态支持 cancelled（Worker 作废旧待办）', () => {
     const parsed = taskUpdateInputSchema.safeParse({
       status: 'completed',
       report: { result: 'r' },
-      todoUpdates: [{ id: 'todo_1', status: 'cancelled' }],
+      userTodos: { update: [{ id: 'todo_1', status: 'cancelled' }] },
     })
     expect(parsed.success).toBe(true)
     const todo = userTodoSchema.parse({
@@ -230,6 +245,7 @@ describe('task_update 待办与标题协议', () => {
       createdAt: '2026-10-23T00:00:00Z', updatedAt: '2026-10-23T00:00:00Z',
     })
     expect(todo.status).toBe('cancelled')
+    expect(todo.links).toEqual([])
   })
 
   it('旧会话记录无 todos 字段时默认空清单', () => {
@@ -261,6 +277,40 @@ describe('旧版本存储记录迁移', () => {
     expect('blockedQuestion' in task).toBe(false)
     expect('scene' in task).toBe(false)
     expect('responseMode' in task).toBe(false)
+  })
+
+  it('0.3.12 任务 report.todos 冗余回显剥离（数据已在 conv.todos）', () => {
+    const task = taskSchema.parse({
+      ...baseTask, status: 'completed',
+      report: { result: 'r', todos: [{ title: 'x' }] },
+    })
+    expect(task.report?.result).toBe('r')
+    expect(task.report && 'todos' in task.report).toBe(false)
+  })
+
+  it('0.3.12 待办的 completedAt 死字段剥离', () => {
+    const conv = conversationSchema.parse({
+      ...baseConv,
+      todos: [{
+        id: 'todo_1', title: 'x', status: 'done', priority: 'P3',
+        createdAt: '2026-10-23T00:00:00Z', updatedAt: '2026-10-23T00:00:00Z',
+        completedAt: '2026-10-23T01:00:00Z',
+      }],
+    })
+    expect(conv.todos[0]?.status).toBe('done')
+    expect(conv.todos[0] && 'completedAt' in conv.todos[0]).toBe(false)
+  })
+
+  it('0.3.12 待办 detail 迁移为 remark', () => {
+    const conv = conversationSchema.parse({
+      ...baseConv,
+      todos: [{
+        id: 'todo_1', title: 'x', detail: '旧备注', status: 'pending', priority: 'P3',
+        createdAt: '2026-10-23T00:00:00Z', updatedAt: '2026-10-23T00:00:00Z',
+      }],
+    })
+    expect(conv.todos[0]?.remark).toBe('旧备注')
+    expect(conv.todos[0] && 'detail' in conv.todos[0]).toBe(false)
   })
 
   it('会话 blocked 状态迁移为 input_required', () => {

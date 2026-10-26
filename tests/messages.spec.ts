@@ -27,10 +27,10 @@ describe('deliveryNotice 用户待办段', () => {
     const conv: ConversationRecord = {
       ...createConversation({ id: 'c1', childSessionId: 's1', parentSessionId: 'p1', title: '体检' }),
       todos: [{
-        id: 'todo_1', title: '拨打预约电话', detail: '工作日 8:00-17:00', dueDate: '2026-10-27',
-        status: 'pending', priority: 'P3' as const, createdAt: '2026-10-23T00:00:00Z', updatedAt: '2026-10-23T00:00:00Z',
+        id: 'todo_1', title: '拨打预约电话', remark: '工作日 8:00-17:00', dueDate: '2026-10-27',
+        status: 'pending', priority: 'P3' as const, links: [], attachments: [], contacts: [], createdAt: '2026-10-23T00:00:00Z', updatedAt: '2026-10-23T00:00:00Z',
       }, {
-        id: 'todo_2', title: '已完成事项', status: 'done', completedBy: 'user', priority: 'P3' as const,
+        id: 'todo_2', title: '已完成事项', status: 'done', completedBy: 'user', priority: 'P3' as const, links: [], attachments: [], contacts: [],
         createdAt: '2026-10-23T00:00:00Z', updatedAt: '2026-10-23T00:00:00Z',
       }],
     }
@@ -38,7 +38,7 @@ describe('deliveryNotice 用户待办段', () => {
     expect(text).toContain('用户待办')
     expect(text).toContain('[todo_1] 拨打预约电话')
     expect(text).toContain('截止 2026-10-27')
-    expect(text).toContain('todoUpdates')
+    expect(text).toContain("userTodos.update")
     expect(text).not.toContain('todo_2')
     const without = deliveryNotice(baseTask(), { ...conv, todos: [] })
     expect(without).not.toContain('用户待办')
@@ -51,10 +51,10 @@ describe('todoStatusSection 投递附言', () => {
   }
   it('pending 全列含 id；用户标完成的列出防重复代办；worker 标完成与 cancelled 不提', () => {
     const text = todoStatusSection([
-      { ...base, id: 'todo_1', title: '买火车票', dueDate: '2026-10-25', status: 'pending', priority: 'P3' as const },
-      { ...base, id: 'todo_2', title: '取快递', status: 'done', priority: 'P3' as const, completedBy: 'user' as const },
-      { ...base, id: 'todo_3', title: '已代办的', status: 'done', priority: 'P3' as const, completedBy: 'worker' as const },
-      { ...base, id: 'todo_4', title: '作废的', status: 'cancelled', priority: 'P3' as const },
+      { ...base, id: 'todo_1', title: '买火车票', dueDate: '2026-10-25', status: 'pending', priority: 'P3' as const, links: [], attachments: [], contacts: [] },
+      { ...base, id: 'todo_2', title: '取快递', status: 'done', priority: 'P3' as const, links: [], attachments: [], contacts: [], completedBy: 'user' as const },
+      { ...base, id: 'todo_3', title: '已代办的', status: 'done', priority: 'P3' as const, links: [], attachments: [], contacts: [], completedBy: 'worker' as const },
+      { ...base, id: 'todo_4', title: '作废的', status: 'cancelled', priority: 'P3' as const, links: [], attachments: [], contacts: [] },
     ])
     expect(text).toContain('[todo_1] 买火车票（截止 2026-10-25） — 待处理')
     expect(text).toContain('[todo_2] 取快递 — 用户已自行标记完成，不要重复代办')
@@ -63,7 +63,7 @@ describe('todoStatusSection 投递附言', () => {
   })
   it('空清单或全无可提项时不产生片段', () => {
     expect(todoStatusSection([])).toBe('')
-    expect(todoStatusSection([{ ...base, id: 'todo_1', title: 'x', status: 'cancelled', priority: 'P3' as const }])).toBe('')
+    expect(todoStatusSection([{ ...base, id: 'todo_1', title: 'x', status: 'cancelled', priority: 'P3' as const, links: [], attachments: [], contacts: [] }])).toBe('')
   })
 })
 
@@ -76,8 +76,8 @@ describe('prompt 编排约定', () => {
   })
 
   it('Worker prompt 约定 progressNote 拟人化幽默风格', () => {
-    expect(WORKER_PROMPT).toContain('拟人化')
-    expect(WORKER_PROMPT).toContain('不许为了搞笑编造信息')
+    expect(WORKER_PROMPT).toContain('拟人口吻')
+    expect(WORKER_PROMPT).toContain('不许编造')
   })
 
   it('Worker prompt 约定重复模式主动建议定时任务', () => {

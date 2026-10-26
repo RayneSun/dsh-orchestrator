@@ -114,8 +114,22 @@ export const CSS = `
 .dsho-todoPriority-P2{color:#b59a00;border-color:color-mix(in srgb,#b59a00 35%,transparent);background:color-mix(in srgb,#b59a00 8%,transparent)}
 .dsho-todoPriority-P3{color:#3d9a50;border-color:color-mix(in srgb,#3d9a50 35%,transparent);background:color-mix(in srgb,#3d9a50 8%,transparent)}
 .dsho-todo-done .dsho-todoDue{opacity:.55;text-decoration:line-through}
-.dsho-todoDetail{display:none;font-size:11px;color:var(--dsw-alias-label-secondary);line-height:1.55;padding:3px 0 1px;white-space:pre-wrap}
+.dsho-todoDetail{display:none;padding:4px 0 2px}
 .dsho-todo-open .dsho-todoDetail{display:block}
+.dsho-todoMeta{display:flex;flex-wrap:wrap;gap:4px;margin-top:4px}
+.dsho-todoRemind{font-size:10px;color:var(--dsho-brand-ink,var(--dsho-brand));background:color-mix(in srgb,var(--dsho-brand) 7%,transparent);border:.5px solid color-mix(in srgb,var(--dsho-brand) 30%,transparent);border-radius:999px;padding:0 7px;line-height:15px}
+.dsho-dRow{display:flex;gap:6px;align-items:flex-start;margin-top:4px;font-size:11px;color:var(--dsw-alias-label-secondary);line-height:1.6}
+.dsho-dRow:first-child{margin-top:0}
+.dsho-dIcon{flex:none;width:16px;text-align:center;font-size:11px;margin-top:1px;filter:grayscale(.35);opacity:.85}
+.dsho-dText{flex:1;min-width:0;white-space:pre-wrap}
+.dsho-dChips{flex:1;min-width:0;display:flex;flex-wrap:wrap;gap:4px}
+.dsho-chip{display:inline-flex;align-items:center;gap:4px;font-size:10px;border-radius:6px;padding:2px 7px;border:.5px solid transparent;cursor:pointer;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.dsho-chip-link{color:var(--dsho-brand-ink,var(--dsho-brand));background:color-mix(in srgb,var(--dsho-brand) 7%,transparent);border-color:color-mix(in srgb,var(--dsho-brand) 25%,transparent)}
+.dsho-chip-file{color:#6941c6;background:color-mix(in srgb,#7a5af5 7%,transparent);border-color:color-mix(in srgb,#7a5af5 25%,transparent)}
+.dsho-chip-person{color:#0e7c86;background:color-mix(in srgb,#0e7c86 7%,transparent);border-color:color-mix(in srgb,#0e7c86 25%,transparent)}
+.dsho-chip-person b{font-weight:550}
+.dsho-chip-person em{font-style:normal;opacity:.75}
+.dsho-chip-place{color:var(--dsw-alias-label-secondary);background:var(--dsw-alias-bg-layer-2,#fff);border-color:var(--dsw-alias-border-l4);cursor:default}
 .dsho-todo-cancelled .dsho-todoCheck{background:transparent;border-color:transparent;color:var(--dsw-alias-label-tertiary);cursor:default;opacity:.7}
 .dsho-todo-cancelled .dsho-todoTitle{color:var(--dsw-alias-label-tertiary);text-decoration:line-through;font-weight:400}
 .dsho-todo-cancelled .dsho-todoDue{opacity:.55;text-decoration:line-through}

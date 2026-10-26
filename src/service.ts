@@ -342,7 +342,6 @@ export class OrchestratorService extends TypertRemoteService {
               ...todo,
               status: request.status,
               completedBy: request.status === 'done' ? 'user' as const : undefined,
-              completedAt: request.status === 'done' ? now : undefined,
               updatedAt: now,
             }
           : todo)
@@ -511,7 +510,7 @@ export class OrchestratorService extends TypertRemoteService {
     }))
     this.keep(agent, scoped.tools.register(defineTool({
       name: 'task_update',
-      description: '向 Orchestrator Host 上报当前子会话活动 TaskRun 的状态。不接受 task id，Host 根据会话身份反查。无活动任务时仅允许 completed（定时触发后的结果上报）。',
+      description: '任务进度上报与用户待办维护：实时汇报进展、提交终态结果，并创建/更新需要用户本人推进的待办（userTodos）。定时触发轮次无活动任务，仅允许 completed 上报结果。',
       parameters: TASK_UPDATE_TOOL_PARAMETERS,
       output: sharedJsonOutput,
       execute: async (args: any, exec: { concludeTurn?: () => void }) => {
@@ -661,7 +660,7 @@ export class OrchestratorService extends TypertRemoteService {
             id: todo.id,
             title: todo.title,
             status: todo.status,
-            ...todo.detail ? { detail: todo.detail } : {},
+            ...todo.remark ? { remark: todo.remark } : {},
             ...todo.dueDate ? { dueDate: todo.dueDate } : {},
           }))
           return toJson({
@@ -981,7 +980,7 @@ export class OrchestratorService extends TypertRemoteService {
 
   /**
    * 应用 task_update 的待办变更：report.todos 追加新待办（Host 分配 id），
-   * todoUpdates 按 id 更新；未知 id 抛错（在持久化前，不产生部分写入）。
+   * update 按 id 更新；未知 id 抛错（在持久化前，不产生部分写入）。
    */
   /** task_update 的会话级副作用：summary 更新路由卡摘要，report.todos/todoUpdates 更新待办。 */
   private applyUpdateSideEffects(conv: ConversationRecord, args: TaskUpdateInput): ConversationRecord {
@@ -992,35 +991,32 @@ export class OrchestratorService extends TypertRemoteService {
   private applyTodoChanges(conv: ConversationRecord, args: TaskUpdateInput): ConversationRecord {
     const now = timestamp()
     let todos = conv.todos
-    for (const input of args.report?.todos ?? []) {
+    for (const entry of args.userTodos?.create ?? []) {
+      const { priority, ...content } = entry
       todos = [...todos, {
         id: createId('todo'),
-        title: input.title,
-        ...input.detail !== undefined ? { detail: input.detail } : {},
-        ...input.dueDate !== undefined ? { dueDate: input.dueDate } : {},
-        priority: input.priority,
+        priority,
+        links: [], attachments: [], contacts: [],
+        ...content,
         status: 'pending' as const,
         createdAt: now,
         updatedAt: now,
       }]
     }
-    for (const update of args.todoUpdates ?? []) {
-      if (!todos.some(todo => todo.id === update.id)) {
-        throw new Error(`todo not found in this conversation: ${update.id}`)
+    for (const entry of args.userTodos?.update ?? []) {
+      if (!todos.some(todo => todo.id === entry.id)) {
+        throw new Error(`todo not found in this conversation: ${entry.id}`)
       }
-      todos = todos.map(todo => todo.id === update.id
+      const { id, status, ...patch } = entry
+      todos = todos.map(todo => todo.id === id
         ? {
             ...todo,
-            ...update.title !== undefined ? { title: update.title } : {},
-            ...update.detail !== undefined ? { detail: update.detail } : {},
-            ...update.dueDate !== undefined ? { dueDate: update.dueDate } : {},
-            ...update.priority !== undefined ? { priority: update.priority } : {},
-            ...update.status !== undefined
+            ...patch,
+            ...status !== undefined
               ? {
-                  status: update.status,
+                  status,
                   // done/cancelled 都是 Worker 侧的终结标记；回到 pending 则清除
-                  completedBy: update.status !== 'pending' ? 'worker' as const : undefined,
-                  completedAt: update.status !== 'pending' ? now : undefined,
+                  completedBy: status !== 'pending' ? 'worker' as const : undefined,
                 }
               : {},
             updatedAt: now,
@@ -1032,7 +1028,13 @@ export class OrchestratorService extends TypertRemoteService {
 
   private async updateFromWorker(rawArgs: unknown, childSessionId: string): Promise<any> {
     const parsed = taskUpdateInputSchema.safeParse(rawArgs)
-    if (!parsed.success) throw new Error(parsed.error.issues[0]?.message ?? 'invalid task_update arguments')
+    if (!parsed.success) {
+      // 全量 issues 带路径返回：模型下一轮能精准补字段，而不是猜"哪里少了字符串"。
+      const detail = parsed.error.issues
+        .map(issue => `${issue.path.join('.') || '(root)'}: ${issue.message}`)
+        .join('; ')
+      throw new Error(`invalid task_update arguments: ${detail}`)
+    }
     const args: TaskUpdateInput = parsed.data
     let shouldDeliver = false
     let terminalTaskId: string | undefined
@@ -1282,38 +1284,103 @@ export const TASK_UPDATE_TOOL_PARAMETERS = {
     properties: {
       result: { type: 'string', required: true, description: '完整结果，Lead 转述给用户的权威答案' },
       artifacts: { type: 'array', items: { type: 'string' }, description: '用户会要看的产物文件，子工作区相对路径（禁止绝对路径和 ..）' },
-      todos: {
+    },
+    description: 'completed 时必填：最终结果与产物',
+  },
+  userTodos: {
+    type: 'object',
+    additionalProperties: false,
+    properties: {
+      create: {
         type: 'array',
         items: {
           type: 'object',
           additionalProperties: false,
           properties: {
             title: { type: 'string', required: true, description: '待办标题（极简，≤30 字）' },
-            detail: { type: 'string', description: '背景与操作方式' },
             dueDate: { type: 'string', description: '截止日期 YYYY-MM-DD' },
-            priority: { type: 'string', enum: [...todoPriorities], description: '优先级：P0 紧急且重要 / P1 重要不紧急 / P2 紧急不重要 / P3 有空再做（默认 P3）' },
+            remindAt: { type: 'string', description: '提醒时间 ISO 8601 带时区（与死线分开）' },
+            priority: { type: 'string', enum: [...todoPriorities], description: 'P0 紧急且重要 / P1 重要不紧急 / P2 紧急不重要 / P3 有空再做（默认 P3）' },
+            links: {
+              type: 'array',
+              items: { type: 'object', additionalProperties: false, properties: {
+                url: { type: 'string', required: true, description: 'http(s) 网址' },
+                label: { type: 'string', description: '显示名（缺省显示域名）' },
+              } },
+              description: '相关链接（≤10）',
+            },
+            attachments: {
+              type: 'array',
+              items: { type: 'object', additionalProperties: false, properties: {
+                path: { type: 'string', required: true, description: '子工作区相对路径（禁止绝对路径和 ..）' },
+                name: { type: 'string', description: '显示名（缺省显示文件名）' },
+              } },
+              description: '附件文件（≤10，须已在工作区内生成）',
+            },
+            contacts: {
+              type: 'array',
+              items: { type: 'object', additionalProperties: false, properties: {
+                name: { type: 'string', required: true },
+                phone: { type: 'string' },
+                email: { type: 'string' },
+                note: { type: 'string', description: '如可用时段' },
+              } },
+              description: '联系人信息卡（≤5，电话/邮箱供用户点按联系）',
+            },
+            location: {
+              type: 'object', additionalProperties: false, properties: {
+                name: { type: 'string', required: true },
+                address: { type: 'string' },
+              },
+              description: '地点（名称+可选地址）',
+            },
+            remark: { type: 'string', description: '备注：纯文字说明。联系方式/网址/地点/文件用 contacts/links/location/attachments 字段，不要堆在这里' },
           },
         },
-        description: '需要用户本人推进的待办（本人操作/线下事务/待用户决策）；没有就不给',
+        description: '新建用户待办：只有助理代替不了、需要用户本人推进的事才建；电话/网址/地点/附件写进 contacts/links/location/attachments 字段',
+      },
+      update: {
+        type: 'array',
+        items: {
+          type: 'object',
+          additionalProperties: false,
+          properties: {
+            id: { type: 'string', required: true, description: '待办 id（从投递附言/本工具返回值的清单里抄，禁止编造）' },
+            status: { type: 'string', enum: ['pending', 'done', 'cancelled'], description: '代办完成标 done；不再适用标 cancelled' },
+            title: { type: 'string', description: '改标题（≤30 字）' },
+            dueDate: { type: 'string', description: 'YYYY-MM-DD' },
+            remindAt: { type: 'string', description: 'ISO 8601 带时区' },
+            priority: { type: 'string', enum: [...todoPriorities], description: 'P0~P3' },
+            links: {
+              type: 'array',
+              items: { type: 'object', additionalProperties: false, properties: {
+                url: { type: 'string', required: true }, label: { type: 'string' },
+              } },
+            },
+            attachments: {
+              type: 'array',
+              items: { type: 'object', additionalProperties: false, properties: {
+                path: { type: 'string', required: true }, name: { type: 'string' },
+              } },
+            },
+            contacts: {
+              type: 'array',
+              items: { type: 'object', additionalProperties: false, properties: {
+                name: { type: 'string', required: true }, phone: { type: 'string' }, email: { type: 'string' }, note: { type: 'string' },
+              } },
+            },
+            location: {
+              type: 'object', additionalProperties: false, properties: {
+                name: { type: 'string', required: true }, address: { type: 'string' },
+              },
+            },
+            remark: { type: 'string', description: '备注：纯文字说明' },
+          },
+        },
+        description: '更新已有待办：按 id 改状态或内容（改谁带谁）',
       },
     },
-    description: 'completed 时必填：最终结果与产物',
-  },
-  todoUpdates: {
-    type: 'array',
-    items: {
-      type: 'object',
-      additionalProperties: false,
-      properties: {
-        id: { type: 'string', required: true, description: '待办 id（提出待办时由系统分配，见投递/查询结果）' },
-        status: { type: 'string', enum: ['pending', 'done', 'cancelled'], description: '代办完成后标 done；不再适用标 cancelled' },
-        title: { type: 'string' },
-        detail: { type: 'string' },
-        dueDate: { type: 'string', description: 'YYYY-MM-DD' },
-        priority: { type: 'string', enum: [...todoPriorities], description: '调整优先级 P0~P3' },
-      },
-    },
-    description: '更新本会话已有待办：被派回代办时完成后标记 done',
+    description: '用户待办：新的放 create，改的放 update（抄 id）',
   },
   error: { type: 'string', description: 'failed/blocked 时必填：失败原因或系统阻碍' },
   question: { type: 'string', description: 'input_required 时必填：可直接转达给用户的问题/接管提示，需自包含、一次问清' },

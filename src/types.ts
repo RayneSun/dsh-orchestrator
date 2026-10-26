@@ -35,10 +35,10 @@ const trimmed = z.string().trim().min(1)
 export const taskUpdateStatuses = ['running', 'input_required', 'blocked', 'completed', 'failed'] as const
 
 export const taskUpdateFieldAllowList: Record<(typeof taskUpdateStatuses)[number], readonly string[]> = {
-  running: ['title', 'progressNote', 'summary', 'todoUpdates'],
-  input_required: ['title', 'progressNote', 'question', 'summary', 'todoUpdates'],
+  running: ['title', 'progressNote', 'summary', 'userTodos'],
+  input_required: ['title', 'progressNote', 'question', 'summary', 'userTodos'],
   blocked: ['title', 'progressNote', 'error', 'reasonCode', 'remediation', 'summary'],
-  completed: ['title', 'progressNote', 'report', 'summary', 'todoUpdates'],
+  completed: ['title', 'progressNote', 'report', 'summary', 'userTodos'],
   failed: ['title', 'progressNote', 'error', 'summary'],
 }
 
@@ -48,42 +48,91 @@ const now = () => new Date().toISOString()
 /** 严格日期：YYYY-MM-DD。 */
 const dueDateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'dueDate 必须是 YYYY-MM-DD 格式')
 
+/** 相对路径：拒绝绝对路径、盘符与 .. 逃逸（待办附件与 report.artifacts 共用）。 */
+const relativePathSchema = z.string().trim().min(1).max(500).refine(
+  (value) => {
+    if (value.startsWith('/') || /^[a-zA-Z]:[\\/]/.test(value)) return false
+    return !value.split(/[\\/]/).includes('..')
+  },
+  { message: '必须是工作区内的相对路径' },
+)
+
 /** 待办优先级：P0 紧急且重要 / P1 重要不紧急 / P2 紧急不重要 / P3 有空再做（默认）。 */
 export const todoPriorities = ['P0', 'P1', 'P2', 'P3'] as const
 export const todoPrioritySchema = z.enum(todoPriorities)
 
-/** 子会话提出的用户待办（report.todos 元素）：需要用户本人推进的事。 */
-export const newTodoSchema = z.object({
-  title: trimmed.max(30),
-  detail: z.string().trim().max(2_000).optional(),
+/** 待办链接：http(s) 网址 + 可选显示名。 */
+const todoLinkSchema = z.object({
+  url: z.string().trim().max(2_000).regex(/^https?:\/\//, '链接必须是 http(s) 网址'),
+  label: trimmed.max(50).optional(),
+}).strict()
+
+/** 待办附件：子工作区相对路径 + 可选显示名。 */
+const todoAttachmentSchema = z.object({
+  path: relativePathSchema,
+  name: trimmed.max(100).optional(),
+}).strict()
+
+/** 待办联系人：弱结构信息卡（移动端可渲染 tel:/mailto: 动作）。 */
+const todoContactSchema = z.object({
+  name: trimmed.max(50),
+  phone: trimmed.max(50).optional(),
+  email: z.string().trim().max(200).optional(),
+  note: z.string().trim().max(500).optional(),
+}).strict()
+
+/** 待办地点：名称 + 可选地址，不做坐标。 */
+const todoLocationSchema = z.object({
+  name: trimmed.max(100),
+  address: z.string().trim().max(300).optional(),
+}).strict()
+
+/** 待办内容字段（new 与 update 共用；update 全可选）。 */
+const todoContentFields = {
   dueDate: dueDateSchema.optional(),
+  remindAt: z.string().datetime({ offset: true }).optional(),
+  links: z.array(todoLinkSchema).max(10).optional(),
+  attachments: z.array(todoAttachmentSchema).max(10).optional(),
+  contacts: z.array(todoContactSchema).max(5).optional(),
+  location: todoLocationSchema.optional(),
+  // 备注放最后：诱导模型优先填结构化字段，remark 只兜底纯文字说明
+  remark: z.string().trim().max(2_000).optional(),
+}
+
+/** task_update 的 userTodos.create 元素：新建待办（title 静态必填，结构上接触不到 id/status）。 */
+export const todoCreateSchema = z.object({
+  title: trimmed.max(30),
+  ...todoContentFields,
   priority: todoPrioritySchema.default('P3'),
+}).strict()
+
+/** task_update 的 userTodos.update 元素：更新已有待办（id 静态必填，抄自可见清单，禁止编造）。 */
+export const todoUpdateEntrySchema = z.object({
+  id: trimmed,
+  status: z.enum(['pending', 'done', 'cancelled']).optional(),
+  title: trimmed.max(30).optional(),
+  ...todoContentFields,
+  priority: todoPrioritySchema.optional(),
 }).strict()
 
 /** 持久化的用户待办：属于会话级清单，用户与子会话双向画勾。 */
 export const userTodoSchema = z.object({
   id: trimmed,
   title: trimmed.max(30),
-  detail: z.string().trim().max(2_000).optional(),
   dueDate: dueDateSchema.optional(),
+  remindAt: z.string().optional(),
   priority: todoPrioritySchema.default('P3'),
+  links: z.array(todoLinkSchema).default([]),
+  attachments: z.array(todoAttachmentSchema).default([]),
+  contacts: z.array(todoContactSchema).default([]),
+  location: todoLocationSchema.optional(),
+  remark: z.string().trim().max(2_000).optional(),
   status: z.enum(['pending', 'done', 'cancelled']).default('pending'),
   completedBy: z.enum(['user', 'worker']).optional(),
   createdAt: z.string(),
   updatedAt: z.string(),
-  completedAt: z.string().optional(),
 }).strict()
 export type UserTodo = z.infer<typeof userTodoSchema>
-
-/** task_update 最外层的待办更新：按 id 标 done 或改内容。 */
-export const todoUpdateSchema = z.object({
-  id: trimmed,
-  status: z.enum(['pending', 'done', 'cancelled']).optional(),
-  title: trimmed.max(30).optional(),
-  detail: z.string().trim().max(2_000).optional(),
-  dueDate: dueDateSchema.optional(),
-  priority: todoPrioritySchema.optional(),
-}).strict()
 
 export const progressStepSchema = z.object({
   content: z.string().trim().min(1).max(300),
@@ -113,20 +162,10 @@ export const deliverySchema = z.discriminatedUnion('state', [
   }).strict(),
 ])
 
-/** 制品路径：子工作区内相对路径，拒绝绝对路径、盘符与 .. 逃逸。 */
-const artifactPath = z.string().trim().min(1).max(500).refine(
-  (value) => {
-    if (value.startsWith('/') || /^[a-zA-Z]:[\\/]/.test(value)) return false
-    return !value.split(/[\\/]/).includes('..')
-  },
-  { message: 'artifacts 必须是子工作区内的相对路径' },
-)
-
 /** completed 上报：result 给主会话转述；artifacts 是用户会要看的产物文件（相对路径）。 */
 export const reportSchema = z.object({
   result: trimmed.max(50_000),
-  artifacts: z.array(artifactPath).max(20).optional(),
-  todos: z.array(newTodoSchema).max(20).optional(),
+  artifacts: z.array(relativePathSchema).max(20).optional(),
 }).strict()
 export type TaskReport = z.infer<typeof reportSchema>
 
@@ -205,7 +244,25 @@ function migrateRecord(raw: unknown): unknown {
   delete record.userAnswer
   delete record.resultSummary
   delete record.outlinePatch
+  // 0.3.12 的 report.todos 是待办创建请求的冗余回显（数据已落 conv.todos），0.3.13 协议移出 report，剥离。
+  if (record.report && typeof record.report === 'object' && 'todos' in record.report) {
+    const { todos, ...rest } = record.report as Record<string, unknown>
+    record.report = rest
+  }
   if (record.status === 'cancelled') record.status = 'interrupted'
+  // 0.3.12 的待办带 completedAt（只写不读的死字段），0.3.13 起剥离。
+  if (Array.isArray(record.todos)) {
+    record.todos = record.todos.map(todo => {
+      if (!todo || typeof todo !== 'object') return todo
+      const { completedAt, ...rest } = todo as Record<string, unknown>
+      // 0.3.12 的 detail → 0.3.13 的 remark
+      if (rest.remark === undefined && typeof rest.detail === 'string') {
+        rest.remark = rest.detail
+      }
+      delete rest.detail
+      return rest
+    })
+  }
   return record
 }
 
@@ -318,7 +375,10 @@ export const taskUpdateInputSchema = z.object({
   question: trimmed.max(5_000).optional(),
   reasonCode: z.enum(blockReasonCodes).optional(),
   remediation: trimmed.max(5_000).optional(),
-  todoUpdates: z.array(todoUpdateSchema).max(50).optional(),
+  userTodos: z.object({
+    create: z.array(todoCreateSchema).max(50).optional(),
+    update: z.array(todoUpdateEntrySchema).max(50).optional(),
+  }).strict().optional(),
 }).strict().superRefine((value, ctx) => {
   if (value.status === 'completed' && !value.report) {
     ctx.addIssue({ code: 'custom', path: ['report'], message: 'completed task_update requires report' })
