@@ -661,7 +661,8 @@ export class OrchestratorService extends TypertRemoteService {
             title: todo.title,
             status: todo.status,
             ...todo.remark ? { remark: todo.remark } : {},
-            ...todo.dueDate ? { dueDate: todo.dueDate } : {},
+            ...todo.startAt ? { startAt: todo.startAt } : {},
+            ...todo.endAt ? { endAt: todo.endAt } : {},
           }))
           return toJson({
             title: conv.title,
@@ -1008,10 +1009,14 @@ export class OrchestratorService extends TypertRemoteService {
         throw new Error(`todo not found in this conversation: ${entry.id}`)
       }
       const { id, status, ...patch } = entry
-      todos = todos.map(todo => todo.id === id
-        ? {
-            ...todo,
-            ...patch,
+      todos = todos.map(todo => {
+        if (todo.id !== id) return todo
+        const merged = { ...todo, ...patch }
+        if (merged.startAt && merged.endAt && Date.parse(merged.startAt) > Date.parse(merged.endAt)) {
+          throw new Error(`todo ${id}: startAt 不能晚于 endAt`)
+        }
+        return {
+            ...merged,
             ...status !== undefined
               ? {
                   status,
@@ -1021,7 +1026,7 @@ export class OrchestratorService extends TypertRemoteService {
               : {},
             updatedAt: now,
           }
-        : todo)
+      })
     }
     return todos === conv.todos ? conv : { ...conv, todos, updatedAt: now }
   }
@@ -1298,8 +1303,9 @@ export const TASK_UPDATE_TOOL_PARAMETERS = {
           additionalProperties: false,
           properties: {
             title: { type: 'string', required: true, description: '待办标题（极简，≤30 字）' },
-            dueDate: { type: 'string', description: '截止日期 YYYY-MM-DD' },
-            remindAt: { type: 'string', description: '提醒时间 ISO 8601 带时区（与死线分开）' },
+            startAt: { type: 'string', description: '开始时间，如 10-28 09:00（可带年份 2026-10-28 09:00；事项可开始办理的时间窗起点，无明确起点不填）' },
+            endAt: { type: 'string', description: '结束时间，如 10-28 22:00（事项应完成的时刻）' },
+            remindAt: { type: 'string', description: '提醒时间，如 10-28 17:30（到点提醒用户，与时间窗分开）' },
             priority: { type: 'string', enum: [...todoPriorities], description: 'P0 紧急且重要 / P1 重要不紧急 / P2 紧急不重要 / P3 有空再做（默认 P3）' },
             links: {
               type: 'array',
@@ -1348,8 +1354,9 @@ export const TASK_UPDATE_TOOL_PARAMETERS = {
             id: { type: 'string', required: true, description: '待办 id（从投递附言/本工具返回值的清单里抄，禁止编造）' },
             status: { type: 'string', enum: ['pending', 'done', 'cancelled'], description: '代办完成标 done；不再适用标 cancelled' },
             title: { type: 'string', description: '改标题（≤30 字）' },
-            dueDate: { type: 'string', description: 'YYYY-MM-DD' },
-            remindAt: { type: 'string', description: 'ISO 8601 带时区' },
+            startAt: { type: 'string', description: '开始时间，如 10-28 09:00（可带年份）' },
+            endAt: { type: 'string', description: '结束时间，如 10-28 22:00' },
+            remindAt: { type: 'string', description: '提醒时间，如 10-28 17:30' },
             priority: { type: 'string', enum: [...todoPriorities], description: 'P0~P3' },
             links: {
               type: 'array',

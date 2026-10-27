@@ -103,12 +103,47 @@ function taskHeadline(task: TaskRecord): string {
   }
 }
 
-/** YYYY-MM-DD → MM-DD 展示；3 天内（含已过期）为临期。 */
-function dueLabel(dueDate: string): { text: string; soon: boolean } {
-  const due = Date.parse(`${dueDate}T23:59:59`)
-  if (Number.isNaN(due)) return { text: dueDate, soon: false }
-  const soon = due - Date.now() <= 3 * 24 * 3600 * 1000
-  return { text: dueDate.slice(5), soon }
+/** ISO 8601 时间点 → { date: 'MM-DD', time: ' HH:mm'（整点/23:59 省略）, t }。 */
+function fmtTimePoint(iso: string): { date: string; time: string; t: number } | undefined {
+  const t = Date.parse(iso)
+  if (Number.isNaN(t)) return undefined
+  const d = new Date(t)
+  const pad = (n: number) => String(n).padStart(2, '0')
+  const date = `${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
+  const hh = d.getHours(), mm = d.getMinutes()
+  // 00:00 视为纯日期、23:59 视为"当日内"（旧 dueDate 迁移值），都不展示时刻
+  const time = (hh === 0 && mm === 0) || (hh === 23 && mm === 59) ? '' : ` ${pad(hh)}:${pad(mm)}`
+  return { date, time, t }
+}
+
+type TodoTimeTone = 'neutral' | 'active' | 'soon' | 'over'
+
+/** startAt/endAt → 时间胶囊文本与状态色。
+ * active：当前落在窗口内（或 startAt 已过且无 endAt）；soon：endAt ≤3 天；over：endAt 已过。 */
+function timeRange(todo: UserTodo): { text: string; tone: TodoTimeTone } | undefined {
+  if (!todo.startAt && !todo.endAt) return undefined
+  const start = todo.startAt ? fmtTimePoint(todo.startAt) : undefined
+  const end = todo.endAt ? fmtTimePoint(todo.endAt) : undefined
+  if ((todo.startAt && !start) || (todo.endAt && !end)) {
+    return { text: [todo.startAt, todo.endAt].filter(Boolean).join(' → '), tone: 'neutral' }
+  }
+  const now = Date.now()
+  const tone: TodoTimeTone =
+    end && now > end.t ? 'over'
+    : start && now >= start.t && (!end || now <= end.t) ? 'active'
+    : end && end.t - now <= 3 * 24 * 3600 * 1000 ? 'soon'
+    : 'neutral'
+  let text: string
+  if (start && end) {
+    text = start.date === end.date
+      ? `${start.date}${start.time}${end.time ? ` →${end.time}` : ''}`
+      : `${start.date}${start.time} → ${end.date}${end.time}`
+  } else if (end) {
+    text = tone === 'over' ? `已过期 ${end.date}` : `结束 ${end.date}${end.time}`
+  } else {
+    text = `${start!.date}${start!.time} 起`
+  }
+  return { text, tone }
 }
 
 /** ISO 8601 提醒时间 → "M-D HH:mm" 展示。 */
@@ -144,7 +179,7 @@ function TodoList({ todos, onToggle, onOpenAttachment, showToast }: {
     {todos.map(todo => {
       const done = todo.status === 'done'
       const cancelled = todo.status === 'cancelled'
-      const due = todo.dueDate ? dueLabel(todo.dueDate) : undefined
+      const time = timeRange(todo)
       const remind = todo.remindAt ? remindLabel(todo.remindAt) : undefined
       const hasDetail = Boolean(todo.remark || todo.links.length || todo.attachments.length || todo.contacts.length || todo.location)
       return <div key={todo.id} className={`dsho-todo${done ? ' dsho-todo-done' : ''}${cancelled ? ' dsho-todo-cancelled' : ''}${openId === todo.id ? ' dsho-todo-open' : ''}`}>
@@ -159,7 +194,7 @@ function TodoList({ todos, onToggle, onOpenAttachment, showToast }: {
           <div className="dsho-todoLine">
             <span className="dsho-todoTitle">{todo.title}{cancelled && <span className="dsho-todoCancelledTag">已作废</span>}</span>
             <span className={`dsho-todoPriority dsho-todoPriority-${todo.priority}`} title={{ P0: '紧急且重要', P1: '重要不紧急', P2: '紧急不重要', P3: '有空再做' }[todo.priority]}>{todo.priority}</span>
-            {due && <span className={`dsho-todoDue${due.soon && !done && !cancelled ? ' dsho-todoDue-soon' : ''}`}>截止 {due.text}</span>}
+            {time && <span className={`dsho-todoTime${!done && !cancelled && time.tone !== 'neutral' ? ` dsho-todoTime-${time.tone}` : ''}`}>{time.tone === 'active' && !done && !cancelled && <span className="dsho-dot" aria-hidden="true" />}{time.text}</span>}
           </div>
           {remind && <div className="dsho-todoMeta"><span className="dsho-todoRemind">⏰ {remind} 提醒</span></div>}
           {hasDetail && <div className="dsho-todoDetail">

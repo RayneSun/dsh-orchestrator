@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   conversationSchema,
+  normalizeTimePoint,
   createConversation,
   createTask,
   userTodoSchema,
@@ -186,7 +187,7 @@ describe('task_update 待办与标题协议', () => {
       userTodos: {
         create: [
           { title: '默认' },
-          { title: '加急', priority: 'P0', dueDate: '2026-10-30', remindAt: '2026-10-29T09:00:00+08:00',
+          { title: '加急', priority: 'P0', startAt: '2026-10-28T09:00:00+08:00', endAt: '2026-10-30T18:00:00+08:00', remindAt: '2026-10-29T09:00:00+08:00',
             links: [{ url: 'https://example.com', label: '订票页' }],
             attachments: [{ path: 'shots/a.png' }],
             contacts: [{ name: '前台', phone: '010-12345678' }],
@@ -195,7 +196,7 @@ describe('task_update 待办与标题协议', () => {
       },
     })
     expect(parsed.userTodos?.create?.[0]).toMatchObject({ title: '默认', priority: 'P3' })
-    expect(parsed.userTodos?.create?.[1]).toMatchObject({ title: '加急', priority: 'P0' })
+    expect(parsed.userTodos?.create?.[1]).toMatchObject({ title: '加急', priority: 'P0', startAt: '2026-10-28T09:00:00+08:00', endAt: '2026-10-30T18:00:00+08:00' })
     // create 条目结构上接触不到 id/status（strict 拒绝）
     expect(taskUpdateInputSchema.safeParse({ status: 'running', userTodos: { create: [{ title: 'x', id: 'todo_1' }] } }).success).toBe(false)
     expect(taskUpdateInputSchema.safeParse({ status: 'running', userTodos: { create: [{ title: 'x', status: 'done' }] } }).success).toBe(false)
@@ -214,10 +215,13 @@ describe('task_update 待办与标题协议', () => {
     expect(taskUpdateInputSchema.safeParse({ status: 'running', userTodos: { update: [{ id: 'todo_1', priority: 'P9' }] } }).success).toBe(false)
   })
 
-  it('userTodos 输入边界：dueDate 严格日期、链接必须 http(s)、附件禁绝对路径与 ..', () => {
+  it('userTodos 输入边界：时间简写合法、自然语言与不存在日期拒绝、链接必须 http(s)、附件禁绝对路径与 ..', () => {
     const base = { status: 'running' as const }
-    for (const bad of ['明天', '2026/10/25', '10-25']) {
-      expect(taskUpdateInputSchema.safeParse({ ...base, userTodos: { create: [{ title: 'x', dueDate: bad }] } }).success).toBe(false)
+    for (const bad of ['明天', '下周三', '2026/10/25', '2026-13-01', '2026-02-30', '18:00', '']) {
+      expect(taskUpdateInputSchema.safeParse({ ...base, userTodos: { create: [{ title: 'x', endAt: bad }] } }).success).toBe(false)
+    }
+    for (const good of ['10-25', '10-25 18:00', '2026-10-25', '2026-10-25T09:00', '2026-10-25T09:00:00+08:00']) {
+      expect(taskUpdateInputSchema.safeParse({ ...base, userTodos: { create: [{ title: 'x', endAt: good }] } }).success).toBe(true)
     }
     expect(taskUpdateInputSchema.safeParse({ ...base, userTodos: { create: [{ title: 'x', links: [{ url: 'ftp://a' }] }] } }).success).toBe(false)
     expect(taskUpdateInputSchema.safeParse({ ...base, userTodos: { create: [{ title: 'x', attachments: [{ path: '/etc/passwd' }] }] } }).success).toBe(false)
@@ -246,6 +250,59 @@ describe('task_update 待办与标题协议', () => {
     })
     expect(todo.status).toBe('cancelled')
     expect(todo.links).toEqual([])
+  })
+
+  it('时间归一化：简写补本地时区、省略年份取最近未来、完整 ISO 原样保留', () => {
+    const localIso = (d: Date) => {
+      const pad = (n: number) => String(n).padStart(2, '0')
+      const offset = -d.getTimezoneOffset()
+      const sign = offset >= 0 ? '+' : '-'
+      const abs = Math.abs(offset)
+      return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}${sign}${pad(Math.floor(abs / 60))}:${pad(abs % 60)}`
+    }
+    expect(normalizeTimePoint('2026-10-28 18:00')).toBe(localIso(new Date(2026, 9, 28, 18, 0, 0)))
+    expect(normalizeTimePoint('2026-10-28T18:00')).toBe(localIso(new Date(2026, 9, 28, 18, 0, 0)))
+    expect(normalizeTimePoint('2026-10-28')).toBe(localIso(new Date(2026, 9, 28, 0, 0, 0)))
+    // 完整 ISO（带偏移）→ 转本地表示
+    expect(normalizeTimePoint('2026-10-28T18:00:00+08:00')).toBe(localIso(new Date('2026-10-28T18:00:00+08:00')))
+    // 省略年份：未来日期补今年，已过去的补明年
+    const now = new Date()
+    const future = new Date(now.getTime() + 30 * 24 * 3600 * 1000)
+    const past = new Date(now.getTime() - 30 * 24 * 3600 * 1000)
+    const pad = (n: number) => String(n).padStart(2, '0')
+    const futureShort = `${pad(future.getMonth() + 1)}-${pad(future.getDate())} 18:00`
+    const pastShort = `${pad(past.getMonth() + 1)}-${pad(past.getDate())} 18:00`
+    expect(normalizeTimePoint(futureShort)).toBe(localIso(new Date(future.getFullYear(), future.getMonth(), future.getDate(), 18, 0, 0)))
+    expect(normalizeTimePoint(pastShort)).toBe(localIso(new Date(past.getFullYear() + 1, past.getMonth(), past.getDate(), 18, 0, 0)))
+    // 非法
+    for (const bad of ['明天', '2026-13-01', '2026-02-30', 'abc']) {
+      expect(normalizeTimePoint(bad)).toBeUndefined()
+    }
+  })
+
+  it('时间窗顺序：startAt 晚于 endAt 拒绝（create 与 update 同规则）', () => {
+    const base = { status: 'running' as const }
+    expect(taskUpdateInputSchema.safeParse({ ...base, userTodos: { create: [{ title: 'x', startAt: '2026-10-30T00:00:00+08:00', endAt: '2026-10-28T00:00:00+08:00' }] } }).success).toBe(false)
+    expect(taskUpdateInputSchema.safeParse({ ...base, userTodos: { update: [{ id: 'todo_1', startAt: '2026-10-30T00:00:00+08:00', endAt: '2026-10-28T00:00:00+08:00' }] } }).success).toBe(false)
+    // 单边更新不在输入层校验（与存量合并后由 Host 兜底）
+    expect(taskUpdateInputSchema.safeParse({ ...base, userTodos: { update: [{ id: 'todo_1', endAt: '2026-10-28T00:00:00+08:00' }] } }).success).toBe(true)
+    // 相等合法（单时间点事项）
+    expect(taskUpdateInputSchema.safeParse({ ...base, userTodos: { create: [{ title: 'x', startAt: '2026-10-28T09:00:00+08:00', endAt: '2026-10-28T09:00:00+08:00' }] } }).success).toBe(true)
+  })
+
+  it('旧待办迁移：dueDate(YYYY-MM-DD) → endAt（当日 23:59 本地转 ISO）', () => {
+    const todo = userTodoSchema.parse({
+      id: 'todo_1', title: 'x', status: 'pending', dueDate: '2026-10-30',
+      createdAt: '2026-10-23T00:00:00Z', updatedAt: '2026-10-23T00:00:00Z',
+    })
+    expect(todo.endAt).toBe(new Date('2026-10-30T23:59:59').toISOString())
+    expect((todo as Record<string, unknown>).dueDate).toBeUndefined()
+    // 新数据不带 dueDate 时不受影响
+    const fresh = userTodoSchema.parse({
+      id: 'todo_2', title: 'y', status: 'pending', endAt: '2026-11-01T18:00:00+08:00',
+      createdAt: '2026-10-23T00:00:00Z', updatedAt: '2026-10-23T00:00:00Z',
+    })
+    expect(fresh.endAt).toBe('2026-11-01T18:00:00+08:00')
   })
 
   it('旧会话记录无 todos 字段时默认空清单', () => {

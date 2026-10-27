@@ -27,7 +27,7 @@ describe('deliveryNotice 用户待办段', () => {
     const conv: ConversationRecord = {
       ...createConversation({ id: 'c1', childSessionId: 's1', parentSessionId: 'p1', title: '体检' }),
       todos: [{
-        id: 'todo_1', title: '拨打预约电话', remark: '工作日 8:00-17:00', dueDate: '2026-10-27',
+        id: 'todo_1', title: '拨打预约电话', remark: '工作日 8:00-17:00', endAt: '2026-10-27T23:59:59+08:00',
         status: 'pending', priority: 'P3' as const, links: [], attachments: [], contacts: [], createdAt: '2026-10-23T00:00:00Z', updatedAt: '2026-10-23T00:00:00Z',
       }, {
         id: 'todo_2', title: '已完成事项', status: 'done', completedBy: 'user', priority: 'P3' as const, links: [], attachments: [], contacts: [],
@@ -37,7 +37,7 @@ describe('deliveryNotice 用户待办段', () => {
     const text = deliveryNotice(baseTask(), conv)
     expect(text).toContain('用户待办')
     expect(text).toContain('[todo_1] 拨打预约电话')
-    expect(text).toContain('截止 2026-10-27')
+    expect(text).toContain('结束 10-27')
     expect(text).toContain("userTodos.update")
     expect(text).not.toContain('todo_2')
     const without = deliveryNotice(baseTask(), { ...conv, todos: [] })
@@ -51,12 +51,12 @@ describe('todoStatusSection 投递附言', () => {
   }
   it('pending 全列含 id；用户标完成的列出防重复代办；worker 标完成与 cancelled 不提', () => {
     const text = todoStatusSection([
-      { ...base, id: 'todo_1', title: '买火车票', dueDate: '2026-10-25', status: 'pending', priority: 'P3' as const, links: [], attachments: [], contacts: [] },
+      { ...base, id: 'todo_1', title: '买火车票', startAt: '2026-10-20T00:00:00+08:00', endAt: '2026-10-25T23:59:59+08:00', status: 'pending', priority: 'P3' as const, links: [], attachments: [], contacts: [] },
       { ...base, id: 'todo_2', title: '取快递', status: 'done', priority: 'P3' as const, links: [], attachments: [], contacts: [], completedBy: 'user' as const },
       { ...base, id: 'todo_3', title: '已代办的', status: 'done', priority: 'P3' as const, links: [], attachments: [], contacts: [], completedBy: 'worker' as const },
       { ...base, id: 'todo_4', title: '作废的', status: 'cancelled', priority: 'P3' as const, links: [], attachments: [], contacts: [] },
     ])
-    expect(text).toContain('[todo_1] 买火车票（截止 2026-10-25） — 待处理')
+    expect(text).toContain('[todo_1] 买火车票（10-20 → 10-25） — 待处理')
     expect(text).toContain('[todo_2] 取快递 — 用户已自行标记完成，不要重复代办')
     expect(text).not.toContain('todo_3')
     expect(text).not.toContain('todo_4')

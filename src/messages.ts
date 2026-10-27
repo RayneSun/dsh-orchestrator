@@ -32,7 +32,7 @@ export const LEAD_PROMPT = `你是用户的主控助理（Lead）：理解需求
 - 新建：用户主动要记待办/提醒时，你自己没有创建待办的工具——派发给对应主题的子会话（一事一会对号，没有合适的就新建，workspaceName 如 reminders），任务里写明事项与已知信息，要求 Worker 用 userTodos.create:[{title, ...}] 创建并 completed 收尾。
 - 代办：用户让你代办某条待办时，复用提出该待办的 conversationId 派发，prompt 带待办 id 与内容，要求完成后用 userTodos.update:[{id, status:'done'}] 标记。
 - 修改/作废：用户要改内容、截止/提醒时间、优先级，或取消某条待办时，派发到所属会话让 Worker 用 userTodos.update 改（取消用 status:'cancelled'）。
-- 提醒类需求先分清主体：到点要**由你/子会话去做事**（查新闻、巡检、汇总）→ 派发并要求 Worker 用 schedule_create；只是**提醒用户本人去做事**（"提醒我 10 点出门"）→ 不要建定时任务，派发轻量任务让 Worker 用 userTodos.create 创建带 remindAt 的待办，看板即刻可见、手机端可按 remindAt 提醒。同一件事禁止既建待办又建定时任务。
+- 提醒类需求先分清主体：到点要**由你/子会话去做事**（查新闻、巡检、汇总）→ 派发并要求 Worker 用 schedule_create；只是**提醒用户本人去做事**（"提醒我 10 点出门"）→ 不要建定时任务，派发轻量任务让 Worker 用 userTodos.create 创建带 remindAt 的待办，看板即刻可见、手机端可按 remindAt 提醒。同一件事禁止既建待办又建定时任务。派发时在任务里写清已知时间结构：事项有起止时段（如会议 18:00–22:00）→ 要求填 startAt/endAt；只有结束期限 → 只填 endAt；提醒时刻 → remindAt。时间格式从简（10-27 18:00），年份和时区可省。
 
 # 长期记忆
 - 记什么：用户画像与偏好、长期事实、项目关键决策、用户纠正过的教训。临时进度、任务产物路径不记。
@@ -69,6 +69,7 @@ task_update 是你与用户之间的唯一通道：普通聊天消息不会送�
 - 提什么：只提助理代替不了、需要用户本人推进的事（本人操作、线下事务、待用户决策）；助理自己能做的事不提，没有就不提
 - 怎么写：新的放 create，改的放 update（id 从 task_update 返回值或投递附言的清单里抄，禁止编造）
 - 结构化纪律：电话/邮箱进 contacts、网址进 links、地点进 location、文件进 attachments；remark 只兜底纯文字备注，最后填
+- 时间纪律：有明确时间窗就填 startAt/endAt（如会议 18:00–22:00 → startAt='10-27 18:00'、endAt='10-27 22:00'；只有结束期限就只填 endAt）；到点提醒填 remindAt；格式从简，月-日 时:分即可，年份和时区可省；时间信息不许只写进 remark
 - 被派回代办完成后 update 标 done；需求变更不再适用标 cancelled，不留着误导用户
 
 # 定时任务
@@ -98,6 +99,18 @@ export function workerPrompt(task: TaskRecord): string {
     : `# 任务\n${task.prompt}`
 }
 
+/** 待办时间窗 → 简短中文标签（投递附言/上报回执共用）：结束 X / X 起 / X → Y，日期粒度 M-D。 */
+export function todoTimeLabel(todo: { startAt?: string, endAt?: string }): string {
+  const fmt = (iso: string): string => {
+    const d = new Date(iso)
+    return Number.isNaN(d.getTime()) ? iso : `${d.getMonth() + 1}-${d.getDate()}`
+  }
+  if (todo.startAt && todo.endAt) return `${fmt(todo.startAt)} → ${fmt(todo.endAt)}`
+  if (todo.endAt) return `结束 ${fmt(todo.endAt)}`
+  if (todo.startAt) return `${fmt(todo.startAt)} 起`
+  return ''
+}
+
 /** 改单/补充需求注入：明确旧任务已停止，其余与正常派发一致。 */
 export function revisionPrompt(task: TaskRecord): string {
   return `需求已变更，旧任务已停止：保留可复用的进展，停止与新要求冲突的工作，在当前子会话继续。\n\n${workerPrompt(task)}`
@@ -113,7 +126,7 @@ export function deliveryNotice(task: TaskRecord, conv?: ConversationRecord): str
       : ''
     const pendingTodos = conv?.todos?.filter(todo => todo.status === 'pending') ?? []
     const todos = pendingTodos.length > 0
-      ? `\n\n用户待办（需要用户本人推进，请用自然语言转述，不要暴露 id）：\n${pendingTodos.map(todo => `- [${todo.id}] ${todo.title}${todo.priority !== 'P3' ? `（${todo.priority}）` : ''}${todo.dueDate ? `（截止 ${todo.dueDate}）` : ''}${todo.remark ? `：${todo.remark}` : ''}`).join('\n')}\n用户让你代办某条待办时，复用上面的 conversationId 派发，prompt 带上待办 id 与内容，要求 Worker 完成后用 userTodos.update:[{id, status:'done'}] 标记。`
+      ? `\n\n用户待办（需要用户本人推进，请用自然语言转述，不要暴露 id）：\n${pendingTodos.map(todo => `- [${todo.id}] ${todo.title}${todo.priority !== 'P3' ? `（${todo.priority}）` : ''}${todoTimeLabel(todo) ? `（${todoTimeLabel(todo)}）` : ''}${todo.remark ? `：${todo.remark}` : ''}`).join('\n')}\n用户让你代办某条待办时，复用上面的 conversationId 派发，prompt 带上待办 id 与内容，要求 Worker 完成后用 userTodos.update:[{id, status:'done'}] 标记。`
       : ''
     return `${base}\n\nWorker 结果：\n${result}${artifacts}${todos}\n\n请结合主会话语境，用自然语言把结果回复用户。`
   }
@@ -147,7 +160,7 @@ export function todoStatusSection(todos: ConversationRecord['todos']): string {
   const lines: string[] = []
   for (const todo of todos) {
     if (todo.status === 'pending') {
-      lines.push(`- [${todo.id}] ${todo.title}${todo.priority !== 'P3' ? `（${todo.priority}）` : ''}${todo.dueDate ? `（截止 ${todo.dueDate}）` : ''} — 待处理`)
+      lines.push(`- [${todo.id}] ${todo.title}${todo.priority !== 'P3' ? `（${todo.priority}）` : ''}${todoTimeLabel(todo) ? `（${todoTimeLabel(todo)}）` : ''} — 待处理`)
     } else if (todo.status === 'done' && todo.completedBy === 'user') {
       lines.push(`- [${todo.id}] ${todo.title} — 用户已自行标记完成，不要重复代办`)
     }

@@ -106,14 +106,18 @@ export const CSS = `
 .dsho-todoLine{display:flex;align-items:baseline;gap:8px;min-width:0}
 .dsho-todoTitle{min-width:0;font-size:12px;font-weight:550;color:var(--dsw-alias-label-primary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .dsho-todo-done .dsho-todoTitle{color:var(--dsw-alias-label-tertiary);text-decoration:line-through;font-weight:400}
-.dsho-todoDue{flex:none;font-size:10px;color:var(--dsw-alias-label-tertiary);border:.5px solid var(--dsho-line);border-radius:999px;padding:0 7px;line-height:15px;background:var(--dsw-alias-bg-layer-2,#fff)}
-.dsho-todoDue-soon{color:var(--dsho-warn);border-color:color-mix(in srgb,var(--dsho-warn) 35%,transparent);background:color-mix(in srgb,var(--dsho-warn) 6%,transparent)}
+.dsho-todoTime{flex:none;display:inline-flex;align-items:center;font-size:10px;color:var(--dsw-alias-label-tertiary);border:.5px solid var(--dsho-line);border-radius:999px;padding:0 7px;line-height:15px;background:var(--dsw-alias-bg-layer-2,#fff);white-space:nowrap}
+.dsho-todoTime-soon{color:var(--dsho-warn);border-color:color-mix(in srgb,var(--dsho-warn) 35%,transparent);background:color-mix(in srgb,var(--dsho-warn) 6%,transparent)}
+.dsho-todoTime-over{color:var(--dsho-err);border-color:color-mix(in srgb,var(--dsho-err) 35%,transparent);background:color-mix(in srgb,var(--dsho-err) 6%,transparent)}
+.dsho-todoTime-active{color:var(--dsho-brand-ink,var(--dsho-brand));border-color:color-mix(in srgb,var(--dsho-brand) 35%,transparent);background:color-mix(in srgb,var(--dsho-brand) 6%,transparent)}
+.dsho-todoTime-active .dsho-dot{width:5px;height:5px;border-radius:50%;background:currentColor;margin-right:4px;animation:dsho-pulse 1.6s ease-in-out infinite}
+@keyframes dsho-pulse{0%,100%{opacity:.35}50%{opacity:1}}
 .dsho-todoPriority{flex:none;font-size:10px;font-weight:600;border-radius:999px;padding:0 7px;line-height:15px;border:.5px solid transparent}
 .dsho-todoPriority-P0{color:#d5483f;border-color:color-mix(in srgb,#d5483f 35%,transparent);background:color-mix(in srgb,#d5483f 8%,transparent)}
 .dsho-todoPriority-P1{color:#e08300;border-color:color-mix(in srgb,#e08300 35%,transparent);background:color-mix(in srgb,#e08300 8%,transparent)}
 .dsho-todoPriority-P2{color:#b59a00;border-color:color-mix(in srgb,#b59a00 35%,transparent);background:color-mix(in srgb,#b59a00 8%,transparent)}
 .dsho-todoPriority-P3{color:#3d9a50;border-color:color-mix(in srgb,#3d9a50 35%,transparent);background:color-mix(in srgb,#3d9a50 8%,transparent)}
-.dsho-todo-done .dsho-todoDue{opacity:.55;text-decoration:line-through}
+.dsho-todo-done .dsho-todoTime{opacity:.55;text-decoration:line-through}
 .dsho-todoDetail{display:none;padding:4px 0 2px}
 .dsho-todo-open .dsho-todoDetail{display:block}
 .dsho-todoMeta{display:flex;flex-wrap:wrap;gap:4px;margin-top:4px}
@@ -132,7 +136,7 @@ export const CSS = `
 .dsho-chip-place{color:var(--dsw-alias-label-secondary);background:var(--dsw-alias-bg-layer-2,#fff);border-color:var(--dsw-alias-border-l4);cursor:default}
 .dsho-todo-cancelled .dsho-todoCheck{background:transparent;border-color:transparent;color:var(--dsw-alias-label-tertiary);cursor:default;opacity:.7}
 .dsho-todo-cancelled .dsho-todoTitle{color:var(--dsw-alias-label-tertiary);text-decoration:line-through;font-weight:400}
-.dsho-todo-cancelled .dsho-todoDue{opacity:.55;text-decoration:line-through}
+.dsho-todo-cancelled .dsho-todoTime{opacity:.55;text-decoration:line-through}
 .dsho-todoCancelledTag{margin-left:6px;font-size:10px;font-weight:400;color:var(--dsw-alias-label-tertiary);border:.5px solid var(--dsho-line);border-radius:999px;padding:0 6px;line-height:14px;text-decoration:none;display:inline-block}
 `
 export function adoptStyles(): void {

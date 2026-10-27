@@ -45,8 +45,61 @@ export const taskUpdateFieldAllowList: Record<(typeof taskUpdateStatuses)[number
 const trimmedList = z.array(trimmed).max(50)
 const now = () => new Date().toISOString()
 
-/** 严格日期：YYYY-MM-DD。 */
-const dueDateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'dueDate 必须是 YYYY-MM-DD 格式')
+const pad2 = (n: number) => String(n).padStart(2, '0')
+
+/** Date → 本地 ISO 8601（带 ±HH:mm 偏移，比 UTC Z 形式更可读）。 */
+function toLocalIso(d: Date): string {
+  const offset = -d.getTimezoneOffset()
+  const sign = offset >= 0 ? '+' : '-'
+  const abs = Math.abs(offset)
+  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}T${pad2(d.getHours())}:${pad2(d.getMinutes())}:${pad2(d.getSeconds())}${sign}${pad2(Math.floor(abs / 60))}:${pad2(abs % 60)}`
+}
+
+/** 宽松时间点解析：模型友好简写 → 归一化为带时区的完整 ISO 8601。
+ * 合法输入："10-28 18:00"（省略年份=最近未来）、"2026-10-28 18:00"、"2026-10-28T18:00"、
+ * "2026-10-28"（当日 00:00）、完整 ISO 8601（Z 或 ±HH:mm）。自然语言（"明天下午"）拒绝。 */
+export function normalizeTimePoint(raw: string): string | undefined {
+  const match = raw.trim().match(/^(?:(\d{4})-)?(\d{1,2})-(\d{1,2})(?:[T ](\d{1,2}):(\d{2})(?::(\d{2}))?)?\s*(Z|[+-]\d{2}:\d{2})?$/)
+  if (!match) return undefined
+  const [, yearStr, monthStr, dayStr, hourStr, minuteStr, secondStr, zone] = match
+  const month = Number(monthStr), day = Number(dayStr)
+  const hour = hourStr === undefined ? 0 : Number(hourStr)
+  const minute = minuteStr === undefined ? 0 : Number(minuteStr)
+  const second = secondStr === undefined ? 0 : Number(secondStr)
+  if (month < 1 || month > 12 || day < 1 || day > 31 || hour > 23 || minute > 59 || second > 59) return undefined
+  if (zone) {
+    const full = `${yearStr ?? String(new Date().getFullYear())}-${pad2(month)}-${pad2(day)}T${pad2(hour)}:${pad2(minute)}:${pad2(second)}${zone}`
+    const parsed = new Date(full)
+    return Number.isNaN(parsed.getTime()) ? undefined : toLocalIso(parsed)
+  }
+  const now = new Date()
+  let year = yearStr ? Number(yearStr) : now.getFullYear()
+  let local = new Date(year, month - 1, day, hour, minute, second)
+  // 校验日期真实存在（2-30 会被 Date 滑到 3 月，回读比对拒绝）
+  if (local.getMonth() !== month - 1 || local.getDate() !== day) return undefined
+  if (!yearStr && local.getTime() < now.getTime()) {
+    year += 1
+    local = new Date(year, month - 1, day, hour, minute, second)
+  }
+  return toLocalIso(local)
+}
+
+/** 待办时间点：宽松输入（startAt/endAt/remindAt 共用），输出归一化 ISO 8601 带时区。 */
+const todoTimeSchema = z.string().trim().transform((value, ctx) => {
+  const normalized = normalizeTimePoint(value)
+  if (!normalized) {
+    ctx.addIssue({ code: 'custom', message: `无效时间 "${value}"，合法格式如 "10-28 18:00" 或 "2026-10-28T18:00"` })
+    return z.NEVER
+  }
+  return normalized
+})
+
+/** 时间窗顺序校验：startAt 不得晚于 endAt（两点都存在时）。 */
+const timeWindowRefinement = (value: { startAt?: string, endAt?: string }, ctx: z.RefinementCtx) => {
+  if (value.startAt && value.endAt && Date.parse(value.startAt) > Date.parse(value.endAt)) {
+    ctx.addIssue({ code: 'custom', path: ['startAt'], message: 'startAt 不能晚于 endAt' })
+  }
+}
 
 /** 相对路径：拒绝绝对路径、盘符与 .. 逃逸（待办附件与 report.artifacts 共用）。 */
 const relativePathSchema = z.string().trim().min(1).max(500).refine(
@@ -89,8 +142,9 @@ const todoLocationSchema = z.object({
 
 /** 待办内容字段（new 与 update 共用；update 全可选）。 */
 const todoContentFields = {
-  dueDate: dueDateSchema.optional(),
-  remindAt: z.string().datetime({ offset: true }).optional(),
+  startAt: todoTimeSchema.optional(),
+  endAt: todoTimeSchema.optional(),
+  remindAt: todoTimeSchema.optional(),
   links: z.array(todoLinkSchema).max(10).optional(),
   attachments: z.array(todoAttachmentSchema).max(10).optional(),
   contacts: z.array(todoContactSchema).max(5).optional(),
@@ -104,7 +158,7 @@ export const todoCreateSchema = z.object({
   title: trimmed.max(30),
   ...todoContentFields,
   priority: todoPrioritySchema.default('P3'),
-}).strict()
+}).strict().superRefine(timeWindowRefinement)
 
 /** task_update 的 userTodos.update 元素：更新已有待办（id 静态必填，抄自可见清单，禁止编造）。 */
 export const todoUpdateEntrySchema = z.object({
@@ -113,13 +167,14 @@ export const todoUpdateEntrySchema = z.object({
   title: trimmed.max(30).optional(),
   ...todoContentFields,
   priority: todoPrioritySchema.optional(),
-}).strict()
+}).strict().superRefine(timeWindowRefinement)
 
 /** 持久化的用户待办：属于会话级清单，用户与子会话双向画勾。 */
-export const userTodoSchema = z.object({
+const userTodoObjectSchema = z.object({
   id: trimmed,
   title: trimmed.max(30),
-  dueDate: dueDateSchema.optional(),
+  startAt: z.string().optional(),
+  endAt: z.string().optional(),
   remindAt: z.string().optional(),
   priority: todoPrioritySchema.default('P3'),
   links: z.array(todoLinkSchema).default([]),
@@ -132,6 +187,17 @@ export const userTodoSchema = z.object({
   createdAt: z.string(),
   updatedAt: z.string(),
 }).strict()
+
+/** 旧字段迁移：dueDate（YYYY-MM-DD）→ endAt（当日 23:59 本地，转 ISO 8601）。 */
+export const userTodoSchema = z.preprocess((value) => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return value
+  const record = value as Record<string, unknown>
+  if (typeof record.dueDate !== 'string') return value
+  const { dueDate, ...rest } = record
+  if (rest.endAt !== undefined) return rest
+  const endOfDay = new Date(`${dueDate}T23:59:59`)
+  return { ...rest, endAt: Number.isNaN(endOfDay.getTime()) ? dueDate : endOfDay.toISOString() }
+}, userTodoObjectSchema)
 export type UserTodo = z.infer<typeof userTodoSchema>
 
 export const progressStepSchema = z.object({
