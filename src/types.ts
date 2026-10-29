@@ -33,10 +33,10 @@ const trimmed = z.string().trim().min(1)
 export const taskUpdateStatuses = ['running', 'input_required', 'completed', 'failed'] as const
 
 export const taskUpdateFieldAllowList: Record<(typeof taskUpdateStatuses)[number], readonly string[]> = {
-  running: ['header', 'progressNote', 'userTodos'],
-  input_required: ['header', 'progressNote', 'questions', 'userTodos'],
-  completed: ['header', 'progressNote', 'report', 'userTodos'],
-  failed: ['header', 'progressNote', 'fail', 'userTodos'],
+  running: ['header', 'progressNote', 'schedules'],
+  input_required: ['header', 'progressNote', 'questions', 'schedules'],
+  completed: ['header', 'progressNote', 'report', 'schedules'],
+  failed: ['header', 'progressNote', 'fail', 'schedules'],
 }
 
 const trimmedList = z.array(trimmed).max(50)
@@ -150,14 +150,14 @@ const todoContentFields = {
   remark: z.string().trim().max(2_000).optional(),
 }
 
-/** task_update 的 userTodos.create 元素：新建待办（title 静态必填，结构上接触不到 id/status）。 */
+/** task_update 的 schedules.create 元素：新建日程（title 静态必填，结构上接触不到 id/status）。 */
 export const todoCreateSchema = z.object({
   title: trimmed.max(30),
   ...todoContentFields,
   priority: todoPrioritySchema.default('P3'),
 }).strict().superRefine(timeWindowRefinement)
 
-/** task_update 的 userTodos.update 元素：更新已有待办（id 静态必填，抄自可见清单，禁止编造）。 */
+/** task_update 的 schedules.update 元素：更新已有日程（id 静态必填，抄自可见清单，禁止编造）。 */
 export const todoUpdateEntrySchema = z.object({
   id: trimmed,
   status: z.enum(['pending', 'done', 'cancelled']).optional(),
@@ -195,7 +195,28 @@ export const userTodoSchema = z.preprocess((value) => {
   const endOfDay = new Date(`${dueDate}T23:59:59`)
   return { ...rest, endAt: Number.isNaN(endOfDay.getTime()) ? dueDate : endOfDay.toISOString() }
 }, userTodoObjectSchema)
-export type UserTodo = z.infer<typeof userTodoSchema>
+
+/** 持久化的用户日程（v2 独立表）：时间强关联，看板"日程"页按日组织；归属子会话仅作回链。 */
+export const scheduleObjectSchema = z.object({
+  id: trimmed,
+  parentSessionId: trimmed,
+  conversationId: trimmed,
+  title: trimmed.max(30),
+  startAt: z.string().optional(),
+  endAt: z.string().optional(),
+  remindAt: z.string().optional(),
+  priority: todoPrioritySchema.default('P3'),
+  links: z.array(todoLinkSchema).default([]),
+  attachments: z.array(todoAttachmentSchema).default([]),
+  contacts: z.array(todoContactSchema).default([]),
+  location: todoLocationSchema.optional(),
+  remark: z.string().trim().max(2_000).optional(),
+  status: z.enum(['pending', 'done', 'cancelled']).default('pending'),
+  completedBy: z.enum(['user', 'worker']).optional(),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+}).strict()
+export type ScheduleRecord = z.infer<typeof scheduleObjectSchema>
 
 export const progressStepSchema = z.object({
   content: z.string().trim().min(1).max(300),
@@ -275,6 +296,7 @@ const baseConversationSchema = z.object({
   workspaceName: z.string().trim().min(1).max(100).optional(),
   workspaceDir: z.string().trim().min(1).optional(),
   outline: outlineSchema,
+  /** 已废弃（v2 迁移进 schedules 表）：仅保留读取旧记录，新写入不再落此字段。 */
   todos: z.array(userTodoSchema).default([]),
   activeTaskId: z.string().nullable().default(null),
   lastTaskId: z.string().nullable().default(null),
@@ -403,6 +425,12 @@ export type BlockReasonCode = (typeof blockReasonCodes)[number]
 export interface Snapshot {
   conversations: ConversationRecord[]
   tasks: TaskRecord[]
+  schedules: ScheduleSnapshot[]
+}
+
+/** 快照里的日程投影：conversationTitle 冗余，客户端回链不用二次查。 */
+export interface ScheduleSnapshot extends ScheduleRecord {
+  conversationTitle: string
 }
 
 export function createId(prefix: string): string {
@@ -497,7 +525,7 @@ export const taskUpdateInputSchema = z.object({
   report: reportSchema.optional(),
   questions: z.array(questionItemInputSchema).min(1).max(10).optional(),
   fail: taskFailSchema.optional(),
-  userTodos: z.object({
+  schedules: z.object({
     create: z.array(todoCreateSchema).max(50).optional(),
     update: z.array(todoUpdateEntrySchema).max(50).optional(),
   }).strict().optional(),

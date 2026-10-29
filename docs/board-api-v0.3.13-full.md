@@ -1,6 +1,6 @@
-# dsh-orchestrator 任务看板数据接口（v0.3.14 协议收缩版）
+# dsh-orchestrator 任务看板数据接口（v0.3.15 日程升级版）
 
-> 面向下游（移动端 App）开发者。本文档完整描述 DSH Orchestrator 插件在 DSH Web（默认 `http://127.0.0.1:3080`）中暴露的任务看板数据结构：全部字段、全部状态定义、同步机制与展示建议。基于 v0.3.14 收缩后的协议。
+> 面向下游（移动端 App）开发者。本文档完整描述 DSH Orchestrator 插件在 DSH Web（默认 `http://127.0.0.1:3080`）中暴露的任务看板数据结构：全部字段、全部状态定义、同步机制与展示建议。基于 v0.3.15：用户待办升级为用户日程（独立表 + 双页签看板）。
 > 内部资料，请勿公开分发。
 
 ## 1. 接入方式
@@ -17,17 +17,17 @@
 |---|---|
 | 远程方法 | `orchestrator/snapshot` |
 | 请求 | `{ "parentSessionId": "<主会话 sessionId>" }` |
-| 响应 | `{ "conversations": Conversation[], "tasks": Task[] }` |
-| 排序 | 两个数组均按 `createdAt` 升序 |
-| 说明 | Conversation 均为该主会话的子会话；Task 只包含属于这些子会话的任务 |
+| 响应 | `{ "conversations": Conversation[], "tasks": Task[], "schedules": Schedule[] }` |
+| 排序 | 三个数组均按 `createdAt` 升序 |
+| 说明 | Conversation 均为该主会话的子会话；Task 只包含属于这些子会话的任务；Schedule 为主会话 scope 的全部用户日程（跨子会话汇总，`conversationTitle` 投影来源会话名） |
 
-**setTodoStatus**（用户画勾/取消）：
+**setScheduleStatus**（用户画勾/取消日程）：
 
 | 项 | 值 |
 |---|---|
-| 远程方法 | `orchestrator/setTodoStatus` |
-| 请求 | `{ "todoId": "todo_<uuid>", "status": "pending" \| "done" }` |
-| 响应 | `{ "ok": true }`；todoId 不存在时抛错 |
+| 远程方法 | `orchestrator/setScheduleStatus` |
+| 请求 | `{ "scheduleId": "sch_<uuid>", "status": "pending" \| "done" }` |
+| 响应 | `{ "ok": true }`；scheduleId 不存在时抛错 |
 | 说明 | 只允许 pending ↔ done 互转；落库 `completedBy: "user"`。`cancelled` 只能由子会话标记，App 不可设置 |
 
 **answerTaskQuestions**（问题卡作答）：
@@ -41,7 +41,7 @@
 
 ### 1.3 变更通知
 
-任意看板数据变化（任务上报、待办变更、状态流转）后，插件广播 `commands/change` 事件（无载荷）。推荐：进入时拉取 snapshot；订阅 `commands/change` 后重拉；5 秒轮询兜底。一致性锚点：`updatedAt`（Conversation/UserTodo）、`revision`（Task）。
+任意看板数据变化（任务上报、日程变更、状态流转）后，插件广播 `commands/change` 事件（无载荷）。推荐：进入时拉取 snapshot；订阅 `commands/change` 后重拉；5 秒轮询兜底。一致性锚点：`updatedAt`（Conversation/Schedule）、`revision`（Task）。
 
 ## 2. Conversation（子会话）
 
@@ -57,7 +57,6 @@
 | workspaceDir | string? | 子工作区绝对路径（移动端一般不展示） |
 | outline.summary | string | 最近 dispatch 主题链，Host 用 `'｜'` 拼接，最多保留 5 个；仅用于路由/摘要，不再由 Worker 上报 |
 | outline.keyFacts / entities / tags / artifacts / openQuestions | string[] | 结构兼容保留，恒为空数组，可忽略 |
-| todos | UserTodo[] | 会话级用户待办清单，见 §5 |
 | activeTaskId | string \| null | 当前进行中的任务 ID |
 | lastTaskId | string \| null | 最近一次任务 ID |
 | state | ConversationState | 会话聚合状态：`provisioning / running / idle / input_required / failed` |
@@ -113,15 +112,18 @@ QuestionAnswer = {
 }
 ```
 
-问题卡可出现三处：任务看板、子会话对话内 task_update 工具行、开启投递时的主会话原生卡。三处共用 `answerTaskQuestions` 同源路由。
+问题卡只出现在两处：任务看板、子会话对话内 task_update 工具行（主会话不参与投递，`answerTaskQuestions` 同源路由，任一处作答另一处自动消失）。
 
-## 5. UserTodo（用户待办）
+## 5. Schedule（用户日程）
 
-会话级待办：`Conversation.todos`。一次任务可创建多条；App 按会话展示。
+主会话 scope 的独立表（v2 存储，旧 `Conversation.todos` 启动时幂等迁移）。一次任务可创建多条；App 可按会话（归属回链）或按时间（日程页）两个维度展示。没有 startAt/endAt 的日程只在会话页出现，日程页跳过。
 
 | 字段 | 类型 | 说明 |
 |---|---|---|
-| id | string | `todo_<uuid>` |
+| id | string | `sch_<uuid>`；v1 存量迁移时分配全新 id（旧 `todo_` id 不保留，Worker 引用旧 id 会报不存在） |
+| parentSessionId | string | 主会话 ID（scope 归属） |
+| conversationId | string | 提出该日程的子会话 ID（归属回链；代办/修改派回此会话） |
+| conversationTitle | string? | 仅 snapshot 投影：来源子会话标题，日程页渲染「来自 xx」 |
 | title | string | 极简标题，≤30 字 |
 | startAt | string(ISO 8601)? | 时间窗开始；与 endAt 同时存在时不得晚于 endAt |
 | endAt | string(ISO 8601)? | 时间窗结束/死线 |
@@ -145,7 +147,7 @@ QuestionAnswer = {
 | 状态 | 含义 | 关键字段 |
 |---|---|---|
 | queued | 已入队，Worker 轮次未开始 | — |
-| running | 执行中 | header / progressNote / progressSteps / userTodos 可更新 |
+| running | 执行中 | header / progressNote / progressSteps / schedules 可更新 |
 | input_required | 待用户操作（阻塞工具，看板 + 子会话原生卡双入口作答） | questions 必填 |
 | completed | 完成 | report 必填 |
 | failed | 失败（含系统阻碍） | fail.error 必填；系统阻碍加 fail.reasonCode |
@@ -158,7 +160,7 @@ task_update（input_required 为阻塞调用，返回值即用户答案 { answer
 ├── status: 'running'|'input_required'|'completed'|'failed'  ★
 ├── header?: string                    全状态可选，≤8 字
 ├── progressNote?: string              全状态可选，一句话进展
-├── userTodos?: { create?: TodoNew[], update?: TodoUpdate[] }   全状态可选，顶层字段
+├── schedules?: { create?: ScheduleNew[], update?: ScheduleUpdate[] }   全状态可选，顶层字段
 ├── questions?: QuestionItem[]         input_required ★ 必填
 ├── report?: { result ★, artifacts? }  completed ★ 必填
 └── fail?: { error ★, reasonCode? }    failed ★ 必填
@@ -200,12 +202,22 @@ App 渲染建议：列表 + 勾（completed）/ 转（in_progress）/ 空（pend
 
 ## 10. 看板层级与展示建议
 
+标题行下方有独立的维度页签：**会话**（会话页）与 **日程**（日历页）。停留在日程页时若有任务更新，会话页签显示未读提醒点（颜色跟最新任务状态：运行/完成绿、失败红、待操作橙），点击看板页签即清除。
+
+**看板页（会话页）**：
+
 1. **会话卡片**：chevron + 属性图标（🚫/⏰）+ title + 最新任务状态徽标 + 打开子会话按钮。
-2. **折叠态**：保留问题卡与待办框；可保留“最新任务 · 创建时间 · 耗时”一行。任务体/工作区收起。
-3. **问题卡**：位于待办上方，warn 色框；单选切换、多选叠加、custom 输入、提交后卡片消失。
-4. **待办框**：位于工作区行上方；折叠/展开恒显；框头 `待办 · N 项待处理`（0 项为“全部完成”）；done/cancelled 灰显划线；优先级胶囊 P0/P1/P2/P3，颜色红/橙/黄/绿；时间窗/提醒渲染为胶囊。
+2. **折叠态**：保留问题卡与日程框；可保留“最新任务 · 创建时间 · 耗时”一行。任务体/工作区收起。
+3. **问题卡**：位于日程框上方，warn 色框；单选切换、多选叠加、custom 输入、提交后卡片消失。
+4. **日程框**：位于工作区行上方；折叠/展开恒显；框头 `日程 · N 项待处理`（0 项为“全部完成”）；done/cancelled 灰显划线；优先级胶囊 P0/P1/P2/P3，颜色红/橙/黄/绿；时间窗/提醒渲染为胶囊。
 5. **任务框**：圈住多轮；默认折叠只显示最新一轮，框头 `N 轮 · 显示最新`，可展开全部。
 6. **任务行**：状态徽标 + subject；下一行 `header: progressNote`（running 带 shimmer）；失败可展开错误；completed/input_required 可展开结果/作答；脚注创建时间与实时耗时。
+
+**日程页（日历页）**：
+
+- 月历：周一起始，‹ / 今天 / › 导航；今天描边、选中日高亮；每天下方显示活动日程的优先级色点（最多 3 个 +「+N」），跨天事项每天出现。
+- 选中日列表：默认今天；标题「M 月 D 日 周X · N 条」；已过期未完成的日程置顶「已过期」分组（红字）；每行下方「来自 {conversationTitle}」来源回链。
+- 无 startAt/endAt 的日程不进日程页；同一行组件与看板页共用，点行展开详情（备注/链接/附件/联系人/地点胶囊）。
 
 ## 11. 同步与兼容性注意
 
@@ -218,5 +230,10 @@ App 渲染建议：列表 + 勾（completed）/ 转（in_progress）/ 空（pend
   - `task.summary` 删除；`Conversation.outline.summary` 由 Host 自动维护。
   - `task_update` Worker 状态删除 `blocked`；`fail` 对象必填；`userTodos` 全状态开放。
   - 新增 `answerTaskQuestions` RPC；问题卡可三处作答。
+- **v0.3.14 → v0.3.15 破坏性变化**：
+  - `userTodos` 协议改名 `schedules`（无别名）；id 前缀统一 `sch_`（存量迁移分配全新 id，旧 `todo_` id 失效）。
+  - `Conversation.todos` 删除；改为顶层 `snapshot.schedules: Schedule[]`（主会话 scope，含 `conversationId`/`conversationTitle`）。
+  - RPC `setTodoStatus` → `setScheduleStatus`（请求字段 `todoId` → `scheduleId`）。
+  - 新增看板「日程」页签（月历）；日程无时间字段时不进日程页。
 - 下游不应持久化 snapshot 作为长期数据；以 `revision`/`updatedAt` 做增量判断，重拉即可。
 - App 按当前主会话取数，切换主会话必须重新拉取。

@@ -1,13 +1,13 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { activeTaskStatuses } from '../types.ts'
-import type { ConversationRecord, ProgressStep, QuestionItem, Snapshot, TaskRecord, UserTodo } from '../types.ts'
+import type { ConversationRecord, ProgressStep, QuestionItem, ScheduleSnapshot, Snapshot, TaskRecord } from '../types.ts'
 
 interface BoardProps {
   sessionId?: string
   useTabInfo?: () => { tab: { navigation?: { params?: unknown } } }
   orchestrator: {
     snapshot(request: { parentSessionId: string }): Promise<{ ok: true; value: Snapshot } | { ok: false; error?: { message?: string } }>
-    setTodoStatus(request: { todoId: string; status: 'pending' | 'done' }): Promise<{ ok: true }>
+    setScheduleStatus(request: { scheduleId: string; status: 'pending' | 'done' }): Promise<{ ok: true }>
     answerTaskQuestions(request: { childSessionId: string; answers: Array<{ id: string; selected?: string[]; custom?: string }> }): Promise<{ ok: boolean; error?: string }>
   }
   remoteEvents: {
@@ -125,12 +125,12 @@ function fmtTimePoint(iso: string): { date: string; time: string; t: number } | 
 type TodoTimeTone = 'neutral' | 'active' | 'soon' | 'over'
 
 /** startAt/endAt → 时间胶囊文本与状态色。 */
-function timeRange(todo: UserTodo): { text: string; tone: TodoTimeTone } | undefined {
-  if (!todo.startAt && !todo.endAt) return undefined
-  const start = todo.startAt ? fmtTimePoint(todo.startAt) : undefined
-  const end = todo.endAt ? fmtTimePoint(todo.endAt) : undefined
-  if ((todo.startAt && !start) || (todo.endAt && !end)) {
-    return { text: [todo.startAt, todo.endAt].filter(Boolean).join(' → '), tone: 'neutral' }
+function timeRange(schedule: ScheduleSnapshot): { text: string; tone: TodoTimeTone } | undefined {
+  if (!schedule.startAt && !schedule.endAt) return undefined
+  const start = schedule.startAt ? fmtTimePoint(schedule.startAt) : undefined
+  const end = schedule.endAt ? fmtTimePoint(schedule.endAt) : undefined
+  if ((schedule.startAt && !start) || (schedule.endAt && !end)) {
+    return { text: [schedule.startAt, schedule.endAt].filter(Boolean).join(' → '), tone: 'neutral' }
   }
   const now = Date.now()
   const tone: TodoTimeTone =
@@ -161,73 +161,82 @@ function remindLabel(remindAt: string): string | undefined {
 }
 
 /** 链接显示名：label 缺省回退域名。 */
-function linkLabel(link: UserTodo['links'][number]): string {
+function linkLabel(link: ScheduleSnapshot["links"][number]): string {
   if (link.label) return link.label
   try { return new URL(link.url).hostname } catch { return link.url }
 }
 
-/** 会话级用户待办框：折叠/展开都显示，用户画勾走 setTodoStatus RPC，点行展开详情。 */
-function TodoList({ todos, onToggle, onOpenAttachment, showToast }: {
-  todos: UserTodo[]
-  onToggle: (todo: UserTodo) => void
-  onOpenAttachment: (path: string) => void
+/** 日程行列表：看板会话页与日程页共用同一组件（showSource 时多一行「来自 xx」回链）。 */
+function TodoList({ schedules, onToggle, onOpenAttachment, showToast, showSource = false, boxed = true }: {
+  schedules: ReadonlyArray<ScheduleSnapshot>
+  onToggle: (schedule: ScheduleSnapshot) => void
+  onOpenAttachment: (schedule: ScheduleSnapshot, path: string) => void
   showToast: (text: string) => void
+  /** 日程页展示来源回链（conversationTitle）。 */
+  showSource?: boolean
+  /** 看板会话页带框（dsho-todos + 汇总头）；日程页裸列表。 */
+  boxed?: boolean
 }): React.ReactElement {
   const [openId, setOpenId] = useState<string>()
-  const pending = todos.filter(todo => todo.status === 'pending').length
+  const pending = schedules.filter(schedule => schedule.status === 'pending').length
   const copy = (text: string, what: string) => {
     void navigator.clipboard?.writeText(text).then(() => showToast(`已复制${what}：${text}`), () => showToast(`${what}：${text}`))
   }
-  return <div className="dsho-todos">
-    <div className="dsho-todosHead">待办 <span className="dsho-todosCount">{pending > 0 ? `${pending} 项待处理` : '全部完成'}</span></div>
-    {todos.map(todo => {
-      const done = todo.status === 'done'
-      const cancelled = todo.status === 'cancelled'
-      const time = timeRange(todo)
-      const remind = todo.remindAt ? remindLabel(todo.remindAt) : undefined
-      const hasDetail = Boolean(todo.remark || todo.links.length || todo.attachments.length || todo.contacts.length || todo.location)
-      return <div key={todo.id} className={`dsho-todo${done ? ' dsho-todo-done' : ''}${cancelled ? ' dsho-todo-cancelled' : ''}${openId === todo.id ? ' dsho-todo-open' : ''}`}>
-        <button
-          type="button"
-          className="dsho-todoCheck"
-          title={cancelled ? '已作废' : done ? '取消完成' : '标记完成'}
-          disabled={cancelled}
-          onClick={event => { event.stopPropagation(); onToggle(todo) }}
-        >{done ? '✓' : cancelled ? '×' : ''}</button>
-        <div className="dsho-todoBody" onClick={() => hasDetail && setOpenId(openId === todo.id ? undefined : todo.id)}>
-          <div className="dsho-todoLine">
-            <span className="dsho-todoTitle">{todo.title}{cancelled && <span className="dsho-todoCancelledTag">已作废</span>}</span>
-            <span className={`dsho-todoTime dsho-todoTime-${time?.tone ?? 'neutral'}`}>{time?.text}</span>
-            {remind && <span className="dsho-todoTime">⏰ {remind}</span>}
-          </div>
-          {openId === todo.id && <div className="dsho-todoDetail">
-            {todo.remark && <div className="dsho-dRow"><span className="dsho-dIcon">📝</span><span className="dsho-dText">{todo.remark}</span></div>}
-            {todo.links.length > 0 && <div className="dsho-dRow"><span className="dsho-dIcon">🔗</span><span className="dsho-dChips">
-              {todo.links.map(link => <button key={link.url} type="button" className="dsho-chip dsho-chip-link" title={link.url}
-                onClick={event => { event.stopPropagation(); window.open(link.url, '_blank', 'noopener') }}>{linkLabel(link)}</button>)}
-            </span></div>}
-            {todo.attachments.length > 0 && <div className="dsho-dRow"><span className="dsho-dIcon">📎</span><span className="dsho-dChips">
-              {todo.attachments.map(attachment => <button key={attachment.path} type="button" className="dsho-chip dsho-chip-file"
-                title={attachment.path} onClick={event => { event.stopPropagation(); onOpenAttachment(attachment.path) }}>{attachment.name ?? attachment.path}</button>)}
-            </span></div>}
-            {todo.contacts.length > 0 && <div className="dsho-dRow"><span className="dsho-dIcon">👤</span><span className="dsho-dChips">
-              {todo.contacts.map(contact => {
-                const action = contact.phone ?? contact.email
-                const what = contact.phone ? '电话' : '邮箱'
-                return <button key={`${contact.name}-${action ?? ''}`} type="button" className="dsho-chip dsho-chip-person"
-                  title={`${contact.name}${action ? ` ${action}` : ''}${contact.note ? `（${contact.note}）` : ''}${action ? '，点击复制' : ''}`}
-                  onClick={event => { event.stopPropagation(); if (action) copy(action, what) }}>
-                  <b>{contact.name}</b>{action && <em>{action}</em>}
-                </button>
-              })}
-            </span></div>}
-            {todo.location && <div className="dsho-dRow"><span className="dsho-dIcon">📍</span><span className="dsho-dChips">
-              <span className="dsho-chip dsho-chip-place">{todo.location.name}{todo.location.address ? ` · ${todo.location.address}` : ''}</span>
-            </span></div>}
-          </div>}
+  const rows = schedules.map(schedule => {
+    const done = schedule.status === 'done'
+    const cancelled = schedule.status === 'cancelled'
+    const time = timeRange(schedule)
+    const remind = schedule.remindAt ? remindLabel(schedule.remindAt) : undefined
+    const hasDetail = Boolean(schedule.remark || schedule.links.length || schedule.attachments.length || schedule.contacts.length || schedule.location)
+    return <div key={schedule.id} className={`dsho-todo${done ? ' dsho-todo-done' : ''}${cancelled ? ' dsho-todo-cancelled' : ''}${openId === schedule.id ? ' dsho-todo-open' : ''}`}>
+      <button
+        type="button"
+        className="dsho-todoCheck"
+        title={cancelled ? '已作废' : done ? '取消完成' : '标记完成'}
+        disabled={cancelled}
+        onClick={event => { event.stopPropagation(); onToggle(schedule) }}
+      >{done ? '✓' : cancelled ? '×' : ''}</button>
+      <div className="dsho-todoBody" onClick={() => hasDetail && setOpenId(openId === schedule.id ? undefined : schedule.id)}>
+        <div className="dsho-todoLine">
+          <span className="dsho-todoTitle">{schedule.title}{cancelled && <span className="dsho-todoCancelledTag">已作废</span>}</span>
+          <span className={`dsho-todoTime dsho-todoTime-${time?.tone ?? 'neutral'}`}>{time?.text}</span>
+          {remind && <span className="dsho-todoTime">⏰ {remind}</span>}
         </div>
+        {openId === schedule.id && <div className="dsho-todoDetail">
+          {schedule.remark && <div className="dsho-dRow"><span className="dsho-dIcon">📝</span><span className="dsho-dText">{schedule.remark}</span></div>}
+          {schedule.links.length > 0 && <div className="dsho-dRow"><span className="dsho-dIcon">🔗</span><span className="dsho-dChips">
+            {schedule.links.map(link => <button key={link.url} type="button" className="dsho-chip dsho-chip-link" title={link.url}
+              onClick={event => { event.stopPropagation(); window.open(link.url, '_blank', 'noopener') }}>{linkLabel(link)}</button>)}
+          </span></div>}
+          {schedule.attachments.length > 0 && <div className="dsho-dRow"><span className="dsho-dIcon">📎</span><span className="dsho-dChips">
+            {schedule.attachments.map(attachment => <button key={attachment.path} type="button" className="dsho-chip dsho-chip-file"
+              title={attachment.path} onClick={event => { event.stopPropagation(); onOpenAttachment(schedule, attachment.path) }}>{attachment.name ?? attachment.path}</button>)}
+          </span></div>}
+          {schedule.contacts.length > 0 && <div className="dsho-dRow"><span className="dsho-dIcon">👤</span><span className="dsho-dChips">
+            {schedule.contacts.map(contact => {
+              const action = contact.phone ?? contact.email
+              const what = contact.phone ? '电话' : '邮箱'
+              return <button key={`${contact.name}-${action ?? ''}`} type="button" className="dsho-chip dsho-chip-person"
+                title={`${contact.name}${action ? ` ${action}` : ''}${contact.note ? `（${contact.note}）` : ''}${action ? '，点击复制' : ''}`}
+                onClick={event => { event.stopPropagation(); if (action) copy(action, what) }}>
+                <b>{contact.name}</b>{action && <em>{action}</em>}
+              </button>
+            })}
+          </span></div>}
+          {schedule.location && <div className="dsho-dRow"><span className="dsho-dIcon">📍</span><span className="dsho-dChips">
+            <span className="dsho-chip dsho-chip-place">{schedule.location.name}{schedule.location.address ? ` · ${schedule.location.address}` : ''}</span>
+          </span></div>}
+          {showSource && <div className="dsho-src">来自 {schedule.conversationTitle ?? '子会话'}</div>}
+        </div>}
       </div>
-    })}
+      {/* 折叠态：来源回链第二行；展开态：并入详情最后一行（结构上仍是 todoBody 之后的兄弟行） */}
+      {showSource && openId !== schedule.id && <div className="dsho-src">来自 {schedule.conversationTitle ?? '子会话'}</div>}
+    </div>
+  })
+  if (!boxed) return <div>{rows}</div>
+  return <div className="dsho-todos">
+    <div className="dsho-todosHead">日程 <span className="dsho-todosCount">{pending > 0 ? `${pending} 项待处理` : '全部完成'}</span></div>
+    {rows}
   </div>
 }
 
@@ -413,6 +422,117 @@ function TaskBox({ conv, tasks, nowMs, onOpenArtifact }: {
   </div>
 }
 
+const PRIORITY_COLORS: Record<ScheduleSnapshot['priority'], string> = { P0: '#d5483f', P1: '#e08300', P2: '#b59a00', P3: '#3d9a50' }
+const pad2 = (n: number): string => String(n).padStart(2, '0')
+/** 本地时区 YYYY-MM-DD（与月历/日列表共用）。 */
+const dateKey = (d: Date): string => `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`
+const WEEKDAYS = ['日', '一', '二', '三', '四', '五', '六'] as const
+
+/** 日程覆盖某天：按 startAt 归属；跨天事项（endAt）期间每天都出现。 */
+function scheduleCoversDay(schedule: ScheduleSnapshot, day: string): boolean {
+  if (!schedule.startAt) return false
+  const startMs = Date.parse(schedule.startAt)
+  if (Number.isNaN(startMs)) return false
+  const start = dateKey(new Date(startMs))
+  const end = schedule.endAt && !Number.isNaN(Date.parse(schedule.endAt)) ? dateKey(new Date(schedule.endAt)) : start
+  return day >= start && day <= end
+}
+
+/** 日程页：月历（优先级色点）+ 选中日列表（过期置顶组），行组件与看板共用。 */
+function SchedulePane({ schedules, onToggle, onOpenAttachment, showToast }: {
+  schedules: ScheduleSnapshot[]
+  onToggle: (schedule: ScheduleSnapshot) => void
+  onOpenAttachment: (schedule: ScheduleSnapshot, path: string) => void
+  showToast: (text: string) => void
+}): React.ReactElement {
+  const now = useMemo(() => new Date(), [schedules])
+  const [view, setView] = useState(() => ({ y: now.getFullYear(), m: now.getMonth() }))
+  const [selected, setSelected] = useState<string>(() => dateKey(now))
+
+  // 按天索引：无时间字段的日程不进日程页（只留在会话页）；跨天条目逐日出现。
+  const byDay = useMemo(() => {
+    const map = new Map<string, ScheduleSnapshot[]>()
+    for (const schedule of schedules) {
+      if (!schedule.startAt || schedule.status === 'cancelled') continue
+      const startMs = Date.parse(schedule.startAt)
+      if (Number.isNaN(startMs)) continue
+      const start = dateKey(new Date(startMs))
+      const end = schedule.endAt && !Number.isNaN(Date.parse(schedule.endAt)) ? dateKey(new Date(schedule.endAt)) : start
+      // 跨度保护：脏数据（endAt 在几年后）最多铺 62 天，避免死循环。
+      const cursor = new Date(`${start}T00:00:00`)
+      for (let i = 0; i < 62; i++) {
+        const key = dateKey(cursor)
+        if (key > end) break
+        map.set(key, [...(map.get(key) ?? []), schedule])
+        cursor.setDate(cursor.getDate() + 1)
+      }
+    }
+    return map
+  }, [schedules])
+
+  const firstDow = (new Date(view.y, view.m, 1).getDay() + 6) % 7 // 周一起始
+  const daysInMonth = new Date(view.y, view.m + 1, 0).getDate()
+  const todayKey = dateKey(now)
+  const daySchedules = (byDay.get(selected) ?? [])
+    .filter(schedule => schedule.status !== 'cancelled')
+  const overdue = daySchedules.filter(schedule =>
+    schedule.status === 'pending' && schedule.endAt && !Number.isNaN(Date.parse(schedule.endAt)) && Date.parse(schedule.endAt) < now.getTime())
+  const current = daySchedules.filter(schedule => !overdue.includes(schedule))
+  const selDate = new Date(`${selected}T00:00:00`)
+
+  const shiftMonth = (delta: number): void => setView(prev => {
+    const d = new Date(prev.y, prev.m + delta, 1)
+    return { y: d.getFullYear(), m: d.getMonth() }
+  })
+  const gotoToday = (): void => {
+    setView({ y: now.getFullYear(), m: now.getMonth() })
+    setSelected(todayKey)
+  }
+
+  const dayList = (group: ScheduleSnapshot[], label?: string, overdueGroup = false) => <>
+    {label && <div className={`dsho-groupLabel${overdueGroup ? ' overdue' : ''}`}>{label}</div>}
+    <TodoList schedules={group} onToggle={onToggle} onOpenAttachment={onOpenAttachment} showToast={showToast} boxed={false} showSource />
+  </>
+
+  return <div>
+    <div className="dsho-cal">
+      <div className="dsho-calHead">
+        <span className="dsho-calTitle">{view.y} 年 {view.m + 1} 月</span>
+        <span className="dsho-calNav">
+          <button type="button" onClick={() => shiftMonth(-1)} aria-label="上个月">‹</button>
+          <button type="button" className="wide" onClick={gotoToday}>今天</button>
+          <button type="button" onClick={() => shiftMonth(1)} aria-label="下个月">›</button>
+        </span>
+      </div>
+      <div className="dsho-calGrid">
+        {['一', '二', '三', '四', '五', '六', '日'].map(dow => <div key={dow} className="dsho-dow">{dow}</div>)}
+        {Array.from({ length: firstDow }, (_, i) => <div key={`blank-${i}`} />)}
+        {Array.from({ length: daysInMonth }, (_, i) => {
+          const key = `${view.y}-${pad2(view.m + 1)}-${pad2(i + 1)}`
+          const dots = (byDay.get(key) ?? []).filter(s => s.status === 'pending').slice(0, 3)
+          const total = (byDay.get(key) ?? []).filter(s => s.status === 'pending').length
+          return <div key={key}
+            className={`dsho-day${key === todayKey ? ' today' : ''}${key === selected ? ' sel' : ''}`}
+            onClick={() => setSelected(key)}>
+            {i + 1}
+            {dots.length > 0 && <span className="dsho-dayDots">
+              {dots.map(s => <span key={s.id} className="dsho-dayDot" style={{ background: PRIORITY_COLORS[s.priority] }} />)}
+            </span>}
+            {total > 3 && <span className="dsho-dayMore">+{total - 3}</span>}
+          </div>
+        })}
+      </div>
+    </div>
+    <div className="dsho-dayTitle">
+      {`${view.m + 1} 月 ${selDate.getDate()} 日 周${WEEKDAYS[selDate.getDay()]}`}
+      {daySchedules.length > 0 && <span className="cnt">· {daySchedules.length} 条</span>}
+    </div>
+    {daySchedules.length === 0 && <p className="dsho-empty" style={{ padding: 12 }}>这一天没有日程。</p>}
+    {overdue.length > 0 && dayList(overdue, `已过期 ${overdue.length}`, true)}
+    {current.length > 0 && dayList(current)}
+  </div>
+}
+
 export function Board({ sessionId: propSessionId, useTabInfo, orchestrator, remoteEvents, uiWorkspace }: BoardProps): React.ReactElement {
   const tabSession = tabSessionId(useTabInfo)
   const sessionId = propSessionId ?? tabSession
@@ -423,6 +543,9 @@ export function Board({ sessionId: propSessionId, useTabInfo, orchestrator, remo
   const [error, setError] = useState<string>()
   // 进行中任务的耗时每秒实时刷新。
   const [nowMs, setNowMs] = useState(() => Date.now())
+  // 看板/日程双页签：切回看板即清除未读提醒点（lastSeen 记录最近查看时间）。
+  const [tab, setTab] = useState<'board' | 'sched'>('board')
+  const lastSeenAt = useRef(Date.now())
 
   const load = useCallback(async (seq: number) => {
     if (!sessionId) return
@@ -469,6 +592,14 @@ export function Board({ sessionId: propSessionId, useTabInfo, orchestrator, remo
     return map
   }, [snapshot])
 
+  const schedulesByConversation = useMemo(() => {
+    const map = new Map<string, ScheduleSnapshot[]>()
+    for (const schedule of snapshot?.schedules ?? []) {
+      map.set(schedule.conversationId, [...(map.get(schedule.conversationId) ?? []), schedule])
+    }
+    return map
+  }, [snapshot])
+
   // 制品点击反馈：成功/失败都给 toast，打开失败自动降级为在文件管理器中显示。
   const [toast, setToast] = useState<string>()
   const toastTimer = useRef<ReturnType<typeof setTimeout>>()
@@ -496,13 +627,13 @@ export function Board({ sessionId: propSessionId, useTabInfo, orchestrator, remo
     }
   }, [remoteEvents, showToast])
 
-  // 用户画勾/取消待办：走 RPC 持久化后立刻刷新看板。
-  const toggleTodo = useCallback(async (todo: UserTodo) => {
+  // 用户画勾/取消日程：走 RPC 持久化后立刻刷新看板（用户/Worker 双向同步同一张表）。
+  const toggleSchedule = useCallback(async (schedule: ScheduleSnapshot) => {
     try {
-      await orchestrator.setTodoStatus({ todoId: todo.id, status: todo.status === 'done' ? 'pending' : 'done' })
+      await orchestrator.setScheduleStatus({ scheduleId: schedule.id, status: schedule.status === 'done' ? 'pending' : 'done' })
       void load(++requestSeq.current)
     } catch (err) {
-      showToast(`更新待办失败：${err instanceof Error ? err.message : String(err)}`)
+      showToast(`更新日程失败：${err instanceof Error ? err.message : String(err)}`)
     }
   }, [orchestrator, load, showToast])
 
@@ -532,10 +663,36 @@ export function Board({ sessionId: propSessionId, useTabInfo, orchestrator, remo
     return convTasks[convTasks.length - 1]?.silent === true
   }
 
+  // 未读提醒点：停留在日程页时，若有任务晚于最近一次看板查看时间更新则亮起（颜色跟最新任务状态）。
+  const latestTask = [...snapshot.tasks].sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt))[0]
+  const hasUnseen = tab === 'sched' && Boolean(latestTask && Date.parse(latestTask.updatedAt) > lastSeenAt.current)
+  const notifKind = latestTask?.status === 'failed' ? 'failed' : latestTask?.status === 'input_required' ? 'input_required' : 'running'
+  const switchTab = (next: 'board' | 'sched'): void => {
+    setTab(next)
+    if (next === 'board') lastSeenAt.current = Date.now()
+  }
+
   return <div className="dsho-board">
     <h2 className="dsho-title">任务看板 · {snapshot.conversations.length} 个子会话</h2>
+    <div className="dsho-tabs" role="tablist">
+      <span role="tab" aria-selected={tab === 'board'} tabIndex={0} className={`dsho-tab${tab === 'board' ? ' on' : ''}`} onClick={() => switchTab('board')}>
+        {hasUnseen && <span className={`dsho-notif dsho-notif-${notifKind}`} />}
+        会话
+      </span>
+      <span role="tab" aria-selected={tab === 'sched'} tabIndex={0} className={`dsho-tab${tab === 'sched' ? ' on' : ''}`} onClick={() => switchTab('sched')}>日程</span>
+    </div>
     {toast && <div className="dsho-toast" role="status">{toast}</div>}
-    {snapshot.conversations.map(conv => {
+    {tab === 'sched' && <SchedulePane
+      schedules={snapshot.schedules}
+      onToggle={toggleSchedule}
+      onOpenAttachment={(schedule, path) => {
+        const conv = snapshot.conversations.find(item => item.id === schedule.conversationId)
+        if (conv) void openArtifact(conv, path)
+        else showToast('找不到来源子会话，无法打开附件')
+      }}
+      showToast={showToast}
+    />}
+    {tab === 'board' && snapshot.conversations.map(conv => {
       const tasks = tasksByConversation.get(conv.id) ?? []
       const latest = tasks[tasks.length - 1]
       const silentConv = isSilentConversation(conv.id)
@@ -546,6 +703,7 @@ export function Board({ sessionId: propSessionId, useTabInfo, orchestrator, remo
       const collapsed = collapsedOverride[conv.id] ?? !active
       const toggle = (): void => setCollapsedOverride(prev => ({ ...prev, [conv.id]: !collapsed }))
       const awaitingInput = latest?.status === 'input_required' && (latest.questions?.length ?? 0) > 0
+      const convSchedules = schedulesByConversation.get(conv.id) ?? []
       return <section
         className={`dsho-conv${active ? ' dsho-conv-active' : ''}${collapsed ? ' dsho-conv-collapsed' : ''}`}
         key={conv.id}
@@ -579,7 +737,7 @@ export function Board({ sessionId: propSessionId, useTabInfo, orchestrator, remo
         </header>
         {/* 折叠态也恒显：问题卡 + 用户待办（会话头之下、任务区之外） */}
         {awaitingInput && latest && <AskCard task={latest} onSubmit={answers => submitAnswers(conv, answers)} />}
-        {conv.todos.length > 0 && <TodoList todos={conv.todos} onToggle={toggleTodo} showToast={showToast} onOpenAttachment={path => void openArtifact(conv, path)} />}
+        {convSchedules.length > 0 && <TodoList schedules={convSchedules} onToggle={toggleSchedule} showToast={showToast} onOpenAttachment={(_schedule, path) => void openArtifact(conv, path)} />}
         {collapsed && latest && <div className="dsho-collapsedTime">
           最新任务 · 创建 {shortTime(latest.createdAt)}{(() => { const d = durationText(latest, nowMs); return d ? ` · ${d}` : '' })()}
         </div>}

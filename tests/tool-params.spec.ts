@@ -11,17 +11,17 @@ describe('工具参数描述可被 dsh-tools DSL 编译', () => {
 
   it('task_update 参数能通过 DSL 编译，且模型可见字段与协议一致（防 zod/DSL 双写漂移）', () => {
     expect(() => parameterSchemaSpecToJsonSchema(TASK_UPDATE_TOOL_PARAMETERS)).not.toThrow()
-    // 模型只能看到 DSL 里的字段：header / questions / fail / userTodos 分桶必须在其中
-    expect(Object.keys(TASK_UPDATE_TOOL_PARAMETERS)).toEqual(expect.arrayContaining(['status', 'header', 'progressNote', 'report', 'questions', 'fail', 'userTodos']))
+    // 模型只能看到 DSL 里的字段：header / questions / fail / schedules 分桶必须在其中
+    expect(Object.keys(TASK_UPDATE_TOOL_PARAMETERS)).toEqual(expect.arrayContaining(['status', 'header', 'progressNote', 'report', 'questions', 'fail', 'schedules']))
     const report = TASK_UPDATE_TOOL_PARAMETERS.report as { properties: Record<string, unknown> }
     expect(Object.keys(report.properties)).toEqual(expect.arrayContaining(['result', 'artifacts']))
-    // userTodos 分桶：create.title / update.id 在 JSON Schema 层静态必填（模型漏填在平台侧就被拦）
+    // schedules 分桶：create.title / update.id 在 JSON Schema 层静态必填（模型漏填在平台侧就被拦）
     const schema = parameterSchemaSpecToJsonSchema(TASK_UPDATE_TOOL_PARAMETERS as never) as any
-    const userTodos = schema.properties.userTodos
-    expect(userTodos.properties.create.items.required).toContain('title')
-    expect(userTodos.properties.update.items.required).toContain('id')
-    expect(userTodos.properties.create.items.properties).not.toHaveProperty('id')
-    expect(userTodos.properties.create.items.properties).not.toHaveProperty('status')
+    const schedules = schema.properties.schedules
+    expect(schedules.properties.create.items.required).toContain('title')
+    expect(schedules.properties.update.items.required).toContain('id')
+    expect(schedules.properties.create.items.properties).not.toHaveProperty('id')
+    expect(schedules.properties.create.items.properties).not.toHaveProperty('status')
   })
 
   it('平台 DSL 对未知关键字依旧抛错（锁定平台行为）', () => {

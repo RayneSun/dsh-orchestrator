@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { conversationSchema, taskSchema } from './types.ts'
+import { conversationSchema, scheduleObjectSchema, taskSchema } from './types.ts'
 
 export const snapshotRequestSchema = z.object({
   parentSessionId: z.string().min(1),
@@ -8,14 +8,15 @@ export const snapshotRequestSchema = z.object({
 export const snapshotResultSchema = z.object({
   conversations: z.array(conversationSchema),
   tasks: z.array(taskSchema),
+  schedules: z.array(scheduleObjectSchema.extend({ conversationTitle: z.string() })),
 }).strict()
 
-export const setTodoStatusRequestSchema = z.object({
-  todoId: z.string().min(1),
+export const setScheduleStatusRequestSchema = z.object({
+  scheduleId: z.string().min(1),
   status: z.enum(['pending', 'done']),
 }).strict()
 
-export const setTodoStatusResultSchema = z.object({
+export const setScheduleStatusResultSchema = z.object({
   ok: z.literal(true),
 }).strict()
 
@@ -68,7 +69,7 @@ export const TYPERT_REMOTE = {
   package: PACKAGE,
   descriptors: [
     buildDescriptor('@may/dsh-orchestrator#orchestrator/snapshot', 'snapshot', 'SnapshotRequest', snapshotRequestSchema, snapshotResultSchema),
-    buildDescriptor('@may/dsh-orchestrator#orchestrator/setTodoStatus', 'setTodoStatus', 'SetTodoStatusRequest', setTodoStatusRequestSchema, setTodoStatusResultSchema),
+    buildDescriptor('@may/dsh-orchestrator#orchestrator/setScheduleStatus', 'setScheduleStatus', 'SetScheduleStatusRequest', setScheduleStatusRequestSchema, setScheduleStatusResultSchema),
     buildDescriptor('@may/dsh-orchestrator#orchestrator/answerTaskQuestions', 'answerTaskQuestions', 'AnswerQuestionsRequest', answerQuestionsRequestSchema, answerQuestionsResultSchema),
   ],
 }

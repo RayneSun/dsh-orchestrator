@@ -20,7 +20,7 @@ const esm = {
   clean: false,
   splitting: false,
   outputOptions: { entryFileNames: '[name].js' },
-  deps: { neverBundle: [deepseekExternal, /^node:/, 'zod'] },
+  deps: { neverBundle: [deepseekExternal, /^node:/, 'zod', 'meow-memory'] },
 }
 
 export default defineConfig([

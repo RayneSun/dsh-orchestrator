@@ -1,6 +1,6 @@
 export const STYLE_ID = 'may-dsh-orchestrator-style'
 export const CSS = `
-.dsho-headerButton{font:inherit;border:.5px solid var(--dsw-alias-border-l4);background:var(--dsw-alias-bg-layer-3);color:var(--dsw-alias-label-primary);border-radius:8px;padding:3px 9px;cursor:pointer}
+.dsho-headerButton{font:inherit;font-size:12.5px;font-weight:500;color:var(--dsw-alias-label-secondary);border:.5px solid var(--dsw-alias-border-l4);background:var(--dsw-alias-bg-layer-3);border-radius:7px;padding:3px 10px;cursor:pointer}
 .dsho-headerButton:hover{border-color:var(--dsw-alias-label-dimmed);background:var(--dsw-alias-interactive-bg-hover)}
 .dsho-board{box-sizing:border-box;height:100%;overflow:auto;padding:14px;color:var(--dsw-alias-label-primary,light-dark(#1f2329,#e8eaed));background:var(--dsw-alias-bg-layer-1,light-dark(#f7f8fa,#181818));--dsho-brand:light-dark(#1a73e8,#7ab8ff);--dsho-brand-ink:light-dark(#1557b0,#9cc4ff);--dsho-pos:light-dark(#188038,#4caf7d);--dsho-pos-ink:light-dark(#146c2f,#7ecfa2);--dsho-err:light-dark(#d93025,#ff6b61);--dsho-err-ink:light-dark(#b3261e,#ff8a80);--dsho-warn:light-dark(#a35200,#e8a04c);--dsho-line:var(--dsw-alias-border-l4,light-dark(#e4e7eb,rgb(255 255 255 / 10%)))}
 .dsho-title{font-size:15px;font-weight:650;margin:0 0 12px}
@@ -124,7 +124,7 @@ export const CSS = `
 .dsho-conv-collapsed .dsho-todos{margin-top:0;margin-bottom:10px}
 .dsho-todosHead{display:flex;align-items:center;gap:6px;font-size:11px;font-weight:600;color:var(--dsw-alias-label-secondary);padding:2px 0 5px}
 .dsho-todosCount{font-weight:500;color:var(--dsw-alias-label-tertiary)}
-.dsho-todo{display:flex;align-items:flex-start;gap:8px;padding:5px 0;border-top:.5px dashed var(--dsw-alias-border-l2)}
+.dsho-todo{display:flex;flex-wrap:wrap;align-items:flex-start;gap:8px;padding:5px 0;border-top:.5px dashed var(--dsw-alias-border-l2)}
 .dsho-todo:first-of-type{border-top:none}
 .dsho-todoCheck{flex:none;width:15px;height:15px;margin-top:1px;border-radius:50%;border:1.5px solid var(--dsw-alias-border-l4);background:var(--dsw-alias-bg-layer-2,#fff);display:inline-flex;align-items:center;justify-content:center;font-size:10px;color:transparent;cursor:pointer;padding:0;transition:border-color .15s}
 .dsho-todoCheck:hover{border-color:var(--dsho-pos)}
@@ -165,6 +165,41 @@ export const CSS = `
 .dsho-todo-cancelled .dsho-todoTitle{color:var(--dsw-alias-label-tertiary);text-decoration:line-through;font-weight:400}
 .dsho-todo-cancelled .dsho-todoTime{opacity:.55;text-decoration:line-through}
 .dsho-todoCancelledTag{margin-left:6px;font-size:10px;font-weight:400;color:var(--dsw-alias-label-tertiary);border:.5px solid var(--dsho-line);border-radius:999px;padding:0 6px;line-height:14px;text-decoration:none;display:inline-block}
+
+/* ═══ 会话/日程双页签（独立于标题的维度切换行） ═══ */
+.dsho-tabs{display:flex;gap:6px;margin:0 0 10px}
+.dsho-tab{position:relative;font:inherit;font-size:12px;font-weight:500;letter-spacing:.2px;border:.5px solid var(--dsw-alias-border-l4);background:var(--dsw-alias-bg-layer-3);color:var(--dsw-alias-label-secondary);border-radius:8px;padding:3px 14px;cursor:pointer}
+.dsho-tab.on{background:color-mix(in srgb,var(--dsho-brand) 12%,transparent);border-color:color-mix(in srgb,var(--dsho-brand) 35%,transparent);color:var(--dsho-brand-ink,var(--dsho-brand))}
+.dsho-tab .dsho-notif{position:absolute;top:-4px;right:-4px;width:10px;height:10px;border-radius:50%;border:2px solid var(--dsw-alias-bg-layer-1)}
+.dsho-notif-running,.dsho-notif-completed{background:var(--dsho-pos)}
+.dsho-notif-failed{background:var(--dsho-err)}
+.dsho-notif-input_required{background:var(--dsho-warn)}
+
+/* ═══ 日程页：月历 + 日列表 ═══ */
+.dsho-cal{margin:0 0 12px}
+.dsho-calHead{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px}
+.dsho-calTitle{font-size:13px;font-weight:650;color:var(--dsw-alias-label-primary)}
+.dsho-calNav{display:flex;gap:5px}
+.dsho-calNav button{font:inherit;width:25px;height:25px;border-radius:7px;border:.5px solid var(--dsw-alias-border-l4);background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-label-secondary);cursor:pointer;font-size:12px}
+.dsho-calNav button.wide{width:auto;padding:0 10px}
+.dsho-calNav button:hover{background:var(--dsw-alias-interactive-bg-hover)}
+.dsho-calGrid{display:grid;grid-template-columns:repeat(7,1fr);gap:2px}
+.dsho-dow{text-align:center;font-size:10px;color:var(--dsw-alias-label-tertiary);padding:3px 0}
+.dsho-day{position:relative;aspect-ratio:1;border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:12px;color:var(--dsw-alias-label-primary);cursor:pointer;border:1.5px solid transparent}
+.dsho-day:hover{background:var(--dsw-alias-interactive-bg-hover)}
+.dsho-day.dim{color:color-mix(in srgb,var(--dsw-alias-label-tertiary) 55%,transparent)}
+.dsho-day.today{border-color:color-mix(in srgb,var(--dsho-brand) 55%,transparent);font-weight:650}
+.dsho-day.sel{background:color-mix(in srgb,var(--dsho-brand) 8%,transparent);border-color:color-mix(in srgb,var(--dsho-brand) 35%,transparent)}
+.dsho-dayDots{display:flex;gap:2px;position:absolute;bottom:3px}
+.dsho-dayDot{width:4.5px;height:4.5px;border-radius:50%}
+.dsho-dayMore{position:absolute;bottom:1px;right:4px;font-size:8.5px;color:var(--dsw-alias-label-tertiary)}
+.dsho-dayTitle{font-size:13px;font-weight:650;margin:2px 0 4px;display:flex;align-items:baseline;gap:8px}
+.dsho-dayTitle .cnt{color:var(--dsw-alias-label-tertiary);font-weight:400;font-size:11px}
+.dsho-groupLabel{font-size:10.5px;color:var(--dsw-alias-label-tertiary);margin:10px 2px 2px}
+.dsho-groupLabel.overdue{color:var(--dsho-err-ink,var(--dsho-err));font-weight:600}
+
+/* 日程行来源回链（日程页多的一行） */
+.dsho-src{flex-basis:100%;font-size:10px;color:var(--dsw-alias-label-tertiary);margin:2px 0 0 23px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 `
 export function adoptStyles(): void {
   if (typeof document === 'undefined' || document.getElementById(STYLE_ID)) return
