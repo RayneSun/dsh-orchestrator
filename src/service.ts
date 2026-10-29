@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { mkdir, rmdir } from 'node:fs/promises'
-import { dirname } from 'node:path'
+import { dirname, join } from 'node:path'
 import { Context, Service } from '@deepseek-ai/cordis'
 import sz from '@deepseek-ai/schemastery'
 import { createUserMessage, type ContextFormed } from '@deepseek-ai/dsh-llm'
@@ -434,6 +434,14 @@ export class OrchestratorService extends TypertRemoteService {
 
   private async configureLead(agent: Agent): Promise<void> {
     await this.resetInstalled(String(agent.session.id))
+    // 自动初始化共享 vault（工作区根下仅建 kb_vault 根；session/assets 由归档任务按会话创建）
+    try {
+      const vaultRoot = join(agent.session.header.cwd ?? process.cwd(), 'kb_vault')
+      await mkdir(vaultRoot, { recursive: true })
+      this.hostCtx.logger.info(`orchestrator: kb_vault ready at ${vaultRoot}`)
+    } catch (error) {
+      this.hostCtx.logger.warn(`orchestrator: kb_vault init failed: ${String(error)}`)
+    }
     const scoped = agent.ctx
     this.keep(agent, scoped.systemPrompt.section({
       name: 'orchestrator:roster',
