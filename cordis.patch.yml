@@ -8,6 +8,13 @@
     - id: meow-memory
       name: 'meow-memory'
 
+    # 共享 Obsidian vault 知识库：vaultPath 随工作区自动解析（DSH_VAULT_PATH 可覆盖）。
+    # kb_vault 根由 orchestrator 启动时自动初始化，session/assets 由归档任务按会话创建。
+    - id: obsidian
+      name: dsh-obsidian
+      config:
+        vaultPath: !!js "process.env.DSH_VAULT_PATH || (process.env.USERPROFILE || process.env.HOME) + '/Documents/deepseek-harness/default-workspace/kb_vault'"
+
     # 浏览器操作（独立 Agent Window，用户可旁观/接管）：代操作京东等个人平台。
     # 需用户自备 bsk CLI 与浏览器扩展，缺省时浏览器工具会给出自救指引。
     - id: browserskill
