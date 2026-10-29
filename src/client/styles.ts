@@ -13,16 +13,6 @@ export const CSS = `
 .dsho-chevron{flex:none;width:7px;height:7px;margin:0 2px 0 1px;border-right:1.5px solid var(--dsw-alias-label-tertiary);border-bottom:1.5px solid var(--dsw-alias-label-tertiary);transform:rotate(45deg) translateY(-1px);transition:transform .22s ease}
 .dsho-conv-collapsed .dsho-chevron{transform:rotate(-45deg) translateY(-1px)}
 .dsho-convTitle{min-width:0;flex:1;font-size:13px;font-weight:620;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-/* 折叠态摘要：第一行 badge + title + 时间，第二行 progressNote（运行中带扫光） */
-.dsho-strip{display:flex;flex-direction:column;gap:3px;padding:0 13px 11px 26px;min-width:0}
-.dsho-stripRow{display:flex;align-items:center;gap:8px;min-width:0}
-.dsho-stripRow .dsho-badge{flex:none}
-.dsho-stripRow .dsho-noteTitle{flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis}
-.dsho-stripTitle{flex:1;min-width:0;font-size:12px;font-weight:600;color:var(--dsw-alias-label-primary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.dsho-stripTime{flex:none;font-size:10px;color:var(--dsw-alias-label-tertiary)}
-.dsho-stripNote{font-size:11px;line-height:1.5;color:var(--dsw-alias-label-secondary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.dsho-stripNote-live{background:linear-gradient(90deg,var(--dsw-alias-label-primary) 30%,var(--dsho-brand) 50%,var(--dsw-alias-label-primary) 70%);background-size:200% 100%;-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent;animation:dsho-shimmer 1.8s linear infinite}
-@media (prefers-reduced-motion:reduce){.dsho-stripNote-live{animation:none;background:none;-webkit-text-fill-color:currentcolor}}
 /* 高度折叠动画（grid 0fr/1fr） */
 .dsho-body{display:grid;grid-template-rows:1fr;transition:grid-template-rows .24s ease}
 .dsho-conv-collapsed .dsho-body{grid-template-rows:0fr}
@@ -42,7 +32,6 @@ export const CSS = `
 .dsho-badge-completed{background:var(--dsho-pos);color:#fff}
 .dsho-badge-idle{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-secondary)}
 .dsho-badge-input_required{background:color-mix(in srgb,var(--dsho-warn) 15%,transparent);color:var(--dsho-warn)}
-.dsho-badge-blocked{background:color-mix(in srgb,var(--dsho-warn) 16%,transparent);color:var(--dsho-warn)}
 .dsho-badge-failed{background:color-mix(in srgb,var(--dsho-err) 11%,transparent);color:var(--dsho-err-ink)}
 .dsho-badge-interrupted{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-tertiary)}
 .dsho-taskMuted{opacity:.75}
@@ -78,12 +67,50 @@ export const CSS = `
 .dsho-art:hover{background:color-mix(in srgb,var(--dsho-brand) 8%,transparent)}
 .dsho-art svg{width:12px;height:12px}
 .dsho-taskFoot{display:flex;gap:10px;font-size:11px;color:var(--dsw-alias-label-tertiary)}
+/* 折叠态：仅显示问题卡、待办框与最新任务时间细行（任务区/工作区随 body 折叠） */
+.dsho-collapsedTime{display:none;padding:6px 13px;font-size:10.5px;color:var(--dsw-alias-label-tertiary);border-top:.5px dashed var(--dsho-line)}
+.dsho-conv-collapsed .dsho-collapsedTime{display:block}
+/* 任务框：圈住多轮任务，默认只显示最新一轮 */
+.dsho-taskBox{margin:10px 13px;border:1px solid var(--dsho-line);border-radius:10px;overflow:hidden}
+.dsho-taskBoxHead{display:flex;align-items:center;gap:6px;padding:7px 11px;font-size:11.5px;font-weight:600;color:var(--dsw-alias-label-secondary);cursor:pointer;background:var(--dsw-alias-bg-layer-3);user-select:none}
+.dsho-taskBoxHead .dsho-chevron{transform:rotate(45deg) translateY(-1px)}
+.dsho-taskBox-collapsed .dsho-taskBoxHead .dsho-chevron{transform:rotate(-45deg) translateY(0)}
+.dsho-taskBoxCnt{margin-left:auto;font-weight:400;color:var(--dsw-alias-label-tertiary);font-size:10.5px}
+.dsho-taskBox .dsho-tasks{margin:0 0 4px}
+.dsho-taskBox-collapsed .dsho-task:not(:first-child){display:none}
+.dsho-taskBox .dsho-task{padding:9px 11px}
+/* 问题卡：warn 色系，看板侧作答入口 */
+.dsho-ask{box-sizing:border-box;max-width:100%;overflow:hidden;margin:10px 13px 0;border:1px solid color-mix(in srgb,var(--dsho-warn) 35%,transparent);border-radius:10px;background:color-mix(in srgb,var(--dsho-warn) 5%,transparent);padding:10px 12px}
+.dsho-askHead{display:flex;align-items:center;gap:6px;font-size:11px;font-weight:600;color:var(--dsho-warn);margin-bottom:6px}
+.dsho-askIcon{flex:none;width:14px;height:14px;border-radius:50%;background:var(--dsho-warn);color:#fff;display:inline-flex;align-items:center;justify-content:center;font-size:9px}
+.dsho-askItem+.dsho-askItem{margin-top:8px;padding-top:8px;border-top:.5px dashed var(--dsho-line)}
+.dsho-askQ{font-size:12.5px;font-weight:550;color:var(--dsw-alias-label-primary);line-height:1.5}
+.dsho-askQ b{font-weight:650}
+.dsho-askDetail{font-size:11.5px;color:var(--dsw-alias-label-secondary);margin-top:2px;line-height:1.5}
+.dsho-askOpts{display:flex;flex-wrap:wrap;gap:6px;margin-top:7px}
+.dsho-opt{font:inherit;cursor:pointer;font-size:11.5px;line-height:1;padding:5px 10px;border-radius:999px;border:1px solid var(--dsho-line);background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-label-secondary);transition:all .15s}
+.dsho-opt:hover{border-color:var(--dsho-brand);color:var(--dsho-brand-ink)}
+.dsho-opt-sel{background:var(--dsho-brand);border-color:var(--dsho-brand);color:#fff;font-weight:600}
+.dsho-opt-sel:hover{color:#fff}
+.dsho-askCustom{display:block;box-sizing:border-box;margin-top:7px;width:100%;max-width:100%;min-width:0;border:1px solid var(--dsho-line);border-radius:8px;padding:6px 9px;font:inherit;font-size:11.5px;color:var(--dsw-alias-label-primary);background:var(--dsw-alias-bg-layer-2);outline:none}
+.dsho-askCustom:focus{border-color:var(--dsho-brand)}
+.dsho-askError{margin-top:7px;font-size:11.5px;color:var(--dsho-err-ink)}
+.dsho-askSubmit{margin-top:8px;font:inherit;cursor:pointer;border:none;border-radius:7px;background:var(--dsho-brand);color:#fff;font-size:11.5px;font-weight:600;padding:6px 14px}
+.dsho-askSubmit:hover{filter:brightness(1.08)}
+.dsho-askSubmit:disabled{opacity:.6;cursor:default}
+.dsho-detail-err{background:color-mix(in srgb,var(--dsho-err) 5%,transparent)}
+/* 子会话 task_update 摘要行（非 input_required 调用的极简渲染） */
+.dsho-wRow{display:flex;align-items:center;gap:7px;padding:4px 8px;font-size:12px;color:var(--dsw-alias-label-secondary);min-width:0}
+.dsho-wRowTitle{flex:none;font-weight:600;color:var(--dsw-alias-label-primary)}
+.dsho-wRowStatus{flex:none;font-size:10.5px;border:.5px solid var(--dsho-line);border-radius:999px;padding:0 7px}
+.dsho-wRowHeader{flex:none;font-weight:600;font-size:11px;padding:0 6px;border:.5px solid var(--dsho-line);border-radius:6px;background:var(--dsw-alias-bg-layer-3)}
+.dsho-wRowNote{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.dsho-wRow-done{color:var(--dsho-pos-ink);font-weight:600}
 .dsho-dur{font-variant-numeric:tabular-nums;color:var(--dsw-alias-label-secondary)}
 .dsho-dur-live{color:var(--dsho-pos-ink);font-weight:600}
 .dsho-toast{position:sticky;bottom:12px;left:0;right:0;margin:8px auto 0;width:fit-content;max-width:90%;background:#1f2329;color:#fff;font-size:12px;padding:6px 14px;border-radius:999px;box-shadow:0 4px 14px rgb(0 0 0 / 18%);z-index:5;animation:dsho-toast-in .18s ease}
 @keyframes dsho-toast-in{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
 .dsho-error{color:var(--dsw-alias-label-error,#d93025)}
-.dsho-blocked{color:#a35200}
 
 .dsho-steps{list-style:none;margin:6px 0 0;padding:6px 10px;border:.5px solid var(--dsw-alias-border-l4);border-radius:8px;background:var(--dsw-alias-bg-layer-3);display:inline-block;min-width:220px;max-width:100%}
 .dsho-steps li{display:flex;align-items:center;gap:7px;font-size:12px;line-height:1.6;color:var(--dsw-alias-label-tertiary)}

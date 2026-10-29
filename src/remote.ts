@@ -19,6 +19,21 @@ export const setTodoStatusResultSchema = z.object({
   ok: z.literal(true),
 }).strict()
 
+export const answerQuestionsRequestSchema = z.object({
+  childSessionId: z.string().min(1),
+  answers: z.array(z.object({
+    id: z.string().min(1),
+    selected: z.array(z.string()).default([]),
+    custom: z.string().optional(),
+  }).strict()).min(1),
+}).strict()
+
+export const answerQuestionsResultSchema = z.object({
+  ok: z.boolean(),
+  taskId: z.string().optional(),
+  error: z.string().optional(),
+}).strict()
+
 const PACKAGE = '@may/dsh-orchestrator'
 
 /** 手写 typert descriptor 的公共骨架：方法之间只有 id/method 名与请求/结果 schema 不同。
@@ -54,6 +69,7 @@ export const TYPERT_REMOTE = {
   descriptors: [
     buildDescriptor('@may/dsh-orchestrator#orchestrator/snapshot', 'snapshot', 'SnapshotRequest', snapshotRequestSchema, snapshotResultSchema),
     buildDescriptor('@may/dsh-orchestrator#orchestrator/setTodoStatus', 'setTodoStatus', 'SetTodoStatusRequest', setTodoStatusRequestSchema, setTodoStatusResultSchema),
+    buildDescriptor('@may/dsh-orchestrator#orchestrator/answerTaskQuestions', 'answerTaskQuestions', 'AnswerQuestionsRequest', answerQuestionsRequestSchema, answerQuestionsResultSchema),
   ],
 }
 

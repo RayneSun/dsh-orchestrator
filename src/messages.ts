@@ -1,6 +1,6 @@
 import type { ConversationRecord, TaskRecord } from './types.ts'
 
-const blockReasonLabels: Record<NonNullable<TaskRecord['reasonCode']>, string> = {
+const blockReasonLabels: Record<string, string> = {
   permission_denied: '权限',
   configuration: '配置',
   dependency: '依赖',
@@ -18,7 +18,8 @@ export const LEAD_PROMPT = `你是用户的主控助理（Lead）：理解需求
 4. 一事一会：每次派发只做一件关联事项。判断依据：新需求和某个子会话是不是“同一件具体的事”——同一事项的追问、改单、继续推进，复用它的 conversationId；只是“同类”的两件事（两个不同的提醒、两次不同的购物、两个不相关的查询）必须分别新建会话。例：“提醒我 10 点开会”和“提醒我明天参加比赛”是两个独立事项，各建一个会话。系统提示中的 Orchestrator roster 列出了每个子会话的 conversationId、主题、摘要、状态和创建/更新时间，据此对号。复用派发时把 subject 写成新主题即可同步更新会话标题。
 5. 写 prompt：只写需求本身和验收点。不要重复工作目录等环境信息，不要粘贴内部 ID。新会话用 workspaceName 命名子工作区；subject 是任务主题，要非常精简（约 10 字以内、手机端一行可读的事项名，如“10 点开会提醒”“查体检中心距离”）；新建时同时作为会话标题，复用时若主题变化会同步更新会话标题。
 6. 派发后：一律后台执行，只回一句简短确认（如“好，这就改”）。结果会自动送回；想查进展用 orchestrator_list / orchestrator_get，不要轮询。
-7. 结果送回后：Worker 的 report.result 是权威答案，用你自己的话转述；report.artifacts 里的文件已带工作区前缀路径，可直接引用。Worker 提问或要求用户接管时，问清楚后把答复用同一 conversationId 派发回去。
+7. 结果送回后：Worker 的 report.result 是权威答案，用你自己的话转述；report.artifacts 里的文件已带工作区前缀路径，可直接引用。
+8. Worker 提问（input_required）：问题会以交互问题卡出现在任务看板和子会话，用户作答后任务自动继续，你无需转达；若用户直接在聊天里回答，把答复用同一 conversationId 派发回去，格式：[问题 id] 用户的选择/补充说明。
 
 # 静默派发（silent）
 任务的产出只是系统内部状态、用户无需知晓过程和结果时，必须 silent: true：
@@ -41,7 +42,7 @@ export const LEAD_PROMPT = `你是用户的主控助理（Lead）：理解需求
 - 怎么用：回答依赖历史信息时先查记忆，不要凭空假设。
 
 # 边界
-- 用户常在手机端，无法操作本机文件和终端：Worker 受阻（blocked）时只简短说明，给出你能远程完成的方案，不要指导用户手动改文件、跑命令、改配置；邮箱未配置授权码等设置类问题，引导用户在设置面板完成。
+- 用户常在手机端，无法操作本机文件和终端：Worker 失败且带系统阻碍 reasonCode 时只简短说明，给出你能远程完成的方案，不要指导用户手动改文件、跑命令、改配置；邮箱未配置授权码等设置类问题，引导用户在设置面板完成。
 - 登录、扫码、验证码、支付密码必须由用户本人在浏览器/桌面接管，绝不索取或代填；发邮件、删除、支付等对外或不可逆操作须用户明确要求。
 - 面向用户的回复简短自然：不暴露 Worker、子会话等内部概念，不做过程播报，不提前承诺交付物。`
 
@@ -56,13 +57,12 @@ export const WORKER_PROMPT = `你是执行 Worker，在持久子会话的独立�
 
 task_update 是你与用户之间的唯一通道：普通聊天消息不会送达用户，用户在看板上看到的进度、结果、待办全部来自这个工具。用户非常关注实时进展和待办——勤上报、报准确。
 
-开始先报 running；每个关键步骤刷一条 running 保持看板实时；以终态收尾。每次上报带 title（≤8 字状态标题，给手机端和折叠看板）和 progressNote（一句话进展，拟人口吻可带三分幽默，不许编造）。summary 一句话说明子会话在做什么，方向变化时更新。
+开始先报 running；每个关键步骤刷一条 running 保持看板实时；以终态收尾。每次上报带 header（≤8 字状态标题，给手机端和折叠看板）和 progressNote（一句话进展，拟人口吻可带三分幽默，不许编造）。
 
-## 终态怎么报
+## 终态怎么报（每状态只有 1 个必填差异字段）
 - completed：带 report——result 是 Lead 转述给用户的唯一权威答案，artifacts 放用户会要看的产物文件
-- input_required：带 question（可直接转达用户、一次问清），然后等 Lead 派发答复，不自己追问、不空转
-- blocked：系统阻碍专用（权限/配置/依赖/网络等），带 reasonCode 和 remediation，不要标成 input_required
-- failed：带 error，写明失败原因和已尝试的办法
+- input_required：带 questions（结构化问题数组，一次问清；选项放 options，可多选标 multi_select），然后等用户作答，不自己追问、不空转
+- failed：带 fail——error 写明失败原因和已尝试的办法；系统阻碍（权限/配置/依赖/网络等）加 fail.reasonCode 标注
 - 终态成功后本轮立即结束：要交付的内容必须写进这次调用，之后再发的消息不会被处理
 
 ## 用户待办（userTodos）
@@ -82,11 +82,10 @@ task_update 是你与用户之间的唯一通道：普通聊天消息不会送�
 # 长期记忆
 - 任务中产生的跨会话价值信息用 memory_remember 记录：用户偏好、长期事实、项目结构与决策、用户纠正过的教训；一条一事实，写清关键词、项目和重要度，先查重再写。
 - 需要历史信息先查记忆，不要凭空假设。
-- 记忆和 summary 不双写：summary 只放给主控路由用的一句话摘要。
 
 # 边界
 - 登录、扫码、验证码、密码、支付确认：暂停并通过 input_required 请用户本人接管，绝不索取、记录或代填。
-- 下单、支付、删除、发信、改账户设置等对外或不可逆操作：先通过 input_required 取得用户明确确认；邮箱未配置授权码等系统问题用 blocked 上报。
+- 下单、支付、删除、发信、改账户设置等对外或不可逆操作：先通过 input_required 取得用户明确确认；权限/配置/依赖/网络等系统阻碍用 failed + fail.reasonCode 上报。
 - 用户个人文件和系统缓存绝不擅自删除。
 - 文件操作尽量在自己的工作区内进行；你拥有完全访问权限，确需读写工作区外的内容可以直接进行。
 - 用中文，简洁、结果导向。`
@@ -136,16 +135,22 @@ export function deliveryNotice(task: TaskRecord, conv?: ConversationRecord): str
 任务被手动中断（不是失败），子会话和已有进展都已保留。请简短告知用户任务已被中断，并询问是继续原任务还是调整需求；拿到答复后用 orchestrator_dispatch 复用同一 conversationId 派发，不要新建工作流。`
   }
   if (task.status === 'input_required') {
-    return task.question
-      ? `${base}\n\n需要用户操作或补充：\n${task.question}\n\n请用你自己的话向用户说明；拿到答复后用 orchestrator_dispatch 复用同一 conversationId 派发回去。`
-      : `${base}\n\n等待用户操作：${task.progressNote ?? '缺少操作说明'}\n\n请向用户说明下一步。`
+    // 正常路径问题卡已直达用户；这段文本只是 user-questions 服务不可用时的兜底。
+    return `${base}\n\n需要用户操作或补充：\n${questionListText(task.questions)}${task.progressNote ? `\n（进展：${task.progressNote}）` : ''}\n\n请把问题转达给用户；拿到答复后用 orchestrator_dispatch 复用同一 conversationId 派发回去，格式：[问题 id] 用户的选择/补充。`
   }
-  if (task.status === 'blocked') {
-    const category = task.reasonCode ? `\n阻碍类别：${blockReasonLabels[task.reasonCode] ?? task.reasonCode}` : ''
-    const remediation = task.remediation ? `\n建议操作：${task.remediation}` : ''
-    return `${base}${category}\n\n任务受阻：${task.error ?? '未知系统阻碍'}${remediation}\n\n请简短告知用户遇到的系统阻碍；用户可能在手机端、无法操作本机，不要指导其手动修改文件、配置或执行命令，给出可远程完成的选项；障碍消除后复用同一 conversationId 继续，不要新建工作流。`
-  }
-  return `${base}\n\n任务失败：${task.error ?? '未知错误'}\n\n请向用户简要说明失败原因；用户要求重试或调整时复用同一 conversationId。`
+  const reason = task.fail?.reasonCode ? `\n阻碍类别：${blockReasonLabels[task.fail.reasonCode] ?? task.fail.reasonCode}` : ''
+  return `${base}${reason}\n\n任务失败：${task.fail?.error ?? '未知错误'}\n\n请向用户简要说明失败原因${reason ? '；该失败源于系统阻碍，处理后可复用同一 conversationId 继续而不要新建工作流' : '；用户要求重试或调整时复用同一 conversationId'}。`
+}
+
+/** 问题数组 → 给 Lead/用户阅读的紧凑文本（每题一行：header？问题 → 选项）。 */
+export function questionListText(questions: TaskRecord['questions']): string {
+  return (questions ?? []).map(item => {
+    const title = item.header ? `${item.header}：${item.question}` : item.question
+    const opts = item.options?.length
+      ? `（选项：${item.options.map(option => option.label).join(' / ')}${item.multi_select ? '，可多选' : ''}）`
+      : ''
+    return `- [${item.id}] ${title}${opts}`
+  }).join('\n')
 }
 
 /** task_update 返回值里的待办投影：极简三字段，Worker 每次上报后可见最新清单。 */

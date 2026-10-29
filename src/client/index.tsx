@@ -12,6 +12,8 @@ const KIND = 'orchestratorBoard'
 export const inject = ['remote', 'slots', 'uiWorkspace', 'sidebarRightTabs', 'sidebarRight', 'configForms']
 
 function HeaderButton(props: any): React.ReactElement {
+  // Worker 是无 session- 前缀的一级会话；这里不提供看板入口，避免用 child sessionId 拉到空看板。
+  if (!String(props.sessionId ?? '').startsWith('session-')) return <></>
   return <button
     className="dsho-headerButton"
     type="button"

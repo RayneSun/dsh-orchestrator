@@ -1,5 +1,5 @@
-import type { BlockReasonCode, ConversationRecord, DeliveryToggles, TaskRecord, TaskReport, TaskStatus } from './types.ts'
-import { deliverableTaskStatuses, taskUpdateFieldAllowList, terminalTaskStatuses } from './types.ts'
+import type { BlockReasonCode, ConversationRecord, DeliveryToggles, QuestionAnswer, QuestionItem, TaskFail, TaskRecord, TaskReport, TaskStatus } from './types.ts'
+import { defaultDeliveryToggles, deliverableTaskStatuses, taskUpdateFieldAllowList, terminalTaskStatuses } from './types.ts'
 
 export class StateError extends Error {
   constructor(public code: string, message: string) {
@@ -9,10 +9,9 @@ export class StateError extends Error {
 }
 
 const transitions: Record<TaskStatus, readonly TaskStatus[]> = {
-  queued: ['running', 'input_required', 'blocked', 'completed', 'failed', 'interrupted'],
-  running: ['running', 'input_required', 'blocked', 'completed', 'failed', 'interrupted'],
+  queued: ['running', 'input_required', 'completed', 'failed', 'interrupted'],
+  running: ['running', 'input_required', 'completed', 'failed', 'interrupted'],
   input_required: [],
-  blocked: [],
   completed: [],
   failed: [],
   interrupted: [],
@@ -70,28 +69,31 @@ export function settleConversation(
   task: TaskRecord,
   at = new Date().toISOString(),
 ): ConversationRecord {
-  const state = task.status === 'completed'
+  const state = task.status === 'completed' || task.status === 'failed' || task.status === 'interrupted'
+    // Worker 上报失败/中断时，持久子会话本身仍可复用；Host 致命错误会再 failConversation。
     ? 'idle'
     : task.status === 'input_required'
       ? 'input_required'
-      : task.status === 'failed' || task.status === 'blocked'
-        // Worker 主动上报失败/受阻时，持久子会话本身仍可复用；Host 致命错误会再 failConversation。
-        ? 'idle'
-        : task.status === 'interrupted'
-          // 手动停止/改单都保留可继续的工作流，不能进入 failed。
-          ? 'idle'
-          : conv.state
+      : conv.state
   return { ...touch(conv, at), state, activeTaskId: null, lastTaskId: task.id }
 }
 
-/** Worker 通过 task_update 的 summary 维护路由卡一句话摘要（其余 outline 字段保留兼容，不再写入）。 */
-export function updateOutlineSummary(
+/**
+ * 会话路由卡摘要改由 Host 维护：每次 dispatch 把 subject 追加进最近主题链
+ * （去重、保序、最多 5 个），不再依赖 Worker 上报 summary。
+ */
+export function appendOutlineSubject(
   conv: ConversationRecord,
-  summary: string,
+  subject: string,
   at = new Date().toISOString(),
 ): ConversationRecord {
-  const next = touch(conv, at)
-  return { ...next, outline: { ...next.outline, summary } }
+  const text = subject.trim()
+  if (!text) return conv
+  const history = conv.outline.summary.split('｜').map(item => item.trim()).filter(Boolean)
+  const next = [...history.filter(item => item !== text), text].slice(-5)
+  const summary = next.join('｜')
+  if (summary === conv.outline.summary) return conv
+  return { ...touch(conv, at), outline: { ...conv.outline, summary } }
 }
 
 /** Worker 上报的终态自动挂起投递；静默任务与 interrupted 不投递。 */
@@ -103,13 +105,12 @@ function withTerminalDelivery(task: TaskRecord, status: TaskStatus): TaskRecord[
 
 /**
  * 投递开关判定（设置页，volatile 即时生效）：关闭的终态不投递。
- * toggles 缺失（未注入配置）时按默认全开处理，与历史行为一致。
+ * toggles 缺失（未注入配置）时按默认值处理（inputRequired 默认关，其余开）。
  */
 export function deliveryEnabledFor(toggles: DeliveryToggles | undefined, status: TaskStatus): boolean {
-  if (!toggles) return true
+  if (!toggles) return defaultDeliveryEnabled(status)
   switch (status) {
     case 'input_required': return toggles.inputRequired
-    case 'blocked': return toggles.blocked
     case 'completed': return toggles.completed
     case 'failed': return toggles.failed
     case 'interrupted': return toggles.interrupted
@@ -117,9 +118,19 @@ export function deliveryEnabledFor(toggles: DeliveryToggles | undefined, status:
   }
 }
 
+function defaultDeliveryEnabled(status: TaskStatus): boolean {
+  switch (status) {
+    case 'input_required': return defaultDeliveryToggles.inputRequired
+    case 'completed': return defaultDeliveryToggles.completed
+    case 'failed': return defaultDeliveryToggles.failed
+    case 'interrupted': return defaultDeliveryToggles.interrupted
+    default: return true
+  }
+}
+
 /**
  * 投递开关在服务层的统一闸门：开关关闭的终态剥掉 pending（与 silent 同效）。
- * 只影响"消息是否回投主会话"，任务状态/摘要/待办的持久化与 roster、看板更新不受影响。
+ * 只影响"消息是否回投主会话"，任务状态/进度/待办的持久化与 roster、看板更新不受影响。
  */
 export function gateTaskDelivery(task: TaskRecord, toggles: DeliveryToggles | undefined): TaskRecord {
   if (task.delivery?.state !== 'pending' || deliveryEnabledFor(toggles, task.status)) return task
@@ -133,30 +144,26 @@ export function statusConcludesTurn(status: string | undefined): boolean {
 }
 
 export interface TaskTransitionInput {
-  status: Extract<TaskStatus, 'running' | 'input_required' | 'blocked' | 'completed' | 'failed'>
-  title?: string
+  status: Extract<TaskStatus, 'running' | 'input_required' | 'completed' | 'failed'>
+  header?: string
   progressNote?: string
-  summary?: string
   report?: TaskReport
-  error?: string
-  question?: string
-  reasonCode?: BlockReasonCode
-  remediation?: string
+  questions?: QuestionItem[]
+  fail?: TaskFail
 }
 
 export function transitionTask(task: TaskRecord, input: TaskTransitionInput, at = new Date().toISOString()): TaskRecord {
   if (!canTransition(task.status, input.status)) {
     throw new StateError('invalid_task_transition', `task cannot move from ${task.status} to ${input.status}`)
   }
-  const error = input.error ?? task.error
   if (input.status === 'completed' && !(input.report ?? task.report)?.result?.trim()) {
     throw new StateError('missing_report', 'completed task_update requires report.result')
   }
-  if ((input.status === 'failed' || input.status === 'blocked') && !error?.trim()) {
-    throw new StateError('missing_error', `${input.status} task_update requires error`)
+  if (input.status === 'failed' && !(input.fail ?? task.fail)?.error?.trim()) {
+    throw new StateError('missing_error', 'failed task_update requires fail.error')
   }
-  if (input.status === 'input_required' && !input.question?.trim()) {
-    throw new StateError('missing_question', 'input_required task_update requires question')
+  if (input.status === 'input_required' && !(input.questions?.length)) {
+    throw new StateError('missing_questions', 'input_required task_update requires questions')
   }
   const allowedFields = new Set(taskUpdateFieldAllowList[input.status])
   for (const [field, value] of Object.entries(input) as Array<[string, unknown]>) {
@@ -166,51 +173,58 @@ export function transitionTask(task: TaskRecord, input: TaskTransitionInput, at 
   }
 
   const isInputRequired = input.status === 'input_required'
-  const isBlocked = input.status === 'blocked'
   const isFailed = input.status === 'failed'
   const isCompleted = input.status === 'completed'
   const terminal = isTerminal(input.status)
   return {
     ...touch(task, at),
     status: input.status,
-    title: input.title ?? task.title,
+    header: input.header ?? task.header,
     progressNote: input.progressNote ?? task.progressNote,
     report: isCompleted ? (input.report ?? task.report) : undefined,
-    error: isBlocked || isFailed ? (input.error ?? task.error) : undefined,
-    question: isInputRequired ? input.question : undefined,
-    reasonCode: isBlocked ? input.reasonCode : undefined,
-    remediation: isBlocked ? input.remediation : undefined,
+    questions: isInputRequired ? input.questions : undefined,
+    answers: isInputRequired ? task.answers : undefined,
+    fail: isFailed ? (input.fail ?? task.fail) : undefined,
     ...terminal
       ? { endedAt: at, delivery: withTerminalDelivery(task, input.status) }
       : { startedAt: task.startedAt ?? at },
   }
 }
 
-export function failTask(task: TaskRecord, error: string, at = new Date().toISOString()): TaskRecord {
-  if (isTerminal(task.status)) return task
+/**
+ * 用户作答后 Host 重开同一 TaskRun（input_required → running，不走普通 transition 校验）：
+ * 保留原任务的进展与轮次，看板上表现为同一轮继续执行。
+ */
+export function resumeTaskWithAnswers(
+  task: TaskRecord,
+  answers: QuestionAnswer[],
+  at = new Date().toISOString(),
+): TaskRecord {
+  if (task.status !== 'input_required') {
+    throw new StateError('task_not_awaiting_input', `task ${task.id} is not awaiting user input`)
+  }
   return {
     ...touch(task, at),
-    status: 'failed',
-    error,
-    endedAt: at,
-    ...task.silent ? {} : { delivery: { state: 'pending' as const, attempts: 0 } },
+    status: 'running',
+    questions: task.questions,
+    answers,
+    endedAt: undefined,
+    delivery: undefined,
+    progressNote: '收到回答，继续执行',
   }
 }
 
-/** Host 确认系统/环境阻碍时使用；任务停止但持久子会话仍保留，用户处理后可复用。 */
-export function blockTask(
+export function failTask(
   task: TaskRecord,
   error: string,
-  options: { reasonCode?: BlockReasonCode; remediation?: string } = {},
   at = new Date().toISOString(),
+  options: { reasonCode?: BlockReasonCode } = {},
 ): TaskRecord {
   if (isTerminal(task.status)) return task
   return {
     ...touch(task, at),
-    status: 'blocked',
-    error,
-    ...options.reasonCode ? { reasonCode: options.reasonCode } : {},
-    ...options.remediation ? { remediation: options.remediation } : {},
+    status: 'failed',
+    fail: { error, ...options.reasonCode ? { reasonCode: options.reasonCode } : {} },
     endedAt: at,
     ...task.silent ? {} : { delivery: { state: 'pending' as const, attempts: 0 } },
   }

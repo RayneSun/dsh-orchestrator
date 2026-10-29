@@ -1,29 +1,27 @@
 import { z } from 'zod'
 
 const conversationStates = ['provisioning', 'running', 'idle', 'input_required', 'failed'] as const
-const taskStatuses = ['queued', 'running', 'input_required', 'blocked', 'completed', 'failed', 'interrupted'] as const
+const taskStatuses = ['queued', 'running', 'input_required', 'completed', 'failed', 'interrupted'] as const
 export const activeTaskStatuses = ['queued', 'running'] as const
-/** 单条 TaskRun 的终态；input_required/blocked 结束本次执行，等待 Lead 后续派发新的 TaskRun。 */
-export const terminalTaskStatuses = ['input_required', 'blocked', 'completed', 'failed', 'interrupted'] as const
+/** 单条 TaskRun 的终态；input_required 结束本次执行，等待用户作答后由 Host 重开同一 TaskRun。 */
+export const terminalTaskStatuses = ['input_required', 'completed', 'failed', 'interrupted'] as const
 /** 允许向主会话投递通知的终态。 */
 // interrupted 是否投递取决于产生路径：改单/重启不投递，手动停止才投递通知。
 // 因此该表只表示"允许带 delivery"，pending 由具体路径挂起；
 // 最终是否真正投递还受设置页投递开关（DeliveryToggles）与 silent 约束。
-export const deliverableTaskStatuses = ['input_required', 'blocked', 'completed', 'failed', 'interrupted'] as const
+export const deliverableTaskStatuses = ['input_required', 'completed', 'failed', 'interrupted'] as const
 
 /** 设置页的终态投递开关（volatile，即时生效）：关闭的状态只更新状态，不向主会话投递消息。 */
 export interface DeliveryToggles {
   inputRequired: boolean
-  blocked: boolean
   completed: boolean
   failed: boolean
   interrupted: boolean
 }
 
-/** 默认全部投递（未注入配置时的行为，与历史版本一致）。 */
+/** inputRequired 默认关：问题卡已在看板/子会话（投递开时还有主会话原生卡）覆盖可见性，避免双打扰。 */
 export const defaultDeliveryToggles: DeliveryToggles = {
-  inputRequired: true,
-  blocked: true,
+  inputRequired: false,
   completed: true,
   failed: true,
   interrupted: true,
@@ -32,14 +30,13 @@ export const blockReasonCodes = ['permission_denied', 'configuration', 'dependen
 
 const trimmed = z.string().trim().min(1)
 
-export const taskUpdateStatuses = ['running', 'input_required', 'blocked', 'completed', 'failed'] as const
+export const taskUpdateStatuses = ['running', 'input_required', 'completed', 'failed'] as const
 
 export const taskUpdateFieldAllowList: Record<(typeof taskUpdateStatuses)[number], readonly string[]> = {
-  running: ['title', 'progressNote', 'summary', 'userTodos'],
-  input_required: ['title', 'progressNote', 'question', 'summary', 'userTodos'],
-  blocked: ['title', 'progressNote', 'error', 'reasonCode', 'remediation', 'summary'],
-  completed: ['title', 'progressNote', 'report', 'summary', 'userTodos'],
-  failed: ['title', 'progressNote', 'error', 'summary'],
+  running: ['header', 'progressNote', 'userTodos'],
+  input_required: ['header', 'progressNote', 'questions', 'userTodos'],
+  completed: ['header', 'progressNote', 'report', 'userTodos'],
+  failed: ['header', 'progressNote', 'fail', 'userTodos'],
 }
 
 const trimmedList = z.array(trimmed).max(50)
@@ -235,6 +232,41 @@ export const reportSchema = z.object({
 }).strict()
 export type TaskReport = z.infer<typeof reportSchema>
 
+/** 问题选项：与平台 ask_user_question 同构（推荐项放首位，label 后缀 "(Recommended)"）。 */
+const questionOptionSchema = z.object({
+  label: trimmed.max(100),
+  description: trimmed.max(300).optional(),
+}).strict()
+
+/** input_required 的结构化问题（Worker 上报输入）：id 可省略，Host 自动补 q1/q2/… 并在返回值回显。 */
+export const questionItemInputSchema = z.object({
+  id: trimmed.max(40).optional(),
+  question: trimmed.max(2_000),
+  header: trimmed.max(60).optional(),
+  detail: trimmed.max(1_000).optional(),
+  options: z.array(questionOptionSchema).max(10).optional(),
+  multi_select: z.boolean().optional(),
+}).strict()
+
+/** 持久化的问题（id 已由 Host 补齐）。 */
+const questionItemObjectSchema = questionItemInputSchema.required({ id: true })
+export type QuestionItem = z.infer<typeof questionItemObjectSchema>
+
+/** 看板/主会话原生卡的作答项。 */
+export const questionAnswerSchema = z.object({
+  id: trimmed,
+  selected: z.array(trimmed.max(100)).max(10).default([]),
+  custom: trimmed.max(2_000).optional(),
+}).strict()
+export type QuestionAnswer = z.infer<typeof questionAnswerSchema>
+
+/** failed 上报：error 必填；reasonCode 标记系统阻碍（Lead 可修复后重派），remediation 已废除。 */
+export const taskFailSchema = z.object({
+  error: trimmed.max(10_000),
+  reasonCode: z.enum(blockReasonCodes).optional(),
+}).strict()
+export type TaskFail = z.infer<typeof taskFailSchema>
+
 const baseConversationSchema = z.object({
   id: trimmed,
   childSessionId: trimmed,
@@ -264,12 +296,14 @@ const baseTaskSchema = z.object({
   acceptanceCriteria: z.string().optional(),
   status: z.enum(taskStatuses).default('queued'),
   /** 极简状态标题（最多 8 个字，手机端/折叠态展示），progressNote 的压缩版。长度只在 task_update 输入边界限制，存储层不加约束（旧记录兼容）。 */
-  title: z.string().optional(),
+  header: z.string().optional(),
   progressNote: z.string().optional(),
-  error: z.string().optional(),
-  question: z.string().optional(),
-  reasonCode: z.enum(blockReasonCodes).optional(),
-  remediation: z.string().optional(),
+  /** input_required 的结构化问题（id 已由 Host 补齐）。 */
+  questions: z.array(questionItemObjectSchema).max(10).optional(),
+  /** 看板/主会话卡的作答留痕（Host 路由时写入）。 */
+  answers: z.array(questionAnswerSchema).max(10).optional(),
+  /** failed 时的失败原因；reasonCode 标记系统阻碍（可修复重派）。 */
+  fail: taskFailSchema.optional(),
   cancelledReason: z.string().optional(),
   progressSteps: z.array(progressStepSchema).default([]),
   silent: z.boolean().default(false),
@@ -293,6 +327,7 @@ const baseTaskSchema = z.object({
 function migrateRecord(raw: unknown): unknown {
   if (!raw || typeof raw !== 'object') return raw
   const record = { ...(raw as Record<string, unknown>) }
+  const isTask = typeof record.prompt === 'string'
   const legacyTaskBlocked = record.status === 'blocked'
     && (record.scene !== undefined || record.blockedQuestion !== undefined)
   if (legacyTaskBlocked) record.status = 'input_required'
@@ -316,6 +351,30 @@ function migrateRecord(raw: unknown): unknown {
     record.report = rest
   }
   if (record.status === 'cancelled') record.status = 'interrupted'
+  if (isTask) {
+    // 0.3.14 协议收缩：blocked 并入 failed（reasonCode 表达系统阻碍）；remediation 并入 error 文本。
+    if (record.status === 'blocked') record.status = 'failed'
+    if (record.fail === undefined
+      && (record.error !== undefined || record.reasonCode !== undefined || record.remediation !== undefined)) {
+      const parts = [
+        typeof record.error === 'string' && record.error.trim() ? record.error.trim() : undefined,
+        typeof record.remediation === 'string' && record.remediation.trim() ? `建议：${record.remediation.trim()}` : undefined,
+      ].filter(Boolean)
+      const fail: Record<string, unknown> = { error: parts.length > 0 ? parts.join('\n') : '任务失败' }
+      if (typeof record.reasonCode === 'string') fail.reasonCode = record.reasonCode
+      record.fail = fail
+    }
+    delete record.error
+    delete record.reasonCode
+    delete record.remediation
+    // title → header；question(字符串) → questions[{id:'q1', question}]
+    if (record.header === undefined && typeof record.title === 'string') record.header = record.title
+    delete record.title
+    if (record.questions === undefined && typeof record.question === 'string') {
+      record.questions = [{ id: 'q1', question: record.question }]
+    }
+    delete record.question
+  }
   // 0.3.12 的待办带 completedAt（只写不读的死字段），0.3.13 起剥离。
   if (Array.isArray(record.todos)) {
     record.todos = record.todos.map(todo => {
@@ -339,7 +398,7 @@ export type Outline = z.infer<typeof outlineSchema>
 export type ConversationRecord = z.infer<typeof baseConversationSchema>
 export type TaskRecord = z.infer<typeof baseTaskSchema>
 export type TaskStatus = TaskRecord['status']
-export type BlockReasonCode = NonNullable<TaskRecord['reasonCode']>
+export type BlockReasonCode = (typeof blockReasonCodes)[number]
 
 export interface Snapshot {
   conversations: ConversationRecord[]
@@ -433,14 +492,11 @@ export const dispatchInputSchema = z.object({
 
 export const taskUpdateInputSchema = z.object({
   status: z.enum(taskUpdateStatuses),
-  title: trimmed.max(8).optional(),
+  header: trimmed.max(8).optional(),
   progressNote: trimmed.max(500).optional(),
-  summary: trimmed.max(300).optional(),
   report: reportSchema.optional(),
-  error: trimmed.max(10_000).optional(),
-  question: trimmed.max(5_000).optional(),
-  reasonCode: z.enum(blockReasonCodes).optional(),
-  remediation: trimmed.max(5_000).optional(),
+  questions: z.array(questionItemInputSchema).min(1).max(10).optional(),
+  fail: taskFailSchema.optional(),
   userTodos: z.object({
     create: z.array(todoCreateSchema).max(50).optional(),
     update: z.array(todoUpdateEntrySchema).max(50).optional(),
@@ -449,11 +505,11 @@ export const taskUpdateInputSchema = z.object({
   if (value.status === 'completed' && !value.report) {
     ctx.addIssue({ code: 'custom', path: ['report'], message: 'completed task_update requires report' })
   }
-  if ((value.status === 'failed' || value.status === 'blocked') && !value.error) {
-    ctx.addIssue({ code: 'custom', path: ['error'], message: `${value.status} task_update requires error` })
+  if (value.status === 'failed' && !value.fail?.error?.trim()) {
+    ctx.addIssue({ code: 'custom', path: ['fail'], message: 'failed task_update requires fail.error（系统阻碍加 fail.reasonCode）' })
   }
-  if (value.status === 'input_required' && !value.question) {
-    ctx.addIssue({ code: 'custom', path: ['question'], message: 'input_required task_update requires question' })
+  if (value.status === 'input_required' && !(value.questions?.length)) {
+    ctx.addIssue({ code: 'custom', path: ['questions'], message: 'input_required task_update requires questions' })
   }
 
   const allowed = new Set(taskUpdateFieldAllowList[value.status])

@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { activeTaskStatuses } from '../types.ts'
-import type { ConversationRecord, ProgressStep, Snapshot, TaskRecord, UserTodo } from '../types.ts'
+import type { ConversationRecord, ProgressStep, QuestionItem, Snapshot, TaskRecord, UserTodo } from '../types.ts'
 
 interface BoardProps {
   sessionId?: string
@@ -8,6 +8,7 @@ interface BoardProps {
   orchestrator: {
     snapshot(request: { parentSessionId: string }): Promise<{ ok: true; value: Snapshot } | { ok: false; error?: { message?: string } }>
     setTodoStatus(request: { todoId: string; status: 'pending' | 'done' }): Promise<{ ok: true }>
+    answerTaskQuestions(request: { childSessionId: string; answers: Array<{ id: string; selected?: string[]; custom?: string }> }): Promise<{ ok: boolean; error?: string }>
   }
   remoteEvents: {
     $on(event: string, listener: () => void): () => void
@@ -42,6 +43,15 @@ function time(value?: string): string {
   return Number.isNaN(date.getTime()) ? value : date.toLocaleString()
 }
 
+/** 看板内的时间统一用短格式：10-29 09:31，避免整串年份挤占窄栏。 */
+function shortTime(value?: string): string {
+  const t = Date.parse(value ?? '')
+  if (Number.isNaN(t)) return value ?? '—'
+  const d = new Date(t)
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`
+}
+
 function durationText(task: TaskRecord, nowMs: number): string {
   const start = Date.parse(task.startedAt ?? task.createdAt)
   if (Number.isNaN(start)) return ''
@@ -63,9 +73,8 @@ function tabSessionId(useTabInfo?: BoardProps['useTabInfo']): string | undefined
   }
 }
 
-
 const taskStatusLabels: Record<string, string> = {
-  queued: '排队中', running: '进行中', input_required: '待操作', blocked: '已受阻', completed: '已完成',
+  queued: '排队中', running: '进行中', input_required: '待你操作', completed: '已完成',
   failed: '失败', interrupted: '已中断',
 }
 const blockReasonLabels: Record<string, string> = {
@@ -73,27 +82,24 @@ const blockReasonLabels: Record<string, string> = {
   network: '网络', resource: '资源', runtime: '运行时',
 }
 const convStateLabels: Record<string, string> = {
-  provisioning: '启动中', running: '进行中', idle: '空闲', input_required: '待操作', blocked: '已受阻', failed: '失败',
+  provisioning: '启动中', running: '进行中', idle: '空闲', input_required: '待你操作', failed: '失败',
 }
 
-/** 折叠态展示的一行最新状态摘要。 */
 function firstLine(text: string | undefined): string {
   return (text ?? '').split('\n').map(line => line.trim()).find(Boolean) ?? ''
 }
 
+/** 折叠态时间行 / 兜底标题文本。 */
 function taskHeadline(task: TaskRecord): string {
   switch (task.status) {
     case 'running':
       return task.progressNote ?? ''
     case 'input_required':
-      return task.question || '等待用户操作或补充信息'
-    case 'blocked':
-      return task.remediation || task.error || '任务被系统环境阻碍'
+      return firstLine(task.questions?.[0]?.question) || '等待用户操作'
     case 'completed':
-      // 折叠条/兜底标题只取首行，避免整条 report 灌进一行摘要
       return firstLine(task.report?.result) || '已完成'
     case 'failed':
-      return task.error || '执行失败'
+      return firstLine(task.fail?.error) || '执行失败'
     case 'interrupted':
       return task.cancelledReason || '已中断'
     case 'queued':
@@ -118,8 +124,7 @@ function fmtTimePoint(iso: string): { date: string; time: string; t: number } | 
 
 type TodoTimeTone = 'neutral' | 'active' | 'soon' | 'over'
 
-/** startAt/endAt → 时间胶囊文本与状态色。
- * active：当前落在窗口内（或 startAt 已过且无 endAt）；soon：endAt ≤3 天；over：endAt 已过。 */
+/** startAt/endAt → 时间胶囊文本与状态色。 */
 function timeRange(todo: UserTodo): { text: string; tone: TodoTimeTone } | undefined {
   if (!todo.startAt && !todo.endAt) return undefined
   const start = todo.startAt ? fmtTimePoint(todo.startAt) : undefined
@@ -161,8 +166,7 @@ function linkLabel(link: UserTodo['links'][number]): string {
   try { return new URL(link.url).hostname } catch { return link.url }
 }
 
-/** 会话级用户待办框：折叠/展开都显示，用户画勾走 setTodoStatus RPC，点行展开详情。
- * 详情区一切皆胶囊：链接（蓝，点击打开）/ 附件（紫，点击打开文件）/ 联系人（青绿，点击复制电话或邮箱）/ 地址（灰）。 */
+/** 会话级用户待办框：折叠/展开都显示，用户画勾走 setTodoStatus RPC，点行展开详情。 */
 function TodoList({ todos, onToggle, onOpenAttachment, showToast }: {
   todos: UserTodo[]
   onToggle: (todo: UserTodo) => void
@@ -193,25 +197,24 @@ function TodoList({ todos, onToggle, onOpenAttachment, showToast }: {
         <div className="dsho-todoBody" onClick={() => hasDetail && setOpenId(openId === todo.id ? undefined : todo.id)}>
           <div className="dsho-todoLine">
             <span className="dsho-todoTitle">{todo.title}{cancelled && <span className="dsho-todoCancelledTag">已作废</span>}</span>
-            <span className={`dsho-todoPriority dsho-todoPriority-${todo.priority}`} title={{ P0: '紧急且重要', P1: '重要不紧急', P2: '紧急不重要', P3: '有空再做' }[todo.priority]}>{todo.priority}</span>
-            {time && <span className={`dsho-todoTime${!done && !cancelled && time.tone !== 'neutral' ? ` dsho-todoTime-${time.tone}` : ''}`}>{time.tone === 'active' && !done && !cancelled && <span className="dsho-dot" aria-hidden="true" />}{time.text}</span>}
+            <span className={`dsho-todoTime dsho-todoTime-${time?.tone ?? 'neutral'}`}>{time?.text}</span>
+            {remind && <span className="dsho-todoTime">⏰ {remind}</span>}
           </div>
-          {remind && <div className="dsho-todoMeta"><span className="dsho-todoRemind">⏰ {remind} 提醒</span></div>}
-          {hasDetail && <div className="dsho-todoDetail">
+          {openId === todo.id && <div className="dsho-todoDetail">
             {todo.remark && <div className="dsho-dRow"><span className="dsho-dIcon">📝</span><span className="dsho-dText">{todo.remark}</span></div>}
             {todo.links.length > 0 && <div className="dsho-dRow"><span className="dsho-dIcon">🔗</span><span className="dsho-dChips">
-              {todo.links.map((link, i) => <button key={i} type="button" className="dsho-chip dsho-chip-link" title={link.url}
+              {todo.links.map(link => <button key={link.url} type="button" className="dsho-chip dsho-chip-link" title={link.url}
                 onClick={event => { event.stopPropagation(); window.open(link.url, '_blank', 'noopener') }}>{linkLabel(link)}</button>)}
             </span></div>}
             {todo.attachments.length > 0 && <div className="dsho-dRow"><span className="dsho-dIcon">📎</span><span className="dsho-dChips">
-              {todo.attachments.map((file, i) => <button key={i} type="button" className="dsho-chip dsho-chip-file" title={file.path}
-                onClick={event => { event.stopPropagation(); onOpenAttachment(file.path) }}>{file.name ?? file.path.split('/').pop()}</button>)}
+              {todo.attachments.map(attachment => <button key={attachment.path} type="button" className="dsho-chip dsho-chip-file"
+                title={attachment.path} onClick={event => { event.stopPropagation(); onOpenAttachment(attachment.path) }}>{attachment.name ?? attachment.path}</button>)}
             </span></div>}
             {todo.contacts.length > 0 && <div className="dsho-dRow"><span className="dsho-dIcon">👤</span><span className="dsho-dChips">
-              {todo.contacts.map((contact, i) => {
+              {todo.contacts.map(contact => {
                 const action = contact.phone ?? contact.email
                 const what = contact.phone ? '电话' : '邮箱'
-                return <button key={i} type="button" className="dsho-chip dsho-chip-person"
+                return <button key={`${contact.name}-${action ?? ''}`} type="button" className="dsho-chip dsho-chip-person"
                   title={`${contact.name}${action ? ` ${action}` : ''}${contact.note ? `（${contact.note}）` : ''}${action ? '，点击复制' : ''}`}
                   onClick={event => { event.stopPropagation(); if (action) copy(action, what) }}>
                   <b>{contact.name}</b>{action && <em>{action}</em>}
@@ -240,6 +243,76 @@ function StepList({ steps }: { steps: ProgressStep[] }): React.ReactElement | nu
   </ul>
 }
 
+/** 问题卡：看板侧的作答入口（子会话工具行卡与主会话原生卡共用同一 RPC 路由）。 */
+function AskCard({ task, onSubmit }: {
+  task: TaskRecord
+  onSubmit: (answers: Array<{ id: string; selected?: string[]; custom?: string }>) => Promise<void>
+}): React.ReactElement {
+  const questions = task.questions ?? []
+  const [picked, setPicked] = useState<Record<string, string[]>>({})
+  const [customs, setCustoms] = useState<Record<string, string>>({})
+  const [submitting, setSubmitting] = useState(false)
+  const [error, setError] = useState<string>()
+  const togglePick = (item: QuestionItem, label: string): void => {
+    setPicked(prev => {
+      const current = prev[item.id] ?? []
+      if (item.multi_select) {
+        return { ...prev, [item.id]: current.includes(label) ? current.filter(v => v !== label) : [...current, label] }
+      }
+      return { ...prev, [item.id]: current.includes(label) ? [] : [label] }
+    })
+  }
+  const submit = async (): Promise<void> => {
+    if (submitting) return
+    const answers = questions.map(item => ({
+      id: item.id,
+      ...(picked[item.id]?.length ? { selected: picked[item.id] } : {}),
+      ...(customs[item.id]?.trim() ? { custom: customs[item.id]!.trim() } : {}),
+    })).filter(answer => (answer.selected?.length ?? 0) > 0 || answer.custom !== undefined)
+    if (answers.length === 0) { setError('请先选择或填写至少一项回答'); return }
+    setSubmitting(true)
+    setError(undefined)
+    try {
+      await onSubmit(answers)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+      setSubmitting(false)
+    }
+  }
+  return <div className="dsho-ask">
+    <div className="dsho-askHead"><span className="dsho-askIcon">?</span>子会话向你提问 · {task.subject}</div>
+    {questions.map(item => <div key={item.id} className="dsho-askItem">
+      <div className="dsho-askQ">{item.header ? <b>{item.header}：</b> : null}{item.question}</div>
+      {item.detail && <div className="dsho-askDetail">{item.detail}</div>}
+      {item.options && item.options.length > 0 && <div className="dsho-askOpts">
+        {item.options.map(option => {
+          const selected = picked[item.id]?.includes(option.label) ?? false
+          return <button key={option.label} type="button"
+            className={`dsho-opt${selected ? ' dsho-opt-sel' : ''}`}
+            title={option.description}
+            onClick={() => togglePick(item, option.label)}>{option.label}</button>
+        })}
+      </div>}
+      {!item.options?.length && <input
+        className="dsho-askCustom"
+        placeholder="输入回答（可选）"
+        value={customs[item.id] ?? ''}
+        onChange={event => setCustoms(prev => ({ ...prev, [item.id]: event.target.value }))}
+      />}
+      {item.options?.length > 0 && <input
+        className="dsho-askCustom"
+        placeholder="补充说明（可选）"
+        value={customs[item.id] ?? ''}
+        onChange={event => setCustoms(prev => ({ ...prev, [item.id]: event.target.value }))}
+      />}
+    </div>)}
+    {error && <div className="dsho-askError">{error}</div>}
+    <button type="button" className="dsho-askSubmit" disabled={submitting} onClick={() => void submit()}>
+      {submitting ? '提交中…' : '提交回答'}
+    </button>
+  </div>
+}
+
 /** 任务行头：状态 badge + 静默/定时标识 + 主题；interrupted 的简化行与普通行共用。 */
 function TaskHead({ task }: { task: TaskRecord }): React.ReactElement {
   return <div className="dsho-taskHead">
@@ -262,17 +335,22 @@ function TaskLine({ task, conv, nowMs, onOpenArtifact }: TaskLineProps): React.R
   const running = (activeTaskStatuses as readonly string[]).includes(task.status)
   const result = task.report?.result
   const artifacts = task.report?.artifacts ?? []
-  const live = running && !task.endedAt
+  const live = task.status === 'running' && !task.endedAt
   const duration = durationText(task, nowMs)
 
-  // 展开区内容按状态聚合：摘要、完整结果/问题/失败原因、验收、制品、投递状态。
+  // 展开区内容按状态聚合：完整结果/失败原因、用户已回答、验收、制品、投递状态。
   const detailSections: React.ReactElement[] = []
-  if (conv.outline.summary) detailSections.push(<div key="sum" className="dsho-detailSec"><b>摘要</b>：{conv.outline.summary}</div>)
   if (result) detailSections.push(<div key="res" className="dsho-detailSec"><b>结果</b>：{result}</div>)
-  if (task.question) detailSections.push(<div key="q" className="dsho-detailSec"><b>待用户操作</b>：{task.question}</div>)
-  if (task.status === 'blocked' && task.reasonCode) detailSections.push(<div key="rc" className="dsho-detailSec"><b>阻碍类型</b>：{blockReasonLabels[task.reasonCode] ?? task.reasonCode}</div>)
-  if (task.error) detailSections.push(<div key="err" className="dsho-detailSec"><b>{task.status === 'blocked' ? '系统阻碍' : '失败原因'}</b>：{task.error}</div>)
-  if (task.remediation) detailSections.push(<div key="rem" className="dsho-detailSec"><b>建议操作</b>：{task.remediation}</div>)
+  if (task.answers?.length) detailSections.push(<div key="ans" className="dsho-detailSec"><b>已回答</b>：{task.answers.map(answer => {
+    const parts = [answer.selected.length > 0 ? answer.selected.join('、') : '', answer.custom ?? ''].filter(Boolean)
+    return `[${answer.id}] ${parts.join('；') || '（未作答）'}`
+  }).join('；')}</div>)
+  if (task.status === 'failed' && task.fail) {
+    detailSections.push(<div key="err" className="dsho-detailSec">
+      <b>失败原因</b>：{task.fail.error}
+      {task.fail.reasonCode && <>（<b>{blockReasonLabels[task.fail.reasonCode] ?? task.fail.reasonCode}</b> 阻碍，处理后可继续）</>}
+    </div>)
+  }
   if (task.acceptanceCriteria) detailSections.push(<div key="ac" className="dsho-detailSec"><b>验收标准</b>：{task.acceptanceCriteria}</div>)
   if (artifacts.length > 0) detailSections.push(<div key="arts" className="dsho-detailSec">
     <b>制品</b>（点击打开）：
@@ -287,30 +365,52 @@ function TaskLine({ task, conv, nowMs, onOpenArtifact }: TaskLineProps): React.R
   if (task.delivery?.state === 'pending') detailSections.push(<div key="dp" className="dsho-detailSec dsho-subtle">
     {task.delivery.attempts === 0 ? '正在把结果同步回主会话…' : `同步未成功（已重试 ${task.delivery.attempts} 次，将自动继续）${task.delivery.lastError ? ` · ${task.delivery.lastError}` : ''}`}
   </div>)
-  if (task.delivery?.state === 'delivered') detailSections.push(<div key="dd" className="dsho-detailSec dsho-subtle">已同步回主会话 · {time(task.delivery.deliveredAt)}</div>)
+  if (task.delivery?.state === 'delivered') detailSections.push(<div key="dd" className="dsho-detailSec dsho-subtle">已同步回主会话 · {shortTime(task.delivery.deliveredAt)}</div>)
 
+  const expanderLabel = task.status === 'failed' ? '查看错误' : '查看结果'
   if (task.status === 'interrupted') {
     return <li className="dsho-task dsho-taskMuted">
       <TaskHead task={task} />
       {task.cancelledReason && <p className="dsho-subtle">{task.cancelledReason}</p>}
-      <div className="dsho-taskFoot"><span>创建 {time(task.createdAt)}</span>{duration && <span className="dsho-dur">{duration}</span>}</div>
+      <div className="dsho-taskFoot"><span>创建 {shortTime(task.createdAt)}</span>{duration && <span className="dsho-dur">{duration}</span>}</div>
     </li>
   }
 
   return <li className="dsho-task">
     <TaskHead task={task} />
     <StepList steps={task.progressSteps ?? []} />
-    {(task.title || task.progressNote || detailSections.length > 0) && <div className={`dsho-note${live ? ' dsho-note-live' : ''}`}>
-      {task.title && <><span className="dsho-noteTitle">{task.title}</span><span className="dsho-noteSep">:</span></>}
+    {(task.header || task.progressNote || detailSections.length > 0) && <div className={`dsho-note${live ? ' dsho-note-live' : ''}`}>
+      {task.header && <><span className="dsho-noteTitle">{task.header}</span><span className="dsho-noteSep">:</span></>}
       <span className="dsho-noteText">{task.progressNote || (live ? '正在推进…' : taskHeadline(task))}</span>
-      {detailSections.length > 0 && <button type="button" className="dsho-expander" onClick={() => setExpanded(v => !v)}>{expanded ? '收起' : '展开详情'}</button>}
+      {detailSections.length > 0 && <button type="button" className="dsho-expander" onClick={() => setExpanded(v => !v)}>{expanded ? '收起' : expanderLabel}</button>}
     </div>}
-    {expanded && detailSections.length > 0 && <div className="dsho-detail">{detailSections}</div>}
+    {expanded && detailSections.length > 0 && <div className={`dsho-detail${task.status === 'failed' ? ' dsho-detail-err' : ''}`}>{detailSections}</div>}
     <div className="dsho-taskFoot">
-      <span>创建 {time(task.createdAt)}</span>
+      <span>创建 {shortTime(task.createdAt)}</span>
       {duration && <span className={`dsho-dur${live ? ' dsho-dur-live' : ''}`}>{duration}</span>}
     </div>
   </li>
+}
+
+/** 任务框：圈住多轮任务，默认折叠只显示最新一轮（新→旧）。 */
+function TaskBox({ conv, tasks, nowMs, onOpenArtifact }: {
+  conv: ConversationRecord
+  tasks: TaskRecord[]
+  nowMs: number
+  onOpenArtifact: (conv: ConversationRecord, artifact: string) => void
+}): React.ReactElement {
+  const [expanded, setExpanded] = useState(false)
+  const rounds = [...tasks].reverse()
+  return <div className={`dsho-taskBox${expanded ? '' : ' dsho-taskBox-collapsed'}`}>
+    <div className="dsho-taskBoxHead" onClick={() => setExpanded(v => !v)}>
+      <span className="dsho-chevron" aria-hidden />
+      任务
+      <span className="dsho-taskBoxCnt">{rounds.length} 轮 · {expanded ? '全部展开' : '显示最新'}</span>
+    </div>
+    <ul className="dsho-tasks">
+      {rounds.map(task => <TaskLine key={task.id} task={task} conv={conv} nowMs={nowMs} onOpenArtifact={onOpenArtifact} />)}
+    </ul>
+  </div>
 }
 
 export function Board({ sessionId: propSessionId, useTabInfo, orchestrator, remoteEvents, uiWorkspace }: BoardProps): React.ReactElement {
@@ -406,7 +506,18 @@ export function Board({ sessionId: propSessionId, useTabInfo, orchestrator, remo
     }
   }, [orchestrator, load, showToast])
 
-  if (!sessionId) return <div className="dsho-board"><p className="dsho-empty dsho-error">无法确定主会话 ID。</p></div>
+  // 问题卡作答：走 answerTaskQuestions RPC，Host 重开任务并注入 Worker。
+  const submitAnswers = useCallback(async (conv: ConversationRecord, answers: Array<{ id: string; selected?: string[]; custom?: string }>) => {
+    const result = await orchestrator.answerTaskQuestions({ childSessionId: conv.childSessionId, answers })
+    if (result.ok) {
+      showToast('已回答，任务继续中')
+      void load(++requestSeq.current)
+    } else {
+      throw new Error(result.error ?? '提交失败')
+    }
+  }, [orchestrator, load, showToast])
+
+  if (!sessionId) return <div className="dsho-board"><h2 className="dsho-title">任务看板</h2><p className="dsho-empty">无法确定主会话 ID。</p></div>
   if (error) return <div className="dsho-board"><h2 className="dsho-title">任务看板</h2><p className="dsho-empty dsho-error" role="alert">{error}</p></div>
   if (!snapshot) return <div className="dsho-board"><h2 className="dsho-title">任务看板</h2><p className="dsho-empty">正在加载任务看板…</p></div>
   if (snapshot.conversations.length === 0) {
@@ -430,11 +541,11 @@ export function Board({ sessionId: propSessionId, useTabInfo, orchestrator, remo
       const silentConv = isSilentConversation(conv.id)
       const active = conv.state === 'running' || conv.state === 'provisioning'
         || tasks.some(task => (activeTaskStatuses as readonly string[]).includes(task.status))
-      const displayState = conv.state === 'idle' && latest?.status === 'blocked' ? 'blocked' : conv.state
+      // 会话头徽标跟随最新一轮任务；无任务时回退会话状态。
+      const headState = latest ? latest.status : conv.state
       const collapsed = collapsedOverride[conv.id] ?? !active
-      const rawHeadline = latest ? taskHeadline(latest) : ''
-      const headline = rawHeadline.length > 80 ? `${rawHeadline.slice(0, 80)}…` : rawHeadline
       const toggle = (): void => setCollapsedOverride(prev => ({ ...prev, [conv.id]: !collapsed }))
+      const awaitingInput = latest?.status === 'input_required' && (latest.questions?.length ?? 0) > 0
       return <section
         className={`dsho-conv${active ? ' dsho-conv-active' : ''}${collapsed ? ' dsho-conv-collapsed' : ''}`}
         key={conv.id}
@@ -451,7 +562,7 @@ export function Board({ sessionId: propSessionId, useTabInfo, orchestrator, remo
           {silentConv && <TagChip kind="silent" title="静默工作流：终态不会通知主会话" />}
           {conv.hasActiveSchedule && <TagChip kind="scheduled" title="绑定了定时任务：到点自动触发并上报" />}
           <span className="dsho-convTitle" title={conv.title}>{conv.title}</span>
-          <span className={`dsho-badge dsho-badge-${displayState}`}>{convStateLabels[displayState] ?? displayState}</span>
+          <span className={`dsho-badge dsho-badge-${headState}`}>{taskStatusLabels[headState] ?? convStateLabels[headState] ?? headState}</span>
           <button className="dsho-open" type="button" onClick={event => {
             event.stopPropagation()
             try {
@@ -466,23 +577,17 @@ export function Board({ sessionId: propSessionId, useTabInfo, orchestrator, remo
             }
           }}>打开子会话</button>
         </header>
+        {/* 折叠态也恒显：问题卡 + 用户待办（会话头之下、任务区之外） */}
+        {awaitingInput && latest && <AskCard task={latest} onSubmit={answers => submitAnswers(conv, answers)} />}
         {conv.todos.length > 0 && <TodoList todos={conv.todos} onToggle={toggleTodo} showToast={showToast} onOpenAttachment={path => void openArtifact(conv, path)} />}
-        {collapsed && latest && <div className="dsho-strip">
-          <div className="dsho-stripRow">
-            <span className={`dsho-badge dsho-badge-${latest.status}`}>{taskStatusLabels[latest.status] ?? latest.status}</span>
-            {latest.title
-              ? <span className="dsho-noteTitle" title={latest.title}>{latest.title}</span>
-              : <span className="dsho-stripTitle" title={headline}>{headline}</span>}
-            <span className="dsho-stripTime">{time(latest.updatedAt ?? conv.updatedAt)}</span>
-          </div>
-          {latest.progressNote && <div className={`dsho-stripNote${(activeTaskStatuses as readonly string[]).includes(latest.status) && !latest.endedAt ? ' dsho-stripNote-live' : ''}`} title={latest.progressNote}>{latest.progressNote}</div>}
+        {collapsed && latest && <div className="dsho-collapsedTime">
+          最新任务 · 创建 {shortTime(latest.createdAt)}{(() => { const d = durationText(latest, nowMs); return d ? ` · ${d}` : '' })()}
         </div>}
         <div className="dsho-body"><div>
-          {conv.workspaceName && <div className="dsho-meta">工作区：{conv.workspaceName}</div>}
-          <ul className="dsho-tasks">
-            {tasks.length === 0 && <li className="dsho-task"><p className="dsho-note">暂无任务</p></li>}
-            {tasks.map(task => <TaskLine key={task.id} task={task} conv={conv} nowMs={nowMs} onOpenArtifact={openArtifact} />)}
-          </ul>
+          <div className="dsho-bodyInner">
+            {conv.workspaceName && <div className="dsho-meta">工作区：{conv.workspaceName}</div>}
+            <TaskBox conv={conv} tasks={tasks} nowMs={nowMs} onOpenArtifact={openArtifact} />
+          </div>
         </div></div>
       </section>
     })}

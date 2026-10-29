@@ -20,6 +20,11 @@ export const TYPERT = {
         name: 'setTodoStatus',
         signature: 'setTodoStatus(request: SetTodoStatusRequest): Promise<SetTodoStatusResult>',
         tags: [],
+      }, {
+        kind: 'method' as const,
+        name: 'answerTaskQuestions',
+        signature: 'answerTaskQuestions(request: AnswerQuestionsRequest): Promise<AnswerQuestionsResult>',
+        tags: [],
       }],
       types: [],
     }],

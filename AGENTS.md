@@ -9,7 +9,7 @@
 - **Lead**（主会话，预设 `may-orchestrator-lead`）：理解需求、路由、派发任务、向用户转述结果。工具**不做裁剪**：宿主与用户安装的全部全局工具可见（后装工具自动生效）；编排纪律由 persona 约束——一步查询直接做，执行类工作全部派发，不给主会话自建 schedule。
 - **Worker**（持久**根会话**，预设 `may-orchestrator-worker`）：执行任务。不是 subagent——通过 `agents.create` 创建（无 origin/delegationDepth），与主会话同为一等会话，schedule 等仅 depth-0 可用的宿主能力对 Worker 开放。工具**黑名单**制（只禁派生/编排/直接提问），其余宿主与用户安装的工具默认可用。
 - 两层领域模型：**Conversation**（持久子会话/工作流）1—N **TaskRun**（一次派发）。
-- 技术栈：pnpm + TypeScript + Cordis + Zod + tsdown + vitest。4 个入口：主插件、client（看板 React）、typert host/remote（snapshot / setTodoStatus RPC）。
+- 技术栈：pnpm + TypeScript + Cordis + Zod + tsdown + vitest。4 个入口：主插件、client（看板 React）、typert host/remote（snapshot / setTodoStatus / answerTaskQuestions RPC）。
 
 ## 本机环境与硬性约束
 
@@ -26,7 +26,7 @@
 ```bash
 ./node_modules/.bin/tsc -p tsconfig.json --noEmit
 ./node_modules/.bin/tsc -p tsconfig.client.json --noEmit
-./node_modules/.bin/vitest run        # 当前 86 个用例
+./node_modules/.bin/vitest run        # 当前 94 个用例
 ./node_modules/.bin/tsdown            # 应无弃用警告
 export npm_config_cache=/private/tmp/dsh-orchestrator-npm-cache
 node scripts/verify-packaging.mjs     # 校验 tgz 只含运行所需 lib/、vendor/、cordis.patch.yml 等
@@ -61,14 +61,14 @@ dsh plugin --profile web add <tgz 绝对路径>
 ### 状态机（src/types.ts + src/state-machine.ts）
 
 - 新建 Conversation 必须在主会话 cwd 下创建唯一子目录（同名冲突递增 `-N` 后缀），`meta.cwd` 写入 session header，冷恢复后不变；复用 Conversation 不换目录。新建派发必须提供 `workspaceName`（`workspaceNameSchema` 强制英文小写 slug），经 `src/workspaces.ts` 清洗后落盘。
-- Task 状态：`queued / running / input_required / blocked / completed / failed / interrupted`（`cancelled` 从未产生过，0.3.11 起移除，旧记录加载时迁移为 interrupted）。
-  - `input_required`：只表示 Worker 需要用户补充信息/选择，或需要用户接管浏览器、系统安全界面；必须有 question。
-  - `blocked`（0.3.2 重新引入，语义不同于 0.2.x）：权限、配置、依赖、网络、资源、运行时等系统阻碍；带 error、可选 reasonCode/remediation。
+- Task 状态：`queued / running / input_required / completed / failed / interrupted`（0.3.14 起删除 blocked；cancelled 从未产生过，旧记录加载时迁移为 interrupted）。
+  - `input_required`：只表示 Worker 需要用户补充信息/选择，或需要用户接管浏览器、系统安全界面；必须有 `questions`。
+  - `failed`：普通失败与系统阻碍统一；系统阻碍用 `fail.reasonCode`（permission/configuration/dependency/network/resource/runtime）标记。
   - `interrupted`：被改单接管或用户手动停止。改单接管不投递；用户手动停止需要投递一条非失败通知，工作流回 `idle` 可继续派发。
-  - `input_required / blocked / completed / failed / interrupted` 都允许带 delivery；interrupted 是否挂起由具体路径决定（`deliverableTaskStatuses`）。Worker 主动 failed/blocked 后 Conversation 回 idle；只有 Host 级致命错误（如子会话启动失败/持久化记录缺失）才额外 failConversation。
+  - `input_required / completed / failed / interrupted` 都允许带 delivery；interrupted 是否挂起由具体路径决定（`deliverableTaskStatuses`）。Worker 主动 failed 后 Conversation 回 idle；只有 Host 级致命错误（如子会话启动失败/持久化记录缺失）才额外 failConversation。
 - Conversation 状态：`provisioning / running / idle / input_required / failed`。
 - 终态投递（delivery outbox）由状态机在迁移时统一挂起，**不要**在创建任务或别处预挂 `delivery: pending`（否则看板对运行中任务误报"同步中"）。
-- **终态投递开关**：`OrchestratorService.static Config`（schemastery）声明 5 个 volatile 布尔（deliverOnCompleted/Failed/InputRequired/Blocked/Interrupted，默认 true）。volatile 改动经 loader `_commitVolatile` 即时生效、不重启 fiber；服务构造器第二参数接收 volatile 引用（`.get()` 实时读）。判定收敛在纯函数 `deliveryEnabledFor(toggles, status)` 与 `gateTaskDelivery(task, toggles)`（state-machine.ts），挂接点：updateFromWorker 两处 transitionTask 后、onWorkerTurnEnd（manual_stop/failed）、failLaunch、deliverPendingTask 兜底（关闭时清掉存量 pending，不补投）。语义分界：开关只影响"消息是否回投主会话"，task_update 的状态/摘要/待办总是持久化并更新 roster/看板——silent 是整会话不投，开关是按状态不投。
+- **终态投递开关**：`OrchestratorService.static Config`（schemastery）声明 4 个 volatile 布尔（deliverOnCompleted/Failed/InputRequired/Interrupted；前三者默认 true，inputRequired 默认 false）。volatile 改动经 loader `_commitVolatile` 即时生效、不重启 fiber；服务构造器第二参数接收 volatile 引用（`.get()` 实时读）。判定收敛在纯函数 `deliveryEnabledFor(toggles, status)` 与 `gateTaskDelivery(task, toggles)`（state-machine.ts），挂接点：updateFromWorker 两处 transitionTask 后、onWorkerTurnEnd（manual_stop/failed）、failLaunch、deliverPendingTask 兜底（关闭时清掉存量 pending，不补投）。语义分界：开关只影响"消息是否回投主会话"，task_update 的状态/摘要/待办总是持久化并更新 roster/看板——silent 是整会话不投，开关是按状态不投。
 - **设置页（客户端）**：`src/client/settings-card.tsx` 注册 `plugins.row.config` 槽（key `<包名>#<行id>` = `@may/dsh-orchestrator#may-dsh-orchestrator`），入口：插件管理 → 已安装 → 本包 → 行"配置"。SettingsFormModel+Switch 模式仿 dsh-ciri；`@deepseek-ai/dsh-client-ui-primitives`/`dsh-client-store` 是前端 ModuleLoader 运行时 external（package.json `dsh.client.external` + tsdown neverBundle + vitest alias 桩）；`dsh.client.immediately: true` 保证插件管理页打开时槽位已注册。
 - 所有状态修改走 `service.serialize()` 串行链；涉及改单必须"旧任务 interrupted + reviseConversation 原子切 activeTaskId"先落盘，再做外部调用。
 
@@ -121,15 +121,15 @@ dsh plugin --profile web add <tgz 绝对路径>
 - 闲聊、概念解释、当前对话内可答的问题**直接回答，不调任何工具**；需要实际执行（联网/文件/命令/浏览器）才派发。
 - background 派发后只回一句简短自然确认（"好，这就改"）；禁止"任务正在后台进行/Worker 完成后我会发给你"等系统腔；不暴露 Worker/Conversation/TaskRun 等词；不提前承诺交付物。
 - 一事一会：同一事项的追问、改单、继续推进必须由 Lead 按 roster 复用原 conversationId；只是"同类"的两件事（两个不同提醒、两次不同购物）必须分别新建会话。subject 要非常精简（约 10 字以内、手机端一行可读）。
-- 记忆维护类任务必须 `silent: true` 派发（终态不投递）；用户常在手机端，blocked 时不得指导用户手改文件/命令/配置。
+- 记忆维护类任务必须 `silent: true` 派发（终态不投递）；用户常在手机端，failed + reasonCode 时也不得指导用户手改文件/命令/配置。
 - 单条记忆 Lead 自己 `memory_remember`；任务中产生的记忆由 Worker 记；写入前先查重。
 
 ### Worker 上报协议
 
-- `task_update`：running / input_required(+question) / blocked(+error, reasonCode?, remediation?) / completed(+report) / failed(+error)；全状态可带 title（最多 8 个字的极简状态标题，折叠态/手机端展示）、progressNote（一句话进展，允许三分幽默）、summary；userTodos 仅 running/input_required/completed 允许（failed/blocked 禁止——终态失败/受阻不应再改待办）：分桶结构 {create:[], update:[]}，create.title / update.id 在 DSL 层静态必填（type 判别已废弃——分支规则必须由结构而非文案表达，模型多次踩过文案条件必填的坑）；completed 的 report{result, artifacts?}：result 是 Lead 转述给用户的唯一权威答案；artifacts 为子工作区相对路径，投递时自动加工作区前缀。待办内容字段：startAt/endAt(时间窗，startAt 不得晚于 endAt；旧字段 dueDate 已迁移为 endAt)。时间输入走 `normalizeTimePoint` 宽松解析（`10-28 18:00`/`2026-10-28 18:00`/`2026-10-28`/完整 ISO 都合法，省略年份取最近未来，缺时区补本地），归一化为 ISO 8601 带时区落库；自然语言（"明天下午"）拒绝/remindAt(ISO)/priority(P0~P3 默认 P3)/links/attachments(相对路径)/contacts/location/remark（备注，排字段表末位诱导先填结构化字段；旧字段 detail 已迁移为 remark）。双向知情通道：新任务投递附"会话待办现状"（todoStatusSection，pending 全列+用户已勾的防重复代办），task_update 返回值带 `todos` 投影（id/title/status/priority，todoProjection）。用户在看板画勾走 setTodoStatus RPC（Host 持久化+看板刷新，Worker 不实时通知，靠上述两个通道知情）。
-- 终态（completed/failed/input_required/blocked）task_update 成功后调 `exec.concludeTurn()` 直接结束本轮（statusConcludesTurn），省掉末次全上下文推理；running 不结束。
+- `task_update`：running / input_required(+questions[]) / completed(+report) / failed(+fail)；全状态可带 header（≤8 字极简状态标题）、progressNote（一句话进展，允许三分幽默）和顶层 userTodos。差异必填字段收敛到 1 个：input_required→questions，completed→report，failed→fail。questions 是结构化问卷 `{id?, question, header?, detail?, options?, multi_select?}`，Worker 的 id 可省略，Host 补 q1/q2/… 并回显。fail 是 `{error, reasonCode?}`；旧顶层 error/reasonCode/remediation 和 blocked 已迁移/删除。userTodos 分桶 `{create:[], update:[]}`，create.title / update.id 在 DSL 层静态必填（type 判别已废弃——分支规则必须由结构而非文案表达，模型多次踩过文案条件必填的坑）。completed 的 report{result, artifacts?}：result 是 Lead 转述给用户的唯一权威答案；artifacts 为子工作区相对路径，投递时自动加工作区前缀。待办内容字段：startAt/endAt/remindAt 走 `normalizeTimePoint` 宽松解析（`10-28 18:00`/`2026-10-28 18:00`/`2026-10-28`/完整 ISO 都合法，省略年份取最近未来，缺时区补本地），归一化为 ISO 8601 带时区落库；自然语言（"明天下午"）拒绝；另有 priority(P0~P3 默认 P3)/links/attachments(相对路径)/contacts/location/remark（备注，排字段表末位诱导先填结构化字段；旧字段 detail 已迁移为 remark）。双向知情通道：新任务投递附"会话待办现状"（todoStatusSection，pending 全列+用户已勾的防重复代办），task_update 返回值带 `todos` 投影（id/title/status/priority，todoProjection）。用户在看板画勾走 setTodoStatus RPC（Host 持久化+看板刷新，Worker 不实时通知，靠上述两个通道知情）。
+- 终态（completed/failed）task_update 成功后调 `exec.concludeTurn()` 直接结束本轮（statusConcludesTurn），省掉末次全上下文推理；running 不结束；input_required 为阻塞工具调用（不 concludeTurn，用户作答后同轮返回答案继续）。
 - **zod/DSL 双写**：模型可见的只有 defineTool 的 parameters DSL（`TASK_UPDATE_TOOL_PARAMETERS` 导出常量），zod（taskUpdateInputSchema）是 Host 侧校验；两处必须同步——zod 加了字段而 DSL 没加，模型永远不知道（0.3.13 踩过）。tool-params.spec 锁定 DSL 可编译且关键字段齐全。
-- title 的 8 字上限只在输入边界（taskUpdateInputSchema）限制；baseTaskSchema 用 z.string() 不加 max，防止存储层解析拒绝旧记录。
+- header 的 8 字上限只在输入边界（taskUpdateInputSchema）限制；baseTaskSchema 用 z.string() 不加 max，防止存储层解析拒绝旧记录。
 - 用户待办清单：会话级 `conv.todos`（UserTodo：id/title/startAt/endAt/remindAt/priority/links/attachments/contacts/location/remark/status: pending|done|cancelled/completedBy: user|worker；completedAt 死字段已删，旧 dueDate 读取时迁移进 endAt），Worker 用 userTodos.create 提出、userTodos.update 标 done 或 cancelled；用户在任务看板画勾/取消走 `setTodoStatus` RPC（仅 pending/done）；待办框在"工作区"行上方，折叠也显示，cancelled 灰显划线带"已作废"胶囊且不可勾。派发与改单注入末尾附 `todoStatusSection`（会话待办现状：pending 全列含 id，用户自己勾掉的标注"不要重复代办"，cancelled 不提）。Lead 把待办转述给用户；用户让代办/修改时复用原 conversationId 派发并要求 Worker userTodos.update。校验失败报错带全量路径（如 userTodos.create[0].title: …），模型可一轮自愈。
 - Worker 会话在 configureWorker 时切到 `danger-full-access` 权限预设（permissionPresets.set，沙箱全开放+审批 never）：后台无人值守，默认 workspace-write+ask 会把敏感操作卡在审批上。Lead 保持默认。
 - Worker 不能直接向用户提问（ask-user 工具被 guard 拦且不进预设）。
@@ -138,7 +138,7 @@ dsh plugin --profile web add <tgz 绝对路径>
 ### 存储与兼容性
 
 - 存储：`~/.dsh/storages/orchestrator.json`（domain v1，tables: conversations/tasks）。
-- 持久化 schema 用 zod；**改字段必须在 types.ts 的 `migrateRecord` 里做旧记录迁移**（先例：scene 剥离、仅旧版带 scene/blockedQuestion 的 blocked→input_required、blockedQuestion→question；0.3.2 新 blocked 无 scene，不能误迁移）。client snapshot 走 z.preprocess，旧数据不能让看板炸掉。
+- 持久化 schema 用 zod；**改字段必须在 types.ts 的 `migrateRecord` 里做旧记录迁移**（0.3.14 先例：系统阻碍 blocked→failed.fail、remediation→error 尾注、title→header、question→questions；0.2.x 提问型 blocked→input_required）。client snapshot 走 z.preprocess，旧数据不能让看板炸掉。
 - 子会话 transcript：`~/.dsh/sessions/<workspace-encoded>/<childSessionId>/session.v4.jsonl.zstd`，用 `zstd -dc` 解压排查真实轮次；`turn/end` 的 reason 是判断手动停止/改单的依据。
 
 ## 代码约定
@@ -156,11 +156,11 @@ dsh plugin --profile web add <tgz 绝对路径>
 - cancel 是 fire-and-return，旧轮次 turn/end 晚到；没有 revisionTurnEnds 守卫就会把旧任务误判 failed 或把新任务误标手动停止。
 - 向 failed 工作流派发会 throw，dispatch 已包 try/catch 返回结构化 error，新增的外部调用路径同样要兜住。
 - 快速 Worker 可能在 followup 接受与收尾之间已提交终态：只补 queued→running，不回滚终态。
-- 重启恢复：普通活动任务统一转 interrupted（`interruptTaskAfterRestart`，不主动投递）；persistence stat 不确定时用 blockTask 标 blocked；并恢复未投递 outbox 与补建记忆共享链接。
+- 重启恢复：普通活动任务统一转 interrupted（`interruptTaskAfterRestart`，不主动投递）；persistence stat 不确定时用 `failTask(..., {reasonCode:'runtime'})`；并恢复未投递 outbox 与补建记忆共享链接。
 - pnpm-lock 与 peerDeps 范围改动后必须 `--no-frozen-lockfile` 重装并核对 zod 解析到 4.4.3。
 - 存储 schema（baseTaskSchema/baseConversationSchema）收紧约束会让旧记录在重启后解析失败：新字段给 default、长度等限制只放输入边界 schema。
 
 ## 背景材料
 
 - README.md：用户面说明，发版时随版本号更新。
-- git log：0.2.0（background/单 Worker 预设）→ 0.2.1（路由追问兜底/改单 steer/blocked 提问）→ 0.2.2（todo 进度桥接看板）→ 0.2.3（interrupted 改单语义）→ 0.2.4（手动停止捕获、看板与话术精简）→ 0.2.5（白名单、input_required、上下文瘦身、鲁棒性）→ 0.2.6（手动中断通知、状态配色、Worker 提示词瘦身）→ 0.2.7（子会话折叠、柔光动效、按钮突出、提示词/恢复加固）→ 0.3.0（个人助理能力 bundle）→ 0.3.2（Worker 根会话化、blocked 系统受阻语义、默认 Lead 预设免手改）→ 0.3.3（DSH 0.2.1-rc.2 适配、移除 dsh-market）→ 0.3.4（记忆共享、settled 死代码清理、文档重写）→ 0.3.5（Worker 放开子智能体与后台任务）→ 0.3.6（标题更新/同主题复用/定时编排/定时标记）→ 0.3.7（模型选择透传、打开子会话寻址修复）→ 0.3.8（看板重构、task_update v2：report/progressNote/summary）→ 0.3.9（workspaceName 英文 slug 必填、mock 对齐）→ 0.3.10（dispatch 工具参数 DSL pattern 崩溃修复）→ 0.3.11（死字段 userAnswer/resultSummary/outlinePatch/cancelled 清理与数据迁移、outline 摘要写入简化、看板 API 文档）→ 0.3.12（Lead 白名单补 memory_read/update/home）→ 未发布（Lead 移除工具白名单；一事一会拆分；task_update title（≤8 字）+ report.todos/todoUpdates 用户待办清单 + setTodoStatus RPC；Worker danger-full-access；定时标记 turn/end 双触发；终态 concludeTurn；task_update 参数 DSL 漂移修复与测试锁定；cordis 4 inject 陷阱修复（ctx.get 访问 permissionPresets/schedule）；待办 cancelled 作废 + 派发注入会话待办现状 + task_update 返回 todos 投影 + todoUpdates 收紧（failed/blocked 禁止）；待办 priority 四象限（P0~P3 默认 P3，看板彩色胶囊）；setTodoStatus markRemote 漏注册修复（独立 tsdown 无装饰器降级，每个 RPC 方法都必须手动 markRemote）；未使用导出类型清理（NewTodo/TodoUpdate/TodoPriority/Delivery/ConversationState）；终态投递开关与插件设置页（plugins.row.config）；DSH 侧栏定时图标前缀移除）→ 0.3.13（userTodos 分桶 create/update 取代 type 判别、create.title/update.id DSL 静态必填、待办新字段 remindAt/links/attachments/contacts/location、detail→remark 并置末位、completedAt 死字段删除、校验报错带全量路径、LEAD 待办节按操作类型重组、WORKER task_update 节嵌套化、看板详情区一切皆胶囊）。
+- git log：0.2.0（background/单 Worker 预设）→ 0.2.1（路由追问兜底/改单 steer/blocked 提问）→ 0.2.2（todo 进度桥接看板）→ 0.2.3（interrupted 改单语义）→ 0.2.4（手动停止捕获、看板与话术精简）→ 0.2.5（白名单、input_required、上下文瘦身、鲁棒性）→ 0.2.6（手动中断通知、状态配色、Worker 提示词瘦身）→ 0.2.7（子会话折叠、柔光动效、按钮突出、提示词/恢复加固）→ 0.3.0（个人助理能力 bundle）→ 0.3.2（Worker 根会话化、blocked 系统受阻语义、默认 Lead 预设免手改）→ 0.3.3（DSH 0.2.1-rc.2 适配、移除 dsh-market）→ 0.3.4（记忆共享、settled 死代码清理、文档重写）→ 0.3.5（Worker 放开子智能体与后台任务）→ 0.3.6（标题更新/同主题复用/定时编排/定时标记）→ 0.3.7（模型选择透传、打开子会话寻址修复）→ 0.3.8（看板重构、task_update v2：report/progressNote/summary）→ 0.3.9（workspaceName 英文 slug 必填、mock 对齐）→ 0.3.10（dispatch 工具参数 DSL pattern 崩溃修复）→ 0.3.11（死字段 userAnswer/resultSummary/outlinePatch/cancelled 清理与数据迁移、outline 摘要写入简化、看板 API 文档）→ 0.3.12（Lead 白名单补 memory_read/update/home）→ 未发布（Lead 移除工具白名单；一事一会拆分；task_update title（≤8 字）+ report.todos/todoUpdates 用户待办清单 + setTodoStatus RPC；Worker danger-full-access；定时标记 turn/end 双触发；终态 concludeTurn；task_update 参数 DSL 漂移修复与测试锁定；cordis 4 inject 陷阱修复（ctx.get 访问 permissionPresets/schedule）；待办 cancelled 作废 + 派发注入会话待办现状 + task_update 返回 todos 投影 + todoUpdates 收紧（failed/blocked 禁止）；待办 priority 四象限（P0~P3 默认 P3，看板彩色胶囊）；setTodoStatus markRemote 漏注册修复（独立 tsdown 无装饰器降级，每个 RPC 方法都必须手动 markRemote）；未使用导出类型清理（NewTodo/TodoUpdate/TodoPriority/Delivery/ConversationState）；终态投递开关与插件设置页（plugins.row.config）；DSH 侧栏定时图标前缀移除）→ 0.3.13（userTodos 分桶 create/update 取代 type 判别、create.title/update.id DSL 静态必填、待办新字段 remindAt/links/attachments/contacts/location、detail→remark 并置末位、completedAt 死字段删除、校验报错带全量路径、LEAD 待办节按操作类型重组、WORKER task_update 节嵌套化、看板详情区一切皆胶囊）→ 0.3.14（status 收缩为 4 态、blocked 并入 failed.fail、title→header、question→questions[]、summary 删除；QuestionItem 问题卡看板+子会话双入口、answerTaskQuestions 同源作答；看板改为问题卡/待办框/任务框三级；input_required 阻塞工具调用——返回值即用户答案 { answers }，主会话完全不参与投递（inputRequired 恒 false、deliverOnInputRequired 配置项删除）；userTodos 全状态开放）
