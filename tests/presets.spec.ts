@@ -1,0 +1,91 @@
+import { readFileSync } from 'node:fs'
+import { describe, expect, it } from 'vitest'
+import { buildPresetDefinitions, LEAD_PRESET, WORKER_PRESET } from '../src/presets.ts'
+
+describe('Orchestrator agent presets', () => {
+  const presets = buildPresetDefinitions()
+  const byId = new Map(presets.map(preset => [preset.id, preset]))
+
+  it('注册 Lead 和唯一的统一 Worker 预设', () => {
+    expect(presets.map(preset => preset.id)).toEqual([LEAD_PRESET, WORKER_PRESET])
+  })
+
+  it('每个 agent-instructions 行都提供必需的 maxBytes', () => {
+    for (const preset of presets) {
+      const rows = preset.plugins.filter(row => row.name === '@deepseek-ai/dsh-agent-instructions')
+      expect(rows).toHaveLength(1)
+      expect(rows[0]!.config).toMatchObject({ maxBytes: 65536 })
+    }
+  })
+
+  it('压缩插件放在独立 isolate group 中', () => {
+    for (const preset of presets) {
+      const group = preset.plugins.find(row => row.id === 'compaction')
+      expect(group).toMatchObject({
+        name: 'cordis:group',
+        group: true,
+        isolate: { compaction: true, toolResultPruner: true },
+      })
+      expect(Array.isArray(group!.config)).toBe(true)
+    }
+  })
+
+  it('统一 Worker 组合完整执行工具集，且不组合高层编排循环插件', () => {
+    // 展开 cordis:group 的子行，delegation/compaction 组内的插件也计入
+    const flatten = (rows: readonly any[]): Set<string> => new Set(rows.flatMap(row =>
+      row.group ? [row.name, ...flatten(row.config as any[])] : [row.name]))
+    const names = flatten(byId.get(WORKER_PRESET)!.plugins)
+    for (const name of [
+      '@deepseek-ai/dsh-tool-bash',
+      '@deepseek-ai/dsh-tool-fs',
+      '@deepseek-ai/dsh-tool-fs-search',
+      '@deepseek-ai/dsh-tool-jobs',
+      '@deepseek-ai/dsh-tool-skill',
+      '@deepseek-ai/dsh-skill-filesystem',
+      '@deepseek-ai/dsh-tool-todo',
+      '@deepseek-ai/dsh-tool-web',
+      '@deepseek-ai/dsh-persona',
+      // 子智能体工具组（spawn/fork 与控制面）
+      '@deepseek-ai/dsh-tool-subagent',
+      '@deepseek-ai/dsh-tool-subagent-control',
+    ]) {
+      expect(names.has(name)).toBe(true)
+    }
+    for (const name of [
+      // 不面向终端用户：提问、文件卡片、目标管理（目标由 Orchestrator 负责）
+      '@deepseek-ai/dsh-tool-ask-user',
+      '@deepseek-ai/dsh-tool-present',
+      '@deepseek-ai/dsh-tool-goal',
+      '@deepseek-ai/dsh-command-goal',
+      // 禁止高层编排循环
+      '@deepseek-ai/dsh-tool-workflow',
+      '@deepseek-ai/dsh-tool-ralph',
+      '@deepseek-ai/dsh-workflow-ptc',
+    ]) {
+      expect(names.has(name)).toBe(false)
+    }
+  })
+
+  it('Worker persona 固化了 task_update 协议和通用约束', () => {
+    const persona = byId.get(WORKER_PRESET)!.plugins.find(row => row.id === 'persona')
+    const prefix = String((persona!.config as { prefix: string }).prefix)
+    expect(prefix).toContain('task_update')
+    expect(prefix).toContain('completed')
+    expect(prefix).toContain('工作区')
+    // 记忆纪律与安全边界（工具用法由工具自身描述，不在 persona 重复）
+    expect(prefix).toContain('memory_remember')
+    expect(prefix).toContain('blocked')
+    expect(prefix).toContain('reasonCode')
+    expect(prefix).toContain('系统阻碍专用')
+    expect(prefix).toContain('input_required')
+    expect(prefix).toContain('subagent')
+    expect(prefix).not.toContain('禁止再派生')
+  })
+
+  it('bundle patch 自动把 Lead 预设设为默认，无需用户手改配置文件', () => {
+    const patch = readFileSync(new URL('../cordis.patch.yml', import.meta.url), 'utf8')
+    expect(patch).toContain('id: agent-preset-registry')
+    expect(patch).toContain('selectedDefault: may-orchestrator-lead')
+    expect(patch).toContain('default: standard')
+  })
+})
