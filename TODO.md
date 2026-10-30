@@ -14,7 +14,7 @@
 
 ## v0.3.14：状态收缩 + 问题卡 + 看板重构（代码已实施，未 commit，待用户验收）
 
-> UI 已按 `~/.codex/visualizations/2026/10/28/01a18123-5b41-7e41-b9b0-88d4cdcac2f0/board-ui-v3-mock.html` 定稿；投递机制调研见 `docs/delivery-to-lead.md`；接口文档（含收缩后协议）在 `docs/board-api-v0.3.13-full.md`（§6.1 树状图）。
+> UI 已按 `~/.codex/visualizations/2026/10/28/01a18123-5b41-7e41-b9b0-88d4cdcac2f0/board-ui-v3-mock.html` 定稿；投递机制调研见 `docs/delivery-to-lead.md`；接口文档（含收缩后协议）在 `docs/board-api.md`（§6.1 树状图）。
 > ⚠️ 实施前先处理 stash@{0}（自进化技能库，同样改 types/service/messages，直接 pop 会冲突）：先完成本批次或先落 stash，二选一，避免双线改同文件。
 
 ### 1. Status 收缩（Worker 协议 5 → 4）
@@ -55,7 +55,7 @@ questions: QuestionItem[]   ★ input_required 必填（纯 question 字符串�
 ### 4. 连带改动
 
 - **提示词**：Lead——4 态、fail 对象、看板/原生卡已答复场景、转述格式、无 summary；Worker——questions 示例、fail 示例、header/progressNote、删 summary/task 教程类表述；task_update 描述只写能力
-- **文档**：README/AGENTS.md 协议同步；`docs/board-api-v0.3.13-full.md` 更新为新协议后随 release 出 `dsh-orchestrator-board-api-v0.3.14-changes.md`（破坏性变更清单：blocked→fail、question→questions、title→header、summary 删、inputRequired 默认反转、新 RPC）
+- **文档**：README/AGENTS.md 协议同步；`docs/board-api.md` 更新为新协议后随 release 出 `dsh-orchestrator-board-api-v0.3.14-changes.md`（破坏性变更清单：blocked→fail、question→questions、title→header、summary 删、inputRequired 默认反转、新 RPC）
 - **`docs/delivery-to-lead.md`** 补一段"已实施"结论（input_required 走原生卡，不再用 append 文本通知——按最终实施为准修订）
 
 ### 5. 测试与验收
@@ -78,7 +78,7 @@ questions: QuestionItem[]   ★ input_required 必填（纯 question 字符串�
 - 已装 web profile 重启实测：普通后台任务 running→completed；问题卡从 input_required 到看板作答后恢复 running，答案注入 Worker；userTodos.create 创建成功；用户画勾走 setTodoStatus 并显示完成。
 - 实测发现并修复：`answerTaskQuestions` 未手动 markRemote 导致 RPC 404；task_update 工具描述补充 userTodos 必须顶层。
 - Worker 上下文确认：子会话 cwd 正确指向 `/Users/lixuchuan/Documents/deepseek-harness/assistant/<workspaceName>`，sandbox/approval 为 danger-full-access/never，投递与作答注入文本均落 transcript。
-- 文档已同步：README/AGENTS 协议；docs/board-api-v0.3.13-full.md 改为 v0.3.14 收缩协议；docs/delivery-to-lead.md 记录当前 input_required 链路。
+- 文档已同步：README/AGENTS 协议；docs/board-api.md 改为 v0.3.14 收缩协议；docs/delivery-to-lead.md 记录当前 input_required 链路。
 
 ## v0.3.14 最终实施（2026-10-29）
 
