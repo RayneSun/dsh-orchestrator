@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto'
+import { readFileSync } from 'node:fs'
 import { mkdir, rmdir, readFile, appendFile } from 'node:fs/promises'
 import { dirname, join, resolve, sep } from 'node:path'
 import { Context, Service } from '@deepseek-ai/cordis'
@@ -454,7 +455,7 @@ export class OrchestratorService extends TypertRemoteService {
     this.keep(agent, scoped.systemPrompt.section({
       name: 'orchestrator:memory-context',
       order: 620,
-      text: async () => this.renderMemoryContext(agent.session.header.cwd),
+      text: () => this.renderMemoryContext(agent.session.header.cwd),
     }))
     for (const tool of this.leadTools(agent)) this.keep(agent, scoped.tools.register(tool as any))
   }
@@ -501,7 +502,7 @@ export class OrchestratorService extends TypertRemoteService {
     this.keep(agent, scoped.systemPrompt.section({
       name: 'orchestrator:memory-context',
       order: 620,
-      text: async () => this.renderMemoryContext(agent.session.header.cwd ? dirname(agent.session.header.cwd) : undefined),
+      text: () => this.renderMemoryContext(agent.session.header.cwd ? dirname(agent.session.header.cwd) : undefined),
     }))
     this.keep(agent, scoped.on('session/event', (session, event) => {
       if (String(session.id) !== String(agent.session.id)) return
@@ -620,8 +621,10 @@ export class OrchestratorService extends TypertRemoteService {
   /**
    * 记忆注入钩子：会话建立时读取共享 vault 根下的记忆文件，注入 persona 作为记忆上下文。
    * 缺失文件静默跳过；读取失败降级为空段，不阻塞会话启动；超长时按条目截断防膨胀。
+   *
+   * 注意：dsh runtime 的 system-prompt 服务目前只支持同步 text 函数，因此本方法保持同步。
    */
-  private async renderMemoryContext(rootCwd: string | undefined): Promise<string> {
+  private renderMemoryContext(rootCwd: string | undefined): string {
     const vaultRoot = join(rootCwd ?? process.cwd(), MEMORY_VAULT_DIRNAME)
     const recentDayKeys = Array.from({ length: 3 }, (_, i) => {
       const d = new Date(Date.now() - (i + 1) * 86_400_000)
@@ -629,20 +632,20 @@ export class OrchestratorService extends TypertRemoteService {
     })
     const files = ['USER.md', 'MEMORY.md', ...recentDayKeys.map(d => `memory/${d}.md`), 'DREAMS.md']
     const MAX_FILE_CHARS = 4000
-    const parts = await Promise.all(files.map(async (rel) => {
+    const parts: string[] = []
+    for (const rel of files) {
       let text = ''
       try {
-        text = await readFile(join(vaultRoot, rel), 'utf8')
+        text = readFileSync(join(vaultRoot, rel), 'utf8')
       } catch {
-        return ''
+        text = ''
       }
       const trimmed = text.trim()
-      if (!trimmed) return ''
-      return `## ${rel}\n${truncateByEntries(trimmed, MAX_FILE_CHARS)}`
-    }))
-    const nonEmpty = parts.filter(Boolean)
-    if (nonEmpty.length === 0) return ''
-    return `# 记忆上下文（${MEMORY_VAULT_DIRNAME} 根，跨会话共享；可用 obsidian_read 读全文）\n${nonEmpty.join('\n\n')}`
+      if (!trimmed) continue
+      parts.push(`## ${rel}\n${truncateByEntries(trimmed, MAX_FILE_CHARS)}`)
+    }
+    if (parts.length === 0) return ''
+    return `# 记忆上下文（${MEMORY_VAULT_DIRNAME} 根，跨会话共享；可用 obsidian_read 读全文）\n${parts.join('\n\n')}`
   }
 
   /**
