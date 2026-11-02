@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
-import { mkdir, rmdir } from 'node:fs/promises'
-import { dirname, join } from 'node:path'
+import { mkdir, rmdir, readFile, appendFile } from 'node:fs/promises'
+import { dirname, join, resolve, sep } from 'node:path'
 import { Context, Service } from '@deepseek-ai/cordis'
 import sz from '@deepseek-ai/schemastery'
 import { createUserMessage, type ContextFormed } from '@deepseek-ai/dsh-llm'
@@ -18,7 +18,7 @@ import { type ScheduleServiceLike, type SessionActivityGroup } from './schedule-
 import { toJson } from './json.ts'
 import { isWorkerToolForbidden } from './worker-policy.ts'
 import { normalizeProgressSteps } from './progress.ts'
-import { buildChildWorkspace, ensureSharedMemoryLink } from './workspaces.ts'
+import { buildChildWorkspace, MEMORY_VAULT_DIRNAME } from './workspaces.ts'
 import { orchestratorDomain } from './storage.ts'
 import { buildPresetDefinitions, LEAD_PRESET, WORKER_PRESET } from './presets.ts'
 import {
@@ -57,6 +57,7 @@ import {
   dispatchInputSchema,
   conversationIdInputSchema,
   taskUpdateInputSchema,
+  memoryRememberInputSchema,
   type DispatchInput,
   type TaskUpdateInput,
 } from './types.ts'
@@ -195,6 +196,8 @@ export class OrchestratorService extends TypertRemoteService {
   private readonly revisionTurnEnds = new Map<string, number>()
   /** childSessionId -> 是否绑定了活动定时任务（看板 badge 数据源，内存推导不落库）。 */
   private readonly scheduleMarks = new Map<string, boolean>()
+  /** 记忆文件写入锁：按文件路径串行化 append/write，降低多 Worker 并发写同一 md 的冲突。 */
+  private readonly memoryWriteLocks = new Map<string, Promise<unknown>>()
   /** childSessionId -> 最近一条入站消息的 source.kind（判定定时触发上报用）。 */
   private readonly lastInboundSource = new Map<string, string>()
   /** childSessionId -> 已同步到 DSH 侧栏的标题（含定时标记前缀），用于跳过无谓 rename。 */
@@ -436,7 +439,7 @@ export class OrchestratorService extends TypertRemoteService {
     await this.resetInstalled(String(agent.session.id))
     // 自动初始化共享 vault（工作区根下仅建 kb_vault 根；session/assets 由归档任务按会话创建）
     try {
-      const vaultRoot = join(agent.session.header.cwd ?? process.cwd(), 'kb_vault')
+      const vaultRoot = join(agent.session.header.cwd ?? process.cwd(), MEMORY_VAULT_DIRNAME)
       await mkdir(vaultRoot, { recursive: true })
       this.hostCtx.logger.info(`orchestrator: kb_vault ready at ${vaultRoot}`)
     } catch (error) {
@@ -447,6 +450,11 @@ export class OrchestratorService extends TypertRemoteService {
       name: 'orchestrator:roster',
       order: 610,
       text: () => this.renderRoster(String(agent.session.id)),
+    }))
+    this.keep(agent, scoped.systemPrompt.section({
+      name: 'orchestrator:memory-context',
+      order: 620,
+      text: async () => this.renderMemoryContext(agent.session.header.cwd),
     }))
     for (const tool of this.leadTools(agent)) this.keep(agent, scoped.tools.register(tool as any))
   }
@@ -488,6 +496,13 @@ export class OrchestratorService extends TypertRemoteService {
     for (const sectionName of WORKER_SUPPRESSED_SECTIONS) {
       this.keep(agent, scoped.systemPrompt.section({ name: sectionName, order: 0, text: '', interpolate: false }))
     }
+    // 记忆注入钩子：Worker 子工作区在共享 vault 之下，记忆文件在主工作区根的 kb_vault，
+    // 故取 cwd 的父目录作为主工作区根。文件缺失时 renderMemoryContext 静默返回空段。
+    this.keep(agent, scoped.systemPrompt.section({
+      name: 'orchestrator:memory-context',
+      order: 620,
+      text: async () => this.renderMemoryContext(agent.session.header.cwd ? dirname(agent.session.header.cwd) : undefined),
+    }))
     this.keep(agent, scoped.on('session/event', (session, event) => {
       if (String(session.id) !== String(agent.session.id)) return
       const ev = event as unknown as { type?: unknown; data?: { todos?: unknown; reason?: unknown; source?: { kind?: unknown } } }
@@ -529,6 +544,8 @@ export class OrchestratorService extends TypertRemoteService {
         return toJson(result)
       },
     })))
+    // Worker 产生跨会话价值记忆时走带锁的 memory_remember，避免多个 Worker 并发写同一文件。
+    this.keep(agent, scoped.tools.register(this.memoryRememberTool(agent) as any))
   }
 
   private armRevisionTurnGuard(childSessionId: string): void {
@@ -599,9 +616,53 @@ export class OrchestratorService extends TypertRemoteService {
     })
     return `Orchestrator roster（dispatch 用 conversationId 复用子会话；get 看详情）：\n${lines.join('\n')}`
   }
-  /** list 工具的精简投影：只给模型决策所需字段，避免内部 ID 和大段文本污染上下文。 */
-  private listWorkflows(parentSessionId: string) {
-    const { conversations, tasks } = this.snapshotFor(parentSessionId)
+
+  /**
+   * 记忆注入钩子：会话建立时读取共享 vault 根下的记忆文件，注入 persona 作为记忆上下文。
+   * 缺失文件静默跳过；读取失败降级为空段，不阻塞会话启动；超长时按条目截断防膨胀。
+   */
+  private async renderMemoryContext(rootCwd: string | undefined): Promise<string> {
+    const vaultRoot = join(rootCwd ?? process.cwd(), MEMORY_VAULT_DIRNAME)
+    const recentDayKeys = Array.from({ length: 3 }, (_, i) => {
+      const d = new Date(Date.now() - (i + 1) * 86_400_000)
+      return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+    })
+    const files = ['USER.md', 'MEMORY.md', ...recentDayKeys.map(d => `memory/${d}.md`), 'DREAMS.md']
+    const MAX_FILE_CHARS = 4000
+    const parts = await Promise.all(files.map(async (rel) => {
+      let text = ''
+      try {
+        text = await readFile(join(vaultRoot, rel), 'utf8')
+      } catch {
+        return ''
+      }
+      const trimmed = text.trim()
+      if (!trimmed) return ''
+      return `## ${rel}\n${truncateByEntries(trimmed, MAX_FILE_CHARS)}`
+    }))
+    const nonEmpty = parts.filter(Boolean)
+    if (nonEmpty.length === 0) return ''
+    return `# 记忆上下文（${MEMORY_VAULT_DIRNAME} 根，跨会话共享；可用 obsidian_read 读全文）\n${nonEmpty.join('\n\n')}`
+  }
+
+  /**
+   * 串行化记忆文件写入：按文件路径排队，避免多 Worker 并发 append/write 同一 md 导致冲突。
+   * 注意：此锁只在调用方使用 Host 提供的写入路径时生效；模型直接调用 obsidian_write 仍可能冲突。
+   */
+  private async withMemoryWriteLock<T>(filePath: string, task: () => Promise<T>): Promise<T> {
+    const previous = this.memoryWriteLocks.get(filePath) ?? Promise.resolve()
+    const next = previous.then(task, task)
+    this.memoryWriteLocks.set(filePath, next)
+    try {
+      return await next
+    } finally {
+      if (this.memoryWriteLocks.get(filePath) === next) {
+        this.memoryWriteLocks.delete(filePath)
+      }
+    }
+  }
+
+  private listWorkflows(parentSessionId: string) {    const { conversations, tasks } = this.snapshotFor(parentSessionId)
     const byConv = new Map<string, TaskRecord[]>()
     for (const task of tasks) byConv.set(task.conversationId, [...(byConv.get(task.conversationId) ?? []), task])
     return conversations.map(conv => {
@@ -683,7 +744,47 @@ export class OrchestratorService extends TypertRemoteService {
           })
         },
       }),
+      this.memoryRememberTool(agent),
     ]
+  }
+
+  /**
+   * Lead 记忆写入工具：把单条事实追加到共享 vault 根下的记忆文件。
+   * 带路径安全检查与文件级写入锁，避免多会话并发写同一文件冲突。
+   */
+  private memoryRememberTool(agent: Agent) {
+    return defineTool({
+      name: 'memory_remember',
+      description: '把一条跨会话价值信息追加到共享 vault 根下的记忆文件（USER.md / MEMORY.md / memory/YYYY-MM-DD.md）。单条一事实，写入前应先 obsidian_search 查重；Host 会自动串行化同一文件的并发写入。',
+      parameters: {
+        relPath: { type: 'string', required: true, description: '相对 kb_vault 根的路径，如 USER.md、MEMORY.md、memory/2026-11-02.md' },
+        content: { type: 'string', required: true, description: '一条记忆事实，建议带关键词、所属项目和重要度' },
+      },
+      output: sharedJsonOutput,
+      execute: async (args: unknown) => {
+        const parsed = memoryRememberInputSchema.safeParse(args)
+        if (!parsed.success) return toJson({ error: parsed.error.issues[0]?.message ?? 'invalid arguments' })
+        const { relPath, content } = parsed.data
+        const cwd = agent.session.header.cwd
+        const rootCwd = this.composedPreset(agent) === WORKER_PRESET && cwd ? dirname(cwd) : cwd
+        const vaultRoot = resolve(rootCwd ?? process.cwd(), MEMORY_VAULT_DIRNAME)
+        const filePath = resolve(vaultRoot, relPath)
+        if (!filePath.startsWith(vaultRoot + sep)) {
+          return toJson({ error: `invalid memory path: ${relPath}` })
+        }
+        const line = content.trim()
+        if (!line) return toJson({ error: 'content is empty' })
+        try {
+          await this.withMemoryWriteLock(filePath, async () => {
+            await mkdir(dirname(filePath), { recursive: true })
+            await appendFile(filePath, `${line}\n\n`)
+          })
+          return toJson({ ok: true, file: relPath })
+        } catch (error) {
+          return toJson({ error: String(error instanceof Error ? error.message : error) })
+        }
+      },
+    })
   }
 
   private async dispatch(rawArgs: unknown, parent: Agent): Promise<any> {
@@ -776,7 +877,6 @@ export class OrchestratorService extends TypertRemoteService {
       if (!args.workspaceName) throw new Error('新建子会话缺少 workspaceName（英文小写 slug）')
       const workspace = await buildChildWorkspace(parentCwd, args.workspaceName)
       await mkdir(workspace.dir, { recursive: true })
-      await this.shareMemoryWithRoot(workspace.dir, parentCwd)
       const provisional = createConversation({
         id: conversationId,
         childSessionId,
@@ -812,10 +912,6 @@ export class OrchestratorService extends TypertRemoteService {
     return { ok: true, conv, task }
   }
 
-  /**
-   * 记忆库共享：把 Worker 工作区的 .dsh-meow 链接到主工作区，Lead 与全部 Worker 共用
-   * 同一份 meow-memory 长期记忆。失败（如 Windows 无 symlink 权限）降级为独立记忆，仅告警。
-   */
   /** 在 withoutInitiator 上下文里解析并操作一个会话 Agent；解析失败直接抛出。 */
   private async withAgent<T>(sessionId: string, work: (agent: Agent) => T | Promise<T>): Promise<T> {
     return this.hostCtx.agents.withoutInitiator(async () => {
@@ -823,14 +919,6 @@ export class OrchestratorService extends TypertRemoteService {
       if ('error' in resolved) throw resolved.error
       return work(resolved.agent)
     })
-  }
-
-  private async shareMemoryWithRoot(workspaceDir: string, rootCwd: string): Promise<void> {
-    try {
-      await ensureSharedMemoryLink(workspaceDir, rootCwd)
-    } catch (error) {
-      this.hostCtx.logger.warn(`orchestrator: shared memory link failed for ${workspaceDir}: ${String(error)}`)
-    }
   }
 
   /** 宿主 schedule 服务（本地结构化类型，组合未挂载时整体降级为无标记）。 */
@@ -1217,8 +1305,6 @@ export class OrchestratorService extends TypertRemoteService {
     await this.serialize(async () => {
       const now = timestamp()
       for (const [, conv] of this.conversations().entries()) {
-        // 存量会话补建共享记忆链接（workspaceDir 是主工作区的直接子目录，dirname 即主工作区）。
-        if (conv.workspaceDir) await this.shareMemoryWithRoot(conv.workspaceDir, dirname(conv.workspaceDir))
         const active = conv.activeTaskId ? this.taskById(conv.activeTaskId) : undefined
         if (!active) {
           if (conv.activeTaskId) {
@@ -1402,5 +1488,23 @@ export const TASK_UPDATE_TOOL_PARAMETERS = {
   reasonCode: { type: 'string', enum: [...blockReasonCodes], description: 'blocked 的阻碍类别' },
   remediation: { type: 'string', description: 'blocked 时建议用户执行的补救动作' },
 } as const
+
+/**
+ * 按条目（行/段）截断文本，优先保留完整条目，避免截断到半句话。
+ * 适用于 memory/、USER.md 等以条目行为单位的记忆文件。
+ */
+function truncateByEntries(text: string, maxChars: number): string {
+  const lines = text.split('\n')
+  let result = ''
+  for (const line of lines) {
+    if (result.length + line.length + 1 > maxChars) {
+      result = result.trimEnd()
+      if (result) result += '\n…（已截断）'
+      return result
+    }
+    result += line + '\n'
+  }
+  return result.trimEnd()
+}
 
 export default OrchestratorService

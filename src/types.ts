@@ -468,5 +468,11 @@ export const taskUpdateInputSchema = z.object({
   }
 })
 
+export const memoryRememberInputSchema = z.object({
+  relPath: z.string().trim().min(1).max(500),
+  content: z.string().trim().min(1).max(10_000),
+}).strict()
+
 export type DispatchInput = z.infer<typeof dispatchInputSchema>
 export type TaskUpdateInput = z.infer<typeof taskUpdateInputSchema>
+export type MemoryRememberInput = z.infer<typeof memoryRememberInputSchema>

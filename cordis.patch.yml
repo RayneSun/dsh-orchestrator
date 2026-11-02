@@ -4,12 +4,9 @@
       name: '@may/dsh-orchestrator'
 
     # ── 个人助理能力包：随本 bundle 自动安装启用 ──────────────────────
-    # 跨会话长期记忆：工作区共享的唯一长期记忆库（SQLite，零原生依赖）。
-    - id: meow-memory
-      name: 'meow-memory'
-
+    # 记忆与个人知识库统一由 dsh-obsidian 管理（kb_vault 内 USER.md/MEMORY.md/memory/每日/DREAMS.md + 会话归档）。
     # 共享 Obsidian vault 知识库：vaultPath 随工作区自动解析（DSH_VAULT_PATH 可覆盖）。
-    # kb_vault 根由 orchestrator 启动时自动初始化，session/assets 由归档任务按会话创建。
+    # kb_vault 根由 orchestrator 启动时自动初始化，记忆文件与会话归档由模型按 preset 规则维护。
     - id: obsidian
       name: dsh-obsidian
       config:
