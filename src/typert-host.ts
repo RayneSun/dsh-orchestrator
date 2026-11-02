@@ -17,8 +17,13 @@ export const TYPERT = {
         tags: [],
       }, {
         kind: 'method' as const,
-        name: 'setTodoStatus',
-        signature: 'setTodoStatus(request: SetTodoStatusRequest): Promise<SetTodoStatusResult>',
+        name: 'setScheduleStatus',
+        signature: 'setScheduleStatus(request: SetScheduleStatusRequest): Promise<SetScheduleStatusResult>',
+        tags: [],
+      }, {
+        kind: 'method' as const,
+        name: 'answerTaskQuestions',
+        signature: 'answerTaskQuestions(request: AnswerQuestionsRequest): Promise<AnswerQuestionsResult>',
         tags: [],
       }],
       types: [],

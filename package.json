@@ -1,7 +1,7 @@
 {
   "name": "@may/dsh-orchestrator",
-  "version": "0.3.14",
-  "description": "DSH 主控助理编排插件：Lead 通过持久子会话和 TaskRun 分发后台任务（记忆与个人知识库统一由 dsh-obsidian 管理，集成 qqmail/browserskill/computer-use）",
+  "version": "0.3.15",
+  "description": "DSH 主控助理编排插件：Lead 通过持久子会话和 TaskRun 分发后台任务（记忆与个人知识库由 dsh-obsidian 管理）",
   "type": "module",
   "main": "./lib/index.js",
   "exports": {
@@ -33,6 +33,7 @@
     "@wxg-prc-cpg/browser-skill-dsh-plugin": "0.3.2",
     "@zhengjunyao/dsh-qqmail": "0.1.1",
     "dsh-obsidian": "^0.2.6",
+    "meow-memory": "0.31.0",
     "zod": "^4.4.3"
   },
   "peerDependencies": {

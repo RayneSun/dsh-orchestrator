@@ -14,15 +14,14 @@ const HOST_NAMESPACE = 'may-dsh-orchestrator'
 const SLOT_KEY = '@may/dsh-orchestrator#may-dsh-orchestrator'
 
 const SUMMARY = '子会话终态消息的投递开关：按状态勾选是否通知主会话。'
-const SECTION_HINT = '勾选子会话 task_update 的各终态是否投递消息给主会话（主会话收到后会回应）。'
-  + '无论是否投递，任务状态、摘要与待办都会实时更新到任务看板与主会话上下文；静默（silent）会话始终不投递。'
+const SECTION_HINT = '勾选子会话 task_update 的各终态是否投递消息给主会话。'
+  + '无论是否投递，任务状态、进度与待办都会实时更新到任务看板；静默（silent）会话始终不投递。'
   + '改动即时生效；关闭期间产生的终态不补投。'
+  + '「等待用户操作」默认关闭：问题卡（看板/子会话，开启后含主会话原生卡）已覆盖可见性；打开后主会话会渲染原生问题卡。'
 
 const STATUS_FIELDS = [
   { field: 'deliverOnCompleted', label: '已完成（completed）' },
-  { field: 'deliverOnFailed', label: '失败（failed）' },
-  { field: 'deliverOnInputRequired', label: '等待用户输入（input_required）' },
-  { field: 'deliverOnBlocked', label: '受阻（blocked）' },
+  { field: 'deliverOnFailed', label: '失败（failed，含系统阻碍）' },
   { field: 'deliverOnInterrupted', label: '已中断（interrupted）', hint: '仅手动停止会投递；改单与重启中断本就不投递。' },
 ] as ReadonlyArray<{ field: string; label: string; hint?: string }>
 
@@ -115,7 +114,7 @@ function DeliveryCard(props: any): React.ReactElement {
       {STATUS_FIELDS.map(({ field, label, hint }) => (
         <div key={field} style={{ display: 'flex', alignItems: 'center', gap: '8px', margin: '8px 0' }}>
           <primitives.Switch
-            checked={(state[field]?.text ?? 'true') !== 'false'}
+            checked={(state[field]?.text ?? 'false') !== 'false'}
             disabled={disabled}
             label={label}
             title={hint ?? label}

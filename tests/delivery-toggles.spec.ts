@@ -15,15 +15,15 @@ function bgTask() {
 
 const allOff: DeliveryToggles = {
   inputRequired: false,
-  blocked: false,
   completed: false,
   failed: false,
   interrupted: false,
 }
 
 describe('终态投递开关', () => {
-  it('toggles 缺失（未注入配置）时按默认全开，与历史行为一致', () => {
-    for (const status of ['input_required', 'blocked', 'completed', 'failed', 'interrupted'] as const) {
+  it('toggles 缺失（未注入配置）时 inputRequired 按新默认关闭，其余打开', () => {
+    expect(deliveryEnabledFor(undefined, 'input_required')).toBe(false)
+    for (const status of ['completed', 'failed', 'interrupted'] as const) {
       expect(deliveryEnabledFor(undefined, status)).toBe(true)
     }
   })

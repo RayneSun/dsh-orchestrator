@@ -11,7 +11,7 @@ const delegationPatterns = ['workflow', 'ralph']
 /** 前缀匹配：Lead 现在和将来新增的全部 orchestrator_* 工具都对 Worker 禁用。 */
 const orchestratorPatterns = ['orchestrator']
 
-/** 直接向用户提问的工具：Worker 只能经 task_update(input_required) 由 Lead 转达。 */
+/** 直接向用户提问的工具：Worker 只能经 task_update(input_required, questions) 由问题卡转达。 */
 const questionPatterns = ['ask_user', 'ask_user_question', 'ask-user']
 
 export const workerForbiddenPatterns = [...delegationPatterns, ...orchestratorPatterns]
@@ -30,7 +30,7 @@ function matchesAny(name: string, patterns: readonly string[]): boolean {
 /** 返回禁止原因；undefined 表示放行。本地 task_update 与用户安装的其他工具均放行。 */
 export function isWorkerToolForbidden(toolName: string): string | undefined {
   if (matchesAny(toolName, workerQuestionPatterns)) {
-    return `Worker 不能直接向用户提问；请改用 task_update({status:'input_required', question:'需要向用户确认的问题'}) 由 Lead 转达`
+    return `Worker 不能直接向用户提问；请改用 task_update({status:'input_required', questions:[{question:'…', options:[…]}]}) 由问题卡转达`
   }
   if (matchesAny(toolName, workerForbiddenPatterns)) {
     return `执行 Worker 禁止使用编排/派生工具 ${canonicalToolName(toolName)}`

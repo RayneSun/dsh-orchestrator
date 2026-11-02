@@ -9,7 +9,7 @@ describe('统一 Worker 权限', () => {
   })
 
   it('禁止调用 Lead 的 orchestrator 工具（含未来新增）', () => {
-    for (const name of ['orchestrator_dispatch', 'orchestrator_list', 'orchestrator_get']) {
+    for (const name of ['orchestrator_dispatch', 'orchestrator_get']) {
       expect(isWorkerToolForbidden(name)).toContain('orchestrator')
     }
   })

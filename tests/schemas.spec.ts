@@ -40,37 +40,41 @@ describe('工具输入 Zod 校验', () => {
     }).success).toBe(false)
   })
 
-  it('completed/failed/blocked/input_required 的必填字段符合各自语义', () => {
+  it('completed/failed/input_required 的必填字段符合各自语义', () => {
     expect(taskUpdateInputSchema.safeParse({ status: 'completed' }).success).toBe(false)
     expect(taskUpdateInputSchema.safeParse({ status: 'failed' }).success).toBe(false)
-    expect(taskUpdateInputSchema.safeParse({ status: 'blocked' }).success).toBe(false)
     expect(taskUpdateInputSchema.safeParse({ status: 'input_required' }).success).toBe(false)
     expect(taskUpdateInputSchema.safeParse({
       status: 'input_required', progressNote: '等待用户选择城市',
     }).success).toBe(false)
-    expect(taskUpdateInputSchema.parse({
-      status: 'input_required', question: '要蓝色还是红色？',
-    }).question).toBe('要蓝色还是红色？')
-    const blocked = taskUpdateInputSchema.parse({
-      status: 'blocked',
-      reasonCode: 'permission_denied',
-      error: '没有浏览器控制权限',
-      remediation: '请在系统设置中授权后回复继续',
+    const parsed = taskUpdateInputSchema.parse({
+      status: 'input_required',
+      questions: [{ question: '要蓝色还是红色？' }],
     })
-    expect(blocked.reasonCode).toBe('permission_denied')
-    expect(taskUpdateInputSchema.safeParse({ status: 'blocked', reasonCode: 'unknown' }).success).toBe(false)
+    expect(parsed.questions?.[0]?.question).toBe('要蓝色还是红色？')
+    const failed = taskUpdateInputSchema.parse({
+      status: 'failed',
+      fail: { error: '没有浏览器控制权限', reasonCode: 'permission_denied' },
+    })
+    expect(failed.fail?.reasonCode).toBe('permission_denied')
+    expect(taskUpdateInputSchema.safeParse({ status: 'failed', fail: { error: 'x', reasonCode: 'unknown' } }).success).toBe(false)
     expect(taskUpdateInputSchema.safeParse({
-      status: 'input_required', question: '请授权浏览器？', error: '权限不足',
+      status: 'input_required',
+      questions: [{ question: '请授权浏览器？' }],
+      fail: { error: '权限不足' },
+    }).success).toBe(false)
+    expect(taskUpdateInputSchema.safeParse({ status: 'running', fail: { error: '意外错误' } }).success).toBe(false)
+    expect(taskUpdateInputSchema.safeParse({
+      status: 'running',
+      questions: [{ question: '需要选择吗？' }],
     }).success).toBe(false)
     expect(taskUpdateInputSchema.safeParse({
-      status: 'blocked', error: '权限不足', question: '怎么办？',
+      status: 'completed', report: { result: '完成' }, fail: { error: '旧错误' },
     }).success).toBe(false)
-    expect(taskUpdateInputSchema.safeParse({ status: 'running', error: '意外错误' }).success).toBe(false)
-    expect(taskUpdateInputSchema.safeParse({ status: 'running', question: '需要选择吗？' }).success).toBe(false)
-    expect(taskUpdateInputSchema.safeParse({ status: 'completed', report: { result: '完成' }, error: '旧错误' }).success).toBe(false)
-    expect(taskUpdateInputSchema.safeParse({ status: 'failed', error: '失败', remediation: '请安装依赖' }).success).toBe(false)
-    expect(taskUpdateInputSchema.safeParse({ status: 'blocked', error: '缺少依赖', report: { result: '完成' } }).success).toBe(false)
-    expect(taskUpdateInputSchema.parse({ status: 'blocked', error: '缺少依赖', progressNote: '已定位到 bsk 缺失' }).status).toBe('blocked')
+    expect(taskUpdateInputSchema.safeParse({ status: 'failed', fail: { error: '失败' }, report: { result: 'r' } }).success).toBe(false)
+    expect(taskUpdateInputSchema.parse({
+      status: 'failed', fail: { error: '缺少依赖' }, progressNote: '已定位到 bsk 缺失',
+    }).status).toBe('failed')
   })
 
   it('completed 要求 report.result；artifacts 只允许相对路径', () => {
@@ -81,7 +85,6 @@ describe('工具输入 Zod 校验', () => {
     const parsed = taskUpdateInputSchema.parse({
       status: 'completed',
       report: { result: '完成', artifacts: ['out/index.html', 'docs/summary.md'] },
-      summary: '产物已就绪',
     })
     expect(parsed.report?.artifacts).toEqual(['out/index.html', 'docs/summary.md'])
     for (const bad of ['/abs/path.html', '../escape.html', 'a/../../b', '']) {
@@ -161,30 +164,30 @@ describe('工具输入 Zod 校验', () => {
     expect(taskUpdateInputSchema.safeParse({
       status: 'running', outlinePatch: { tags: ['t'] },
     }).success).toBe(false)
-    expect(taskUpdateInputSchema.safeParse({ status: 'running', summary: 'a'.repeat(301) }).success).toBe(false)
+    expect(taskUpdateInputSchema.safeParse({ status: 'running', summary: '旧版本 summary 字段' }).success).toBe(false)
   })
 
 })
 
-describe('task_update 待办与标题协议', () => {
-  it('title 全状态可选，最多 8 个字；超长拒绝', () => {
-    for (const status of ['running', 'input_required', 'blocked', 'completed', 'failed'] as const) {
-      const base: Record<string, unknown> = { status, title: '已查到 3 家' }
+describe('task_update 日程与标题协议', () => {
+  it('header 全状态可选，最多 8 个字；超长拒绝', () => {
+    for (const status of ['running', 'input_required', 'completed', 'failed'] as const) {
+      const base: Record<string, unknown> = { status, header: '已查到 3 家' }
       if (status === 'completed') base.report = { result: '答案' }
-      if (status === 'failed' || status === 'blocked') base.error = '原因'
-      if (status === 'input_required') base.question = '问题'
+      if (status === 'failed') base.fail = { error: '原因' }
+      if (status === 'input_required') base.questions = [{ question: '问题' }]
       const ok = taskUpdateInputSchema.safeParse(base)
       expect(ok.success).toBe(true)
-      const tooLong = taskUpdateInputSchema.safeParse({ ...base, title: 'x'.repeat(9) })
+      const tooLong = taskUpdateInputSchema.safeParse({ ...base, header: 'x'.repeat(9) })
       expect(tooLong.success).toBe(false)
     }
   })
 
-  it('userTodos.create 新建：title 静态必填、priority 默认 P3、结构上无 id/status', () => {
+  it('schedules.create 新建：title 静态必填、priority 默认 P3、结构上无 id/status', () => {
     const parsed = taskUpdateInputSchema.parse({
       status: 'completed',
       report: { result: '答案' },
-      userTodos: {
+      schedules: {
         create: [
           { title: '默认' },
           { title: '加急', priority: 'P0', startAt: '2026-10-28T09:00:00+08:00', endAt: '2026-10-30T18:00:00+08:00', remindAt: '2026-10-29T09:00:00+08:00',
@@ -195,53 +198,52 @@ describe('task_update 待办与标题协议', () => {
         ],
       },
     })
-    expect(parsed.userTodos?.create?.[0]).toMatchObject({ title: '默认', priority: 'P3' })
-    expect(parsed.userTodos?.create?.[1]).toMatchObject({ title: '加急', priority: 'P0', startAt: '2026-10-28T09:00:00+08:00', endAt: '2026-10-30T18:00:00+08:00' })
+    expect(parsed.schedules?.create?.[0]).toMatchObject({ title: '默认', priority: 'P3' })
+    expect(parsed.schedules?.create?.[1]).toMatchObject({ title: '加急', priority: 'P0', startAt: '2026-10-28T09:00:00+08:00', endAt: '2026-10-30T18:00:00+08:00' })
     // create 条目结构上接触不到 id/status（strict 拒绝）
-    expect(taskUpdateInputSchema.safeParse({ status: 'running', userTodos: { create: [{ title: 'x', id: 'todo_1' }] } }).success).toBe(false)
-    expect(taskUpdateInputSchema.safeParse({ status: 'running', userTodos: { create: [{ title: 'x', status: 'done' }] } }).success).toBe(false)
+    expect(taskUpdateInputSchema.safeParse({ status: 'running', schedules: { create: [{ title: 'x', id: 'todo_1' }] } }).success).toBe(false)
+    expect(taskUpdateInputSchema.safeParse({ status: 'running', schedules: { create: [{ title: 'x', status: 'done' }] } }).success).toBe(false)
     // create 缺 title
-    expect(taskUpdateInputSchema.safeParse({ status: 'running', userTodos: { create: [{}] } }).success).toBe(false)
+    expect(taskUpdateInputSchema.safeParse({ status: 'running', schedules: { create: [{}] } }).success).toBe(false)
   })
 
-  it('userTodos.update 更新：id 静态必填，可改 status/title/priority 等', () => {
+  it('schedules.update 更新：id 静态必填，可改 status/title/priority 等', () => {
     const parsed = taskUpdateInputSchema.parse({
       status: 'completed',
       report: { result: 'r' },
-      userTodos: { update: [{ id: 'todo_1', status: 'done' }, { id: 'todo_2', status: 'cancelled' }, { id: 'todo_3', title: '改标题', priority: 'P1' }] },
+      schedules: { update: [{ id: 'todo_1', status: 'done' }, { id: 'todo_2', status: 'cancelled' }, { id: 'todo_3', title: '改标题', priority: 'P1' }] },
     })
-    expect(parsed.userTodos?.update?.[0]).toMatchObject({ id: 'todo_1', status: 'done' })
-    expect(taskUpdateInputSchema.safeParse({ status: 'running', userTodos: { update: [{ status: 'done' }] } }).success).toBe(false)
-    expect(taskUpdateInputSchema.safeParse({ status: 'running', userTodos: { update: [{ id: 'todo_1', priority: 'P9' }] } }).success).toBe(false)
+    expect(parsed.schedules?.update?.[0]).toMatchObject({ id: 'todo_1', status: 'done' })
+    expect(taskUpdateInputSchema.safeParse({ status: 'running', schedules: { update: [{ status: 'done' }] } }).success).toBe(false)
+    expect(taskUpdateInputSchema.safeParse({ status: 'running', schedules: { update: [{ id: 'todo_1', priority: 'P9' }] } }).success).toBe(false)
   })
 
-  it('userTodos 输入边界：时间简写合法、自然语言与不存在日期拒绝、链接必须 http(s)、附件禁绝对路径与 ..', () => {
+  it('schedules 输入边界：时间简写合法、自然语言与不存在日期拒绝、链接必须 http(s)、附件禁绝对路径与 ..', () => {
     const base = { status: 'running' as const }
     for (const bad of ['明天', '下周三', '2026/10/25', '2026-13-01', '2026-02-30', '18:00', '']) {
-      expect(taskUpdateInputSchema.safeParse({ ...base, userTodos: { create: [{ title: 'x', endAt: bad }] } }).success).toBe(false)
+      expect(taskUpdateInputSchema.safeParse({ ...base, schedules: { create: [{ title: 'x', endAt: bad }] } }).success).toBe(false)
     }
     for (const good of ['10-25', '10-25 18:00', '2026-10-25', '2026-10-25T09:00', '2026-10-25T09:00:00+08:00']) {
-      expect(taskUpdateInputSchema.safeParse({ ...base, userTodos: { create: [{ title: 'x', endAt: good }] } }).success).toBe(true)
+      expect(taskUpdateInputSchema.safeParse({ ...base, schedules: { create: [{ title: 'x', endAt: good }] } }).success).toBe(true)
     }
-    expect(taskUpdateInputSchema.safeParse({ ...base, userTodos: { create: [{ title: 'x', links: [{ url: 'ftp://a' }] }] } }).success).toBe(false)
-    expect(taskUpdateInputSchema.safeParse({ ...base, userTodos: { create: [{ title: 'x', attachments: [{ path: '/etc/passwd' }] }] } }).success).toBe(false)
-    expect(taskUpdateInputSchema.safeParse({ ...base, userTodos: { create: [{ title: 'x', attachments: [{ path: '../a' }] }] } }).success).toBe(false)
+    expect(taskUpdateInputSchema.safeParse({ ...base, schedules: { create: [{ title: 'x', links: [{ url: 'ftp://a' }] }] } }).success).toBe(false)
+    expect(taskUpdateInputSchema.safeParse({ ...base, schedules: { create: [{ title: 'x', attachments: [{ path: '/etc/passwd' }] }] } }).success).toBe(false)
+    expect(taskUpdateInputSchema.safeParse({ ...base, schedules: { create: [{ title: 'x', attachments: [{ path: '../a' }] }] } }).success).toBe(false)
   })
 
-  it('userTodos 允许 running/input_required/completed，禁止 failed/blocked', () => {
+  it('schedules 所有 task_update 状态都允许更新日程', () => {
     const payload = { update: [{ id: 'todo_1', status: 'done' }] }
-    expect(taskUpdateInputSchema.safeParse({ status: 'running', userTodos: payload }).success).toBe(true)
-    expect(taskUpdateInputSchema.safeParse({ status: 'input_required', question: 'q', userTodos: payload }).success).toBe(true)
-    expect(taskUpdateInputSchema.safeParse({ status: 'completed', report: { result: 'r' }, userTodos: payload }).success).toBe(true)
-    expect(taskUpdateInputSchema.safeParse({ status: 'failed', error: 'e', userTodos: payload }).success).toBe(false)
-    expect(taskUpdateInputSchema.safeParse({ status: 'blocked', error: 'e', userTodos: payload }).success).toBe(false)
+    expect(taskUpdateInputSchema.safeParse({ status: 'running', schedules: payload }).success).toBe(true)
+    expect(taskUpdateInputSchema.safeParse({ status: 'input_required', questions: [{ question: 'q' }], schedules: payload }).success).toBe(true)
+    expect(taskUpdateInputSchema.safeParse({ status: 'completed', report: { result: 'r' }, schedules: payload }).success).toBe(true)
+    expect(taskUpdateInputSchema.safeParse({ status: 'failed', fail: { error: 'e' }, schedules: payload }).success).toBe(true)
   })
 
-  it('待办状态支持 cancelled（Worker 作废旧待办）', () => {
+  it('日程状态支持 cancelled（Worker 作废旧日程）', () => {
     const parsed = taskUpdateInputSchema.safeParse({
       status: 'completed',
       report: { result: 'r' },
-      userTodos: { update: [{ id: 'todo_1', status: 'cancelled' }] },
+      schedules: { update: [{ id: 'todo_1', status: 'cancelled' }] },
     })
     expect(parsed.success).toBe(true)
     const todo = userTodoSchema.parse({
@@ -282,15 +284,15 @@ describe('task_update 待办与标题协议', () => {
 
   it('时间窗顺序：startAt 晚于 endAt 拒绝（create 与 update 同规则）', () => {
     const base = { status: 'running' as const }
-    expect(taskUpdateInputSchema.safeParse({ ...base, userTodos: { create: [{ title: 'x', startAt: '2026-10-30T00:00:00+08:00', endAt: '2026-10-28T00:00:00+08:00' }] } }).success).toBe(false)
-    expect(taskUpdateInputSchema.safeParse({ ...base, userTodos: { update: [{ id: 'todo_1', startAt: '2026-10-30T00:00:00+08:00', endAt: '2026-10-28T00:00:00+08:00' }] } }).success).toBe(false)
+    expect(taskUpdateInputSchema.safeParse({ ...base, schedules: { create: [{ title: 'x', startAt: '2026-10-30T00:00:00+08:00', endAt: '2026-10-28T00:00:00+08:00' }] } }).success).toBe(false)
+    expect(taskUpdateInputSchema.safeParse({ ...base, schedules: { update: [{ id: 'todo_1', startAt: '2026-10-30T00:00:00+08:00', endAt: '2026-10-28T00:00:00+08:00' }] } }).success).toBe(false)
     // 单边更新不在输入层校验（与存量合并后由 Host 兜底）
-    expect(taskUpdateInputSchema.safeParse({ ...base, userTodos: { update: [{ id: 'todo_1', endAt: '2026-10-28T00:00:00+08:00' }] } }).success).toBe(true)
+    expect(taskUpdateInputSchema.safeParse({ ...base, schedules: { update: [{ id: 'todo_1', endAt: '2026-10-28T00:00:00+08:00' }] } }).success).toBe(true)
     // 相等合法（单时间点事项）
-    expect(taskUpdateInputSchema.safeParse({ ...base, userTodos: { create: [{ title: 'x', startAt: '2026-10-28T09:00:00+08:00', endAt: '2026-10-28T09:00:00+08:00' }] } }).success).toBe(true)
+    expect(taskUpdateInputSchema.safeParse({ ...base, schedules: { create: [{ title: 'x', startAt: '2026-10-28T09:00:00+08:00', endAt: '2026-10-28T09:00:00+08:00' }] } }).success).toBe(true)
   })
 
-  it('旧待办迁移：dueDate(YYYY-MM-DD) → endAt（当日 23:59 本地转 ISO）', () => {
+  it('旧日程迁移：dueDate(YYYY-MM-DD) → endAt（当日 23:59 本地转 ISO）', () => {
     const todo = userTodoSchema.parse({
       id: 'todo_1', title: 'x', status: 'pending', dueDate: '2026-10-30',
       createdAt: '2026-10-23T00:00:00Z', updatedAt: '2026-10-23T00:00:00Z',
@@ -327,10 +329,10 @@ describe('旧版本存储记录迁移', () => {
     revision: 0, createdAt: '2026-10-14T00:00:00.000Z', updatedAt: '2026-10-14T00:00:00.000Z',
   }
 
-  it('blocked 迁移为 input_required，blockedQuestion 迁移为 question', () => {
+  it('blocked 提问迁移为 input_required，blockedQuestion 迁移为 questions', () => {
     const task = taskSchema.parse({ ...baseTask, status: 'blocked', blockedQuestion: '选哪个？', scene: 'code' })
     expect(task.status).toBe('input_required')
-    expect(task.question).toBe('选哪个？')
+    expect(task.questions).toEqual([{ id: 'q1', question: '选哪个？' }])
     expect('blockedQuestion' in task).toBe(false)
     expect('scene' in task).toBe(false)
     expect('responseMode' in task).toBe(false)
@@ -345,7 +347,7 @@ describe('旧版本存储记录迁移', () => {
     expect(task.report && 'todos' in task.report).toBe(false)
   })
 
-  it('0.3.12 待办的 completedAt 死字段剥离', () => {
+  it('0.3.12 日程的 completedAt 死字段剥离', () => {
     const conv = conversationSchema.parse({
       ...baseConv,
       todos: [{
@@ -358,7 +360,7 @@ describe('旧版本存储记录迁移', () => {
     expect(conv.todos[0] && 'completedAt' in conv.todos[0]).toBe(false)
   })
 
-  it('0.3.12 待办 detail 迁移为 remark', () => {
+  it('0.3.12 日程 detail 迁移为 remark', () => {
     const conv = conversationSchema.parse({
       ...baseConv,
       todos: [{
@@ -399,7 +401,7 @@ describe('旧版本存储记录迁移', () => {
     expect(task.report?.result).toBe('新结果')
   })
 
-  it('0.3.1 的 blocked 记录不会被旧迁移规则误转为 input_required', () => {
+  it('0.3.13 的系统阻碍 blocked 记录迁移为 failed + fail.reasonCode', () => {
     const task = taskSchema.parse({
       ...baseTask,
       status: 'blocked',
@@ -407,8 +409,9 @@ describe('旧版本存储记录迁移', () => {
       reasonCode: 'dependency',
       remediation: '请安装 bsk 后继续',
     })
-    expect(task.status).toBe('blocked')
-    expect(task.reasonCode).toBe('dependency')
-    expect(task.remediation).toContain('bsk')
+    expect(task.status).toBe('failed')
+    expect(task.fail?.error).toContain('缺少 bsk CLI')
+    expect(task.fail?.error).toContain('建议：请安装 bsk 后继续')
+    expect(task.fail?.reasonCode).toBe('dependency')
   })
 })

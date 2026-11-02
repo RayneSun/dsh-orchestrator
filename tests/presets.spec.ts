@@ -74,9 +74,8 @@ describe('Orchestrator agent presets', () => {
     expect(prefix).toContain('工作区')
     // 记忆纪律与安全边界（工具用法由工具自身描述，不在 persona 重复）
     expect(prefix).toContain('memory_remember')
-    expect(prefix).toContain('blocked')
-    expect(prefix).toContain('reasonCode')
-    expect(prefix).toContain('系统阻碍专用')
+    expect(prefix).toContain('fail.reasonCode')
+    expect(prefix).toContain('系统阻碍')
     expect(prefix).toContain('input_required')
     expect(prefix).toContain('subagent')
     expect(prefix).not.toContain('禁止再派生')

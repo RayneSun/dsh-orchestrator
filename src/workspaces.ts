@@ -54,3 +54,6 @@ export async function buildChildWorkspace(rootCwd: string, requestedName: string
 
 /** 记忆库目录名：记忆与个人知识库统一由 dsh-obsidian 管理（kb_vault 内 USER.md/MEMORY.md/memory/每日/DREAMS.md）。 */
 export const MEMORY_VAULT_DIRNAME = 'kb_vault'
+
+/** 共享记忆库目录名（meow-memory 的 SQLite 所在目录）。 */
+export const SHARED_MEMORY_DIRNAME = '.dsh-meow'

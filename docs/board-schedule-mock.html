@@ -1,0 +1,452 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>看板 + 日程 mock · 真实 UI 语言</title>
+<style>
+.dsho-headerButton{font:inherit;border:.5px solid var(--dsw-alias-border-l4);background:var(--dsw-alias-bg-layer-3);color:var(--dsw-alias-label-primary);border-radius:8px;padding:3px 9px;cursor:pointer}
+.dsho-headerButton:hover{border-color:var(--dsw-alias-label-dimmed);background:var(--dsw-alias-interactive-bg-hover)}
+.dsho-board{box-sizing:border-box;height:100%;overflow:auto;padding:14px;color:var(--dsw-alias-label-primary,light-dark(#1f2329,#e8eaed));background:var(--dsw-alias-bg-layer-1,light-dark(#f7f8fa,#181818));--dsho-brand:light-dark(#1a73e8,#7ab8ff);--dsho-brand-ink:light-dark(#1557b0,#9cc4ff);--dsho-pos:light-dark(#188038,#4caf7d);--dsho-pos-ink:light-dark(#146c2f,#7ecfa2);--dsho-err:light-dark(#d93025,#ff6b61);--dsho-err-ink:light-dark(#b3261e,#ff8a80);--dsho-warn:light-dark(#a35200,#e8a04c);--dsho-line:var(--dsw-alias-border-l4,light-dark(#e4e7eb,rgb(255 255 255 / 10%)))}
+.dsho-title{font-size:15px;font-weight:650;margin:0 0 12px}
+.dsho-empty{color:var(--dsw-alias-label-tertiary);font-size:13px;line-height:1.6;border:.5px dashed var(--dsw-alias-border-l4);border-radius:12px;padding:18px;text-align:center}
+.dsho-conv{position:relative;border:.5px solid var(--dsw-alias-border-l4);border-radius:12px;background:var(--dsw-alias-bg-layer-2,light-dark(#fff,#1f1f1f));margin:0 0 12px;overflow:hidden}
+.dsho-convHead{display:flex;align-items:center;gap:8px;padding:12px 13px;border-bottom:.5px solid var(--dsw-alias-border-l2);cursor:pointer;user-select:none;outline:none}
+.dsho-convHead:hover{background:var(--dsw-alias-interactive-bg-hover)}
+.dsho-convHead:focus-visible{box-shadow:inset 0 0 0 2px color-mix(in srgb,var(--dsho-brand) 45%,transparent)}
+.dsho-conv-collapsed .dsho-convHead{border-bottom-color:transparent}
+.dsho-chevron{flex:none;width:7px;height:7px;margin:0 2px 0 1px;border-right:1.5px solid var(--dsw-alias-label-tertiary);border-bottom:1.5px solid var(--dsw-alias-label-tertiary);transform:rotate(45deg) translateY(-1px);transition:transform .22s ease}
+.dsho-conv-collapsed .dsho-chevron{transform:rotate(-45deg) translateY(-1px)}
+.dsho-convTitle{min-width:0;flex:1;font-size:13px;font-weight:620;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+/* 高度折叠动画（grid 0fr/1fr） */
+.dsho-body{display:grid;grid-template-rows:1fr;transition:grid-template-rows .24s ease}
+.dsho-conv-collapsed .dsho-body{grid-template-rows:0fr}
+.dsho-body>div{min-height:0;overflow:hidden}
+/* 运行中：绿色描边 + 顶部扫光 */
+.dsho-conv-active{border-color:color-mix(in srgb,var(--dsho-pos) 26%,transparent)}
+/* 顶部柔光扫过：低亮度绿色光带，入场/出场整体淡入淡出，避免边缘突变 */
+.dsho-conv-active::before{content:'';position:absolute;z-index:1;pointer-events:none;top:0;left:0;right:0;height:1.5px;background:linear-gradient(90deg,transparent 0%,color-mix(in srgb,var(--dsho-pos) 55%,transparent) 50%,transparent 100%);background-size:55% 100%;background-repeat:no-repeat;opacity:0;animation:dsho-sweep 2.6s ease-in-out infinite}
+@keyframes dsho-sweep{0%{background-position:-45% 0;opacity:0}20%{opacity:.9}80%{opacity:.9}100%{background-position:145% 0;opacity:0}}
+@media (prefers-reduced-motion:reduce){.dsho-conv-active::before,.dsho-chevron{animation:none;transition:none}.dsho-body{transition:none}}
+.dsho-badge{flex:none;display:inline-flex;align-items:center;gap:5px;border-radius:999px;padding:2px 9px;font-size:11px;font-weight:600;line-height:16px;background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-secondary);white-space:nowrap}
+.dsho-badge-queued,.dsho-badge-provisioning{background:color-mix(in srgb,var(--dsho-brand) 13%,transparent);color:var(--dsho-brand-ink)}
+.dsho-badge-running{background:color-mix(in srgb,var(--dsho-pos) 14%,transparent);color:var(--dsho-pos-ink);padding-left:7px}
+.dsho-badge-running::before{content:'';width:6px;height:6px;border-radius:50%;background:currentColor;animation:dsho-pulse 1.5s ease-in-out infinite}
+@keyframes dsho-pulse{0%,100%{opacity:1}50%{opacity:.3}}
+@media (prefers-reduced-motion:reduce){.dsho-badge-running::before{animation:none}}
+.dsho-badge-completed{background:var(--dsho-pos);color:#fff}
+.dsho-badge-idle{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-secondary)}
+.dsho-badge-input_required{background:color-mix(in srgb,var(--dsho-warn) 15%,transparent);color:var(--dsho-warn)}
+.dsho-badge-failed{background:color-mix(in srgb,var(--dsho-err) 11%,transparent);color:var(--dsho-err-ink)}
+.dsho-badge-interrupted{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-tertiary)}
+.dsho-taskMuted{opacity:.75}
+.dsho-meta{padding:6px 13px;color:var(--dsw-alias-label-tertiary,#9aa0a6);font-size:11px;line-height:1.6;border-bottom:.5px dashed var(--dsho-line)}
+.dsho-open{font:inherit;flex:none;cursor:pointer;font-size:11px;line-height:16px;padding:3px 8px;border-radius:6px;border:1px solid var(--dsho-line);background:transparent;color:var(--dsho-brand)}
+.dsho-open:hover{background:color-mix(in srgb,var(--dsho-brand) 8%,transparent)}
+.dsho-open:active{background:color-mix(in srgb,var(--dsho-brand) 16%,transparent)}
+.dsho-tasks{list-style:none;margin:0;padding:0}
+.dsho-task{border-top:.5px dashed var(--dsw-alias-border-l2);padding:10px 13px;display:flex;flex-direction:column;gap:5px}
+.dsho-task:first-child{border-top:none}
+.dsho-taskHead{display:flex;align-items:center;gap:8px;font-size:12px}
+.dsho-taskSubject{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--dsw-alias-label-primary)}
+.dsho-note{margin:0;color:var(--dsw-alias-label-secondary);font-size:12px;line-height:1.5}
+.dsho-subtle{margin:0;color:var(--dsw-alias-label-tertiary);font-size:11px;line-height:1.5}
+.dsho-answer{margin:0;color:var(--dsw-alias-label-primary);font-size:12px;line-height:1.55;display:-webkit-box;-webkit-line-clamp:5;-webkit-box-orient:vertical;overflow:hidden}
+.dsho-times{color:var(--dsw-alias-label-tertiary);font-size:10px}
+.dsho-tag{flex:none;display:inline-flex;align-items:center;justify-content:center;width:18px;height:18px;border-radius:6px}
+.dsho-tag svg{width:13px;height:13px;display:block}
+.dsho-tag-silent{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-tertiary)}
+.dsho-tag-scheduled{background:color-mix(in srgb,var(--dsho-brand) 13%,transparent);color:var(--dsho-brand-ink)}
+.dsho-note{display:flex;gap:6px;align-items:baseline}
+.dsho-noteTitle{flex:none;font-weight:600;font-size:11px;line-height:16px;padding:0 6px;border:.5px solid var(--dsho-line);border-radius:6px;background:var(--dsw-alias-bg-layer-3);color:var(--dsw-alias-label-primary);white-space:nowrap}
+.dsho-noteSep{flex:none;color:var(--dsw-alias-label-tertiary)}
+.dsho-noteText{flex:1;min-width:0;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.dsho-note-live .dsho-noteText{background:linear-gradient(90deg,var(--dsw-alias-label-primary) 30%,var(--dsho-brand) 50%,var(--dsw-alias-label-primary) 70%);background-size:200% 100%;-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent;animation:dsho-shimmer 1.8s linear infinite}
+@keyframes dsho-shimmer{0%{background-position:120% 0}100%{background-position:-80% 0}}
+@media (prefers-reduced-motion:reduce){.dsho-note-live .dsho-noteText{animation:none;background:none;-webkit-text-fill-color:currentcolor}}
+.dsho-expander{flex:none;border:none;background:none;color:var(--dsho-brand);font-size:11px;cursor:pointer;padding:0}
+.dsho-detail{margin-top:2px;padding:8px 10px;background:var(--dsw-alias-bg-layer-3);border-radius:8px;font-size:12px;color:var(--dsw-alias-label-secondary);line-height:1.6;max-height:220px;overflow:auto;display:flex;flex-direction:column;gap:6px}
+.dsho-detailSec b{color:var(--dsw-alias-label-primary);font-weight:600}
+.dsho-arts{display:flex;flex-wrap:wrap;gap:6px;margin-top:4px}
+.dsho-art{display:inline-flex;align-items:center;gap:5px;border:.5px solid var(--dsw-alias-border-l2);background:var(--dsw-alias-bg-layer-1,#fff);border-radius:6px;padding:3px 8px;font-size:11px;color:var(--dsho-brand);cursor:pointer}
+.dsho-art:hover{background:color-mix(in srgb,var(--dsho-brand) 8%,transparent)}
+.dsho-art svg{width:12px;height:12px}
+.dsho-taskFoot{display:flex;gap:10px;font-size:11px;color:var(--dsw-alias-label-tertiary)}
+/* 折叠态：仅显示问题卡、待办框与最新任务时间细行（任务区/工作区随 body 折叠） */
+.dsho-collapsedTime{display:none;padding:6px 13px;font-size:10.5px;color:var(--dsw-alias-label-tertiary);border-top:.5px dashed var(--dsho-line)}
+.dsho-conv-collapsed .dsho-collapsedTime{display:block}
+/* 任务框：圈住多轮任务，默认只显示最新一轮 */
+.dsho-taskBox{margin:10px 13px;border:1px solid var(--dsho-line);border-radius:10px;overflow:hidden}
+.dsho-taskBoxHead{display:flex;align-items:center;gap:6px;padding:7px 11px;font-size:11.5px;font-weight:600;color:var(--dsw-alias-label-secondary);cursor:pointer;background:var(--dsw-alias-bg-layer-3);user-select:none}
+.dsho-taskBoxHead .dsho-chevron{transform:rotate(45deg) translateY(-1px)}
+.dsho-taskBox-collapsed .dsho-taskBoxHead .dsho-chevron{transform:rotate(-45deg) translateY(0)}
+.dsho-taskBoxCnt{margin-left:auto;font-weight:400;color:var(--dsw-alias-label-tertiary);font-size:10.5px}
+.dsho-taskBox .dsho-tasks{margin:0 0 4px}
+.dsho-taskBox-collapsed .dsho-task:not(:first-child){display:none}
+.dsho-taskBox .dsho-task{padding:9px 11px}
+/* 问题卡：warn 色系，看板侧作答入口 */
+.dsho-ask{box-sizing:border-box;max-width:100%;overflow:hidden;margin:10px 13px 0;border:1px solid color-mix(in srgb,var(--dsho-warn) 35%,transparent);border-radius:10px;background:color-mix(in srgb,var(--dsho-warn) 5%,transparent);padding:10px 12px}
+.dsho-askHead{display:flex;align-items:center;gap:6px;font-size:11px;font-weight:600;color:var(--dsho-warn);margin-bottom:6px}
+.dsho-askIcon{flex:none;width:14px;height:14px;border-radius:50%;background:var(--dsho-warn);color:#fff;display:inline-flex;align-items:center;justify-content:center;font-size:9px}
+.dsho-askItem+.dsho-askItem{margin-top:8px;padding-top:8px;border-top:.5px dashed var(--dsho-line)}
+.dsho-askQ{font-size:12.5px;font-weight:550;color:var(--dsw-alias-label-primary);line-height:1.5}
+.dsho-askQ b{font-weight:650}
+.dsho-askDetail{font-size:11.5px;color:var(--dsw-alias-label-secondary);margin-top:2px;line-height:1.5}
+.dsho-askOpts{display:flex;flex-wrap:wrap;gap:6px;margin-top:7px}
+.dsho-opt{font:inherit;cursor:pointer;font-size:11.5px;line-height:1;padding:5px 10px;border-radius:999px;border:1px solid var(--dsho-line);background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-label-secondary);transition:all .15s}
+.dsho-opt:hover{border-color:var(--dsho-brand);color:var(--dsho-brand-ink)}
+.dsho-opt-sel{background:var(--dsho-brand);border-color:var(--dsho-brand);color:#fff;font-weight:600}
+.dsho-opt-sel:hover{color:#fff}
+.dsho-askCustom{display:block;box-sizing:border-box;margin-top:7px;width:100%;max-width:100%;min-width:0;border:1px solid var(--dsho-line);border-radius:8px;padding:6px 9px;font:inherit;font-size:11.5px;color:var(--dsw-alias-label-primary);background:var(--dsw-alias-bg-layer-2);outline:none}
+.dsho-askCustom:focus{border-color:var(--dsho-brand)}
+.dsho-askError{margin-top:7px;font-size:11.5px;color:var(--dsho-err-ink)}
+.dsho-askSubmit{margin-top:8px;font:inherit;cursor:pointer;border:none;border-radius:7px;background:var(--dsho-brand);color:#fff;font-size:11.5px;font-weight:600;padding:6px 14px}
+.dsho-askSubmit:hover{filter:brightness(1.08)}
+.dsho-askSubmit:disabled{opacity:.6;cursor:default}
+.dsho-detail-err{background:color-mix(in srgb,var(--dsho-err) 5%,transparent)}
+/* 子会话 task_update 摘要行（非 input_required 调用的极简渲染） */
+.dsho-wRow{display:flex;align-items:center;gap:7px;padding:4px 8px;font-size:12px;color:var(--dsw-alias-label-secondary);min-width:0}
+.dsho-wRowTitle{flex:none;font-weight:600;color:var(--dsw-alias-label-primary)}
+.dsho-wRowStatus{flex:none;font-size:10.5px;border:.5px solid var(--dsho-line);border-radius:999px;padding:0 7px}
+.dsho-wRowHeader{flex:none;font-weight:600;font-size:11px;padding:0 6px;border:.5px solid var(--dsho-line);border-radius:6px;background:var(--dsw-alias-bg-layer-3)}
+.dsho-wRowNote{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.dsho-wRow-done{color:var(--dsho-pos-ink);font-weight:600}
+.dsho-dur{font-variant-numeric:tabular-nums;color:var(--dsw-alias-label-secondary)}
+.dsho-dur-live{color:var(--dsho-pos-ink);font-weight:600}
+.dsho-toast{position:sticky;bottom:12px;left:0;right:0;margin:8px auto 0;width:fit-content;max-width:90%;background:#1f2329;color:#fff;font-size:12px;padding:6px 14px;border-radius:999px;box-shadow:0 4px 14px rgb(0 0 0 / 18%);z-index:5;animation:dsho-toast-in .18s ease}
+@keyframes dsho-toast-in{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+.dsho-error{color:var(--dsw-alias-label-error,#d93025)}
+
+.dsho-steps{list-style:none;margin:6px 0 0;padding:6px 10px;border:.5px solid var(--dsw-alias-border-l4);border-radius:8px;background:var(--dsw-alias-bg-layer-3);display:inline-block;min-width:220px;max-width:100%}
+.dsho-steps li{display:flex;align-items:center;gap:7px;font-size:12px;line-height:1.6;color:var(--dsw-alias-label-tertiary)}
+.dsho-steps li.dsho-step-in_progress{color:var(--dsw-alias-label-primary);font-weight:500}
+.dsho-steps li.dsho-step-completed{color:var(--dsw-alias-label-tertiary)}
+.dsho-stepIcon{flex:none;width:14px;height:14px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;font-size:10px;border:1.5px solid var(--dsw-alias-border-l4)}
+.dsho-step-completed .dsho-stepIcon{background:color-mix(in srgb,var(--dsho-pos) 15%,transparent);color:var(--dsho-pos-ink);border-color:transparent}
+.dsho-step-in_progress .dsho-stepIcon{background:color-mix(in srgb,var(--dsho-brand) 15%,transparent);color:var(--dsho-brand-ink);border-color:transparent;animation:dsho-pulse 1.5s ease-in-out infinite}
+/* 用户待办框：折叠/展开都显示，位于工作区行上方 */
+.dsho-todos{margin:10px 13px 0;border:.5px solid var(--dsw-alias-border-l4);border-radius:10px;background:var(--dsw-alias-bg-layer-3);padding:6px 10px 8px}
+.dsho-conv-collapsed .dsho-todos{margin-top:0;margin-bottom:10px}
+.dsho-todosHead{display:flex;align-items:center;gap:6px;font-size:11px;font-weight:600;color:var(--dsw-alias-label-secondary);padding:2px 0 5px}
+.dsho-todosCount{font-weight:500;color:var(--dsw-alias-label-tertiary)}
+.dsho-todo{display:flex;align-items:flex-start;gap:8px;padding:5px 0;border-top:.5px dashed var(--dsw-alias-border-l2)}
+.dsho-todo:first-of-type{border-top:none}
+.dsho-todoCheck{flex:none;width:15px;height:15px;margin-top:1px;border-radius:50%;border:1.5px solid var(--dsw-alias-border-l4);background:var(--dsw-alias-bg-layer-2,#fff);display:inline-flex;align-items:center;justify-content:center;font-size:10px;color:transparent;cursor:pointer;padding:0;transition:border-color .15s}
+.dsho-todoCheck:hover{border-color:var(--dsho-pos)}
+.dsho-todo-done .dsho-todoCheck{background:color-mix(in srgb,var(--dsho-pos) 15%,transparent);border-color:transparent;color:var(--dsho-pos-ink)}
+.dsho-todoBody{flex:1;min-width:0;cursor:pointer}
+.dsho-todoLine{display:flex;align-items:baseline;gap:8px;min-width:0}
+.dsho-todoTitle{min-width:0;font-size:12px;font-weight:550;color:var(--dsw-alias-label-primary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.dsho-todo-done .dsho-todoTitle{color:var(--dsw-alias-label-tertiary);text-decoration:line-through;font-weight:400}
+.dsho-todoTime{flex:none;display:inline-flex;align-items:center;font-size:10px;color:var(--dsw-alias-label-tertiary);border:.5px solid var(--dsho-line);border-radius:999px;padding:0 7px;line-height:15px;background:var(--dsw-alias-bg-layer-2,#fff);white-space:nowrap}
+.dsho-todoTime-soon{color:var(--dsho-warn);border-color:color-mix(in srgb,var(--dsho-warn) 35%,transparent);background:color-mix(in srgb,var(--dsho-warn) 6%,transparent)}
+.dsho-todoTime-over{color:var(--dsho-err);border-color:color-mix(in srgb,var(--dsho-err) 35%,transparent);background:color-mix(in srgb,var(--dsho-err) 6%,transparent)}
+.dsho-todoTime-active{color:var(--dsho-brand-ink,var(--dsho-brand));border-color:color-mix(in srgb,var(--dsho-brand) 35%,transparent);background:color-mix(in srgb,var(--dsho-brand) 6%,transparent)}
+.dsho-todoTime-active .dsho-dot{width:5px;height:5px;border-radius:50%;background:currentColor;margin-right:4px;animation:dsho-pulse 1.6s ease-in-out infinite}
+@keyframes dsho-pulse{0%,100%{opacity:.35}50%{opacity:1}}
+.dsho-todoPriority{flex:none;font-size:10px;font-weight:600;border-radius:999px;padding:0 7px;line-height:15px;border:.5px solid transparent}
+.dsho-todoPriority-P0{color:#d5483f;border-color:color-mix(in srgb,#d5483f 35%,transparent);background:color-mix(in srgb,#d5483f 8%,transparent)}
+.dsho-todoPriority-P1{color:#e08300;border-color:color-mix(in srgb,#e08300 35%,transparent);background:color-mix(in srgb,#e08300 8%,transparent)}
+.dsho-todoPriority-P2{color:#b59a00;border-color:color-mix(in srgb,#b59a00 35%,transparent);background:color-mix(in srgb,#b59a00 8%,transparent)}
+.dsho-todoPriority-P3{color:#3d9a50;border-color:color-mix(in srgb,#3d9a50 35%,transparent);background:color-mix(in srgb,#3d9a50 8%,transparent)}
+.dsho-todo-done .dsho-todoTime{opacity:.55;text-decoration:line-through}
+.dsho-todoDetail{display:none;padding:4px 0 2px}
+.dsho-todo-open .dsho-todoDetail{display:block}
+.dsho-todoMeta{display:flex;flex-wrap:wrap;gap:4px;margin-top:4px}
+.dsho-todoRemind{font-size:10px;color:var(--dsho-brand-ink,var(--dsho-brand));background:color-mix(in srgb,var(--dsho-brand) 7%,transparent);border:.5px solid color-mix(in srgb,var(--dsho-brand) 30%,transparent);border-radius:999px;padding:0 7px;line-height:15px}
+.dsho-dRow{display:flex;gap:6px;align-items:flex-start;margin-top:4px;font-size:11px;color:var(--dsw-alias-label-secondary);line-height:1.6}
+.dsho-dRow:first-child{margin-top:0}
+.dsho-dIcon{flex:none;width:16px;text-align:center;font-size:11px;margin-top:1px;filter:grayscale(.35);opacity:.85}
+.dsho-dText{flex:1;min-width:0;white-space:pre-wrap}
+.dsho-dChips{flex:1;min-width:0;display:flex;flex-wrap:wrap;gap:4px}
+.dsho-chip{display:inline-flex;align-items:center;gap:4px;font-size:10px;border-radius:6px;padding:2px 7px;border:.5px solid transparent;cursor:pointer;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.dsho-chip-link{color:var(--dsho-brand-ink,var(--dsho-brand));background:color-mix(in srgb,var(--dsho-brand) 7%,transparent);border-color:color-mix(in srgb,var(--dsho-brand) 25%,transparent)}
+.dsho-chip-file{color:#6941c6;background:color-mix(in srgb,#7a5af5 7%,transparent);border-color:color-mix(in srgb,#7a5af5 25%,transparent)}
+.dsho-chip-person{color:#0e7c86;background:color-mix(in srgb,#0e7c86 7%,transparent);border-color:color-mix(in srgb,#0e7c86 25%,transparent)}
+.dsho-chip-person b{font-weight:550}
+.dsho-chip-person em{font-style:normal;opacity:.75}
+.dsho-chip-place{color:var(--dsw-alias-label-secondary);background:var(--dsw-alias-bg-layer-2,#fff);border-color:var(--dsw-alias-border-l4);cursor:default}
+.dsho-todo-cancelled .dsho-todoCheck{background:transparent;border-color:transparent;color:var(--dsw-alias-label-tertiary);cursor:default;opacity:.7}
+.dsho-todo-cancelled .dsho-todoTitle{color:var(--dsw-alias-label-tertiary);text-decoration:line-through;font-weight:400}
+.dsho-todo-cancelled .dsho-todoTime{opacity:.55;text-decoration:line-through}
+.dsho-todoCancelledTag{margin-left:6px;font-size:10px;font-weight:400;color:var(--dsw-alias-label-tertiary);border:.5px solid var(--dsho-line);border-radius:999px;padding:0 6px;line-height:14px;text-decoration:none;display:inline-block}
+</style>
+<style>
+/* ═══ mock 专用：DSH 令牌回退（真实页面由宿主提供）+ 页面骨架 ═══ */
+:root {
+  color-scheme: light;
+  --dsw-alias-border-l4: #e4e7eb;
+  --dsw-alias-border-l2: #eceef1;
+  --dsw-alias-bg-layer-1: #f7f8fa;
+  --dsw-alias-bg-layer-2: #ffffff;
+  --dsw-alias-bg-layer-3: #f4f5f7;
+  --dsw-alias-interactive-bg-hover: #eff1f3;
+  --dsw-alias-label-primary: #1f2329;
+  --dsw-alias-label-secondary: #5c616b;
+  --dsw-alias-label-tertiary: #9aa0a6;
+}
+body { margin: 0; background: var(--dsw-alias-bg-layer-1); font-family: -apple-system, "PingFang SC", sans-serif; }
+.mock-wrap { max-width: 580px; margin: 0 auto; padding: 18px 14px 40px; }
+
+/* tabs：沿用 headerButton 语言 */
+.dsho-tabs { display: flex; gap: 6px; margin-left: auto; }
+.dsho-tab { position: relative; font: inherit; font-size: 12px; font-weight: 600; border: .5px solid var(--dsw-alias-border-l4); background: var(--dsw-alias-bg-layer-3); color: var(--dsw-alias-label-secondary); border-radius: 8px; padding: 3px 12px; cursor: pointer; }
+.dsho-tab.on { background: color-mix(in srgb, var(--dsho-brand) 12%, transparent); border-color: color-mix(in srgb, var(--dsho-brand) 35%, transparent); color: var(--dsho-brand-ink); }
+.dsho-tab .dsho-notif { position: absolute; top: -4px; right: -4px; width: 10px; height: 10px; border-radius: 50%; border: 2px solid var(--dsw-alias-bg-layer-1); }
+.dsho-notif-running { background: var(--dsho-pos); } .dsho-notif-completed { background: var(--dsho-pos); }
+.dsho-notif-failed { background: var(--dsho-err); } .dsho-notif-input_required { background: var(--dsho-warn); }
+
+.dsho-pane { display: none; } .dsho-pane.on { display: block; }
+
+/* 日程行来源回链（日程页多的一行） */
+.dsho-src { font-size: 10px; color: var(--dsw-alias-label-tertiary); margin: 2px 0 0 23px; }
+
+/* ═══ 月历（全部用真实令牌/软色） ═══ */
+.dsho-cal { margin: 0 0 12px; }
+.dsho-calHead { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+.dsho-calTitle { font-size: 13px; font-weight: 650; color: var(--dsw-alias-label-primary); }
+.dsho-calNav { display: flex; gap: 5px; }
+.dsho-calNav button { font: inherit; width: 25px; height: 25px; border-radius: 7px; border: .5px solid var(--dsw-alias-border-l4); background: var(--dsw-alias-bg-layer-2); color: var(--dsw-alias-label-secondary); cursor: pointer; font-size: 12px; }
+.dsho-calNav button.wide { width: auto; padding: 0 10px; }
+.dsho-calNav button:hover { background: var(--dsw-alias-interactive-bg-hover); }
+.dsho-calGrid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 2px; }
+.dsho-dow { text-align: center; font-size: 10px; color: var(--dsw-alias-label-tertiary); padding: 3px 0; }
+.dsho-day { position: relative; aspect-ratio: 1; border-radius: 8px; display: flex; align-items: center; justify-content: center; font-size: 12px; color: var(--dsw-alias-label-primary); cursor: pointer; border: 1.5px solid transparent; }
+.dsho-day:hover { background: var(--dsw-alias-interactive-bg-hover); }
+.dsho-day.dim { color: color-mix(in srgb, var(--dsw-alias-label-tertiary) 55%, transparent); }
+.dsho-day.today { border-color: color-mix(in srgb, var(--dsho-brand) 55%, transparent); font-weight: 650; }
+.dsho-day.sel { background: color-mix(in srgb, var(--dsho-brand) 8%, transparent); border-color: color-mix(in srgb, var(--dsho-brand) 35%, transparent); }
+.dsho-dayDots { display: flex; gap: 2px; position: absolute; bottom: 3px; }
+.dsho-dayDot { width: 4.5px; height: 4.5px; border-radius: 50%; }
+.dsho-dayMore { position: absolute; bottom: 1px; right: 4px; font-size: 8.5px; color: var(--dsw-alias-label-tertiary); }
+.dsho-dayTitle { font-size: 13px; font-weight: 650; margin: 2px 0 4px; display: flex; align-items: baseline; gap: 8px; }
+.dsho-dayTitle .cnt { color: var(--dsw-alias-label-tertiary); font-weight: 400; font-size: 11px; }
+.dsho-groupLabel { font-size: 10.5px; color: var(--dsw-alias-label-tertiary); margin: 10px 2px 2px; }
+.dsho-groupLabel.overdue { color: var(--dsho-err-ink); font-weight: 600; }
+.dsho-span { display: inline-flex; align-items: center; gap: 3px; }
+</style>
+</head>
+<body>
+<div class="mock-wrap dsho-board" style="min-height:auto">
+
+  <h2 class="dsho-title" style="display:flex;align-items:center">
+    任务看板
+    <span class="dsho-tabs">
+      <span class="dsho-tab on" id="tab-board" onclick="switchTab('board')"><span class="dsho-notif dsho-notif-completed" id="notif"></span>看板</span>
+      <span class="dsho-tab" id="tab-sched" onclick="switchTab('sched')">日程</span>
+    </span>
+  </h2>
+
+  <!-- ═══ 看板 tab（与线上一致的会话卡结构）═══ -->
+  <div class="dsho-pane on" id="pane-board">
+
+    <section class="dsho-conv dsho-conv-active">
+      <div class="dsho-convHead" onclick="toggleConv(this)">
+        <span class="dsho-chevron"></span>
+        <span class="dsho-convTitle">体检机构对比</span>
+        <span class="dsho-badge dsho-badge-idle">空闲</span>
+        <button class="dsho-open" onclick="event.stopPropagation()">打开子会话</button>
+      </div>
+      <div class="dsho-body"><div>
+        <ul class="dsho-tasks">
+          <li class="dsho-task">
+            <div class="dsho-taskHead">
+              <span class="dsho-badge dsho-badge-completed">已完成</span>
+              <span class="dsho-taskSubject">对比三家体检机构距离</span>
+            </div>
+            <div class="dsho-note">
+              <span class="dsho-noteTitle">已查到 3 家</span>
+              <span class="dsho-noteSep">·</span>
+              <span class="dsho-noteText">三家地址与地铁沙河站距离已汇总，最近为安贞医院 ≈19km，公共交通换乘最少</span>
+            </div>
+            <div class="dsho-taskFoot"><span>创建 10-28 09:12</span><span class="dsho-dur">耗时 4m02s</span></div>
+          </li>
+          <li class="dsho-task dsho-taskMuted">
+            <div class="dsho-taskHead">
+              <span class="dsho-badge dsho-badge-completed">已完成</span>
+              <span class="dsho-taskSubject">生成对比报告</span>
+            </div>
+            <div class="dsho-note">
+              <span class="dsho-noteTitle">报告已出</span>
+              <span class="dsho-noteSep">·</span>
+              <span class="dsho-noteText">推荐爱康国宾高新分院，详细对比见制品</span>
+            </div>
+          </li>
+        </ul>
+
+        <div class="dsho-todos">
+          <div class="dsho-todosHead">日程 <span class="dsho-todosCount">2 条待办</span></div>
+          <div class="dsho-todo" onclick="toggleTodo(this)">
+            <button class="dsho-todoCheck" onclick="checkTodo(this, event)">✓</button>
+            <div class="dsho-todoBody">
+              <div class="dsho-todoLine">
+                <span class="dsho-todoTitle">向财务确认发票抬头要求</span>
+                <span class="dsho-todoPriority dsho-todoPriority-P1">P1</span>
+                <span class="dsho-todoTime dsho-todoTime-over">10-27 12:00</span>
+              </div>
+              <div class="dsho-todoDetail">
+                <div class="dsho-dRow"><span class="dsho-dIcon">📝</span><span class="dsho-dText">抬头开公司还是个人、是否要税号、是否接受普票</span></div>
+                <div class="dsho-dRow"><span class="dsho-dIcon">📞</span><span class="dsho-dChips"><span class="dsho-chip dsho-chip-person"><b>爱康高新分院</b> <em>4000890999 转 2902</em></span></span></div>
+              </div>
+            </div>
+          </div>
+          <div class="dsho-todo" onclick="toggleTodo(this)">
+            <button class="dsho-todoCheck" onclick="checkTodo(this, event)">✓</button>
+            <div class="dsho-todoBody">
+              <div class="dsho-todoLine">
+                <span class="dsho-todoTitle">电话核实西电体检院区</span>
+                <span class="dsho-todoPriority dsho-todoPriority-P2">P2</span>
+                <span class="dsho-todoTime dsho-todoTime-soon">10-28 18:00</span>
+              </div>
+              <div class="dsho-todoDetail">
+                <div class="dsho-dRow"><span class="dsho-dIcon">📝</span><span class="dsho-dText">大庆路 450 号还是丰登路 97 号、周末放号、公司抬头</span></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div></div>
+    </section>
+
+    <section class="dsho-conv">
+      <div class="dsho-convHead" onclick="toggleConv(this)">
+        <span class="dsho-chevron"></span>
+        <span class="dsho-convTitle">家庭事务</span>
+        <span class="dsho-badge dsho-badge-running">进行中</span>
+        <button class="dsho-open" onclick="event.stopPropagation()">打开子会话</button>
+      </div>
+      <div class="dsho-body"><div>
+        <ul class="dsho-tasks">
+          <li class="dsho-task">
+            <div class="dsho-taskHead">
+              <span class="dsho-badge dsho-badge-running">进行中</span>
+              <span class="dsho-taskSubject">订周末蛋糕</span>
+            </div>
+            <div class="dsho-note dsho-note-live">
+              <span class="dsho-noteTitle">比价中</span>
+              <span class="dsho-noteSep">·</span>
+              <span class="dsho-noteText">已看完 4 家店，望京的好利来最快能取——再比两家就下单</span>
+            </div>
+            <div class="dsho-taskFoot"><span>创建 10-29 15:40</span><span class="dsho-dur">耗时 1m12s</span></div>
+          </li>
+        </ul>
+      </div></div>
+    </section>
+
+  </div>
+
+  <!-- ═══ 日程 tab ═══ -->
+  <div class="dsho-pane" id="pane-sched">
+
+    <div class="dsho-cal card-like">
+      <div class="dsho-calHead">
+        <span class="dsho-calTitle">2026年10月</span>
+        <span class="dsho-calNav"><button>‹</button><button class="wide">今天</button><button>›</button></span>
+      </div>
+      <div class="dsho-calGrid" id="cal"></div>
+    </div>
+
+    <section class="dsho-conv">
+      <div class="dsho-dayTitle" style="padding:12px 13px 0">10月29日 周四 <span class="cnt">· 3 条</span></div>
+
+      <div style="padding:0 13px 12px">
+        <div class="dsho-groupLabel overdue">已过期 1</div>
+        <div class="dsho-todo" onclick="toggleTodo(this)">
+          <button class="dsho-todoCheck" onclick="checkTodo(this, event)">✓</button>
+          <div class="dsho-todoBody">
+            <div class="dsho-todoLine">
+              <span class="dsho-todoTitle">向财务确认发票抬头要求</span>
+              <span class="dsho-todoPriority dsho-todoPriority-P1">P1</span>
+              <span class="dsho-todoTime dsho-todoTime-over">10-27 12:00</span>
+            </div>
+            <div class="dsho-src">来自 体检机构对比</div>
+          </div>
+        </div>
+
+        <div class="dsho-groupLabel">今天</div>
+        <div class="dsho-todo" onclick="toggleTodo(this)">
+          <button class="dsho-todoCheck" onclick="checkTodo(this, event)">✓</button>
+          <div class="dsho-todoBody">
+            <div class="dsho-todoLine">
+              <span class="dsho-todoTitle">部门周会（两天议程）</span>
+              <span class="dsho-todoPriority dsho-todoPriority-P1">P1</span>
+              <span class="dsho-todoTime dsho-todoTime-active"><span class="dsho-dot"></span>10-29 18:00 → 10-30 22:00</span>
+            </div>
+            <div class="dsho-src">来自 今晚会议提醒 · 提醒 17:30</div>
+          </div>
+        </div>
+        <div class="dsho-todo" onclick="toggleTodo(this)">
+          <button class="dsho-todoCheck" onclick="checkTodo(this, event)">✓</button>
+          <div class="dsho-todoBody">
+            <div class="dsho-todoLine">
+              <span class="dsho-todoTitle">给妈妈订周末蛋糕</span>
+              <span class="dsho-todoPriority dsho-todoPriority-P3">P3</span>
+              <span class="dsho-todoTime">20:00</span>
+            </div>
+            <div class="dsho-src">来自 家庭事务</div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="dsho-conv">
+      <div class="dsho-dayTitle" style="padding:12px 13px 0">10月30日 周五</div>
+      <div style="padding:0 13px 12px">
+        <div class="dsho-todo" onclick="toggleTodo(this)">
+          <button class="dsho-todoCheck" onclick="checkTodo(this, event)">✓</button>
+          <div class="dsho-todoBody">
+            <div class="dsho-todoLine">
+              <span class="dsho-todoTitle">部门周会（两天议程）</span>
+              <span class="dsho-todoPriority dsho-todoPriority-P1">P1</span>
+              <span class="dsho-todoTime">10-29 18:00 → 10-30 22:00</span>
+            </div>
+            <div class="dsho-src">来自 今晚会议提醒</div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="dsho-conv">
+      <div class="dsho-dayTitle" style="padding:12px 13px 0">10月31日 周六</div>
+      <div class="dsho-empty" style="margin:0 13px 13px">这一天没有日程</div>
+    </section>
+
+  </div>
+</div>
+
+<script>
+  function switchTab(name) {
+    document.getElementById('pane-board').classList.toggle('on', name === 'board');
+    document.getElementById('pane-sched').classList.toggle('on', name === 'sched');
+    document.getElementById('tab-board').classList.toggle('on', name === 'board');
+    document.getElementById('tab-sched').classList.toggle('on', name === 'sched');
+    if (name === 'board') document.getElementById('notif')?.remove();
+  }
+  function toggleConv(head) { head.parentElement.classList.toggle('dsho-conv-collapsed'); }
+  function toggleTodo(row) { row.classList.toggle('dsho-todo-open'); }
+  function checkTodo(btn, e) {
+    e.stopPropagation();
+    const row = btn.closest('.dsho-todo');
+    row.classList.toggle('dsho-todo-done');
+  }
+  // 月历
+  const grid = document.getElementById('cal');
+  const P = { P0: '#d5483f', P1: '#e08300', P2: '#b59a00', P3: '#3d9a50' };
+  const ev = { 27: [P.P1], 28: [P.P2], 29: [P.P1, P.P1, P.P3], 30: [P.P1], 31: [P.P3] };
+  const firstDow = (new Date(2026, 9, 1).getDay() + 6) % 7;
+  let html = ['一','二','三','四','五','六','日'].map(d => '<div class="dsho-dow">' + d + '</div>').join('');
+  for (let i = 0; i < firstDow; i++) html += '<div></div>';
+  for (let d = 1; d <= 31; d++) {
+    const dots = ev[d] || [];
+    html += '<div class="dsho-day ' + (d === 29 ? 'today sel' : '') + '">' + d +
+      '<span class="dsho-dayDots">' + dots.slice(0, 3).map(c => '<span class="dsho-dayDot" style="background:' + c + '"></span>').join('') + '</span>' +
+      (dots.length > 3 ? '<span class="dsho-dayMore">+' + (dots.length - 3) + '</span>' : '') + '</div>';
+  }
+  grid.innerHTML = html;
+  grid.addEventListener('click', e => {
+    const day = e.target.closest('.dsho-day'); if (!day) return;
+    grid.querySelectorAll('.dsho-day.sel').forEach(x => x.classList.remove('sel'));
+    day.classList.add('sel');
+  });
+</script>
+</body>
+</html>
