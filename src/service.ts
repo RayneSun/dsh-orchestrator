@@ -32,6 +32,7 @@ import {
   failTask,
   interruptTaskAfterRestart,
   resumeTaskWithAnswers,
+  awaitingConversation,
   settleConversation,
   startConversation,
   deliveryEnabledFor,
@@ -1149,8 +1150,11 @@ export class OrchestratorService extends TypertRemoteService {
       const terminal = (deliverableTaskStatuses as readonly string[]).includes(task.status)
       const isInputRequired = task.status === 'input_required'
       await this.applyUpdateSideEffects(conv, args)
-      // input_required 不 settle（工具阻塞等用户作答），其余终态照常 settle。
-      const nextConv = terminal && !isInputRequired ? settleConversation(conv, task) : conv
+      // input_required 不 settle（activeTaskId 保留、轮次未结束），但聚合状态要同步为待决策；
+      // 其余终态照常 settle 回 idle。
+      const nextConv = terminal && !isInputRequired
+        ? settleConversation(conv, task)
+        : isInputRequired ? awaitingConversation(conv) : conv
       await this.putPair(nextConv, task)
       if (terminal && !isInputRequired) {
         terminalTaskId = task.id

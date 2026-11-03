@@ -696,7 +696,7 @@ export function Board({ sessionId: propSessionId, useTabInfo, orchestrator, remo
       const tasks = tasksByConversation.get(conv.id) ?? []
       const latest = tasks[tasks.length - 1]
       const silentConv = isSilentConversation(conv.id)
-      const active = conv.state === 'running' || conv.state === 'provisioning'
+      const active = conv.state === 'running' || conv.state === 'provisioning' || conv.state === 'input_required'
         || tasks.some(task => (activeTaskStatuses as readonly string[]).includes(task.status))
       // 会话头徽标跟随最新一轮任务；无任务时回退会话状态。
       const headState = latest ? latest.status : conv.state

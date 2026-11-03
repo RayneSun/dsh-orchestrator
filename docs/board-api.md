@@ -59,7 +59,7 @@
 | outline.keyFacts / entities / tags / artifacts / openQuestions | string[] | 结构兼容保留，恒为空数组，可忽略 |
 | activeTaskId | string \| null | 当前进行中的任务 ID |
 | lastTaskId | string \| null | 最近一次任务 ID |
-| state | ConversationState | 会话聚合状态：`provisioning / running / idle / input_required / failed` |
+| state | ConversationState | 会话聚合状态：`provisioning / running / idle / input_required / failed`。生命周期：活动任务上报 `input_required` 时同步为该值（`activeTaskId` 保留，轮次未结束）；作答后回 `running`；`completed / failed / interrupted` settle 回 `idle` |
 | revision | number | 乐观锁版本号，任意字段变化时 +1 |
 | hasActiveSchedule | boolean? | 仅 snapshot 投影字段（不落库）：子会话绑定了活动定时任务；App 可渲染 ⏰ 标记 |
 | createdAt / updatedAt | string(ISO 8601) | 创建/更新时间 |
@@ -179,6 +179,8 @@ task_update（input_required 为阻塞调用，返回值即用户答案 { answer
 | interrupted | 已停止 | 灰 |
 
 会话头徽标跟随最新任务；静默显示 🚫；`hasActiveSchedule` 显示 ⏰。
+
+**消费方聚合规则**：非 idle 会话（`provisioning / running / input_required / failed`）以 `Conversation.state` 为准，只有 `idle` 才回查 `lastTaskId.status`。待决策事项（`input_required`）因此必须同时体现在 `Conversation.state` 上。
 
 ## 8. ProgressStep（多步骤进度）
 
