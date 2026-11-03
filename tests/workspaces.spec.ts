@@ -1,8 +1,9 @@
 import { mkdtemp, rm, readdir } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, resolve } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
-import { buildChildWorkspace, MEMORY_VAULT_DIRNAME, sanitizeWorkspaceName } from '../src/workspaces.ts'
+import { buildChildWorkspace, ensureVaultPathEnv, resolveVaultRoot, sanitizeWorkspaceName } from '../src/workspaces.ts'
+import { MEMORY_VAULT_DIRNAME } from '../src/types.ts'
 
 const roots: string[] = []
 afterEach(async () => {
@@ -49,5 +50,30 @@ describe('子会话工作区路径', () => {
 describe('记忆库常量', () => {
   it('记忆与知识库统一由 dsh-obsidian 管理（kb_vault）', () => {
     expect(MEMORY_VAULT_DIRNAME).toBe('kb_vault')
+  })
+})
+
+describe('DSH_VAULT_PATH 代码内兜底', () => {
+  const original = process.env.DSH_VAULT_PATH
+  afterEach(() => {
+    if (original === undefined) delete process.env.DSH_VAULT_PATH
+    else process.env.DSH_VAULT_PATH = original
+  })
+
+  it('未配置时填充与 patch.yml 推导一致的默认值；显式配置优先不覆盖', () => {
+    delete process.env.DSH_VAULT_PATH
+    ensureVaultPathEnv()
+    expect(process.env.DSH_VAULT_PATH).toBe(resolve(process.cwd(), '..', '..', 'default-workspace', 'kb_vault'))
+    process.env.DSH_VAULT_PATH = 'D:/custom/vault'
+    ensureVaultPathEnv()
+    expect(process.env.DSH_VAULT_PATH).toBe('D:/custom/vault')
+  })
+
+  it('resolveVaultRoot 优先读代码填充的环境变量，无值时才落主工作区根', () => {
+    delete process.env.DSH_VAULT_PATH
+    ensureVaultPathEnv()
+    expect(resolveVaultRoot('C:/any/workspace')).toBe(resolve(process.env.DSH_VAULT_PATH!))
+    delete process.env.DSH_VAULT_PATH
+    expect(resolveVaultRoot('C:/any/workspace')).toBe(resolve('C:/any/workspace', 'kb_vault'))
   })
 })

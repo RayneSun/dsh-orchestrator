@@ -98,6 +98,9 @@ const timeWindowRefinement = (value: { startAt?: string, endAt?: string }, ctx: 
   }
 }
 
+/** 共享记忆/知识库 vault 目录名（主工作区根下）：记忆文件与会话归档由 dsh-obsidian 统一管理。 */
+export const MEMORY_VAULT_DIRNAME = 'kb_vault'
+
 /** 相对路径：拒绝绝对路径、盘符与 .. 逃逸（待办附件与 report.artifacts 共用）。 */
 const relativePathSchema = z.string().trim().min(1).max(500).refine(
   (value) => {
@@ -426,6 +429,8 @@ export interface Snapshot {
   conversations: ConversationRecord[]
   tasks: TaskRecord[]
   schedules: ScheduleSnapshot[]
+  /** 主会话解析出的共享 vault 根（DSH_VAULT_PATH 优先）；客户端据此打开 kb_vault/ 开头的制品。 */
+  vaultRoot?: string
 }
 
 /** 快照里的日程投影：conversationTitle 冗余，客户端回链不用二次查。 */

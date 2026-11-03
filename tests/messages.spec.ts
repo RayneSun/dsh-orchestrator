@@ -45,6 +45,19 @@ describe('deliveryNotice 用户日程段', () => {
     const without = deliveryNotice(baseTask(), conv, [])
     expect(without).not.toContain('用户日程')
   })
+
+  it('制品带来源标记：知识库制品原样展示，工作区制品拼工作区前缀', () => {
+    const conv: ConversationRecord = {
+      ...createConversation({ id: 'c1', childSessionId: 's1', parentSessionId: 'p1', title: '归档', workspaceName: 'daily-news', workspaceDir: 'C:/ws/daily-news' }),
+    }
+    const task: TaskRecord = {
+      ...baseTask(),
+      report: { result: '完成', artifacts: ['kb_vault/s1/assets/原件.pdf', 'report.md'] },
+    }
+    const text = deliveryNotice(task, conv)
+    expect(text).toContain('- [知识库] kb_vault/s1/assets/原件.pdf')
+    expect(text).toContain('- [工作区] daily-news/report.md')
+  })
 })
 
 describe('scheduleStatusSection 投递附言', () => {

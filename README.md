@@ -30,7 +30,7 @@ Worker 的任务上报协议、安全红线（支付/删除等不可逆操作先
 
 插件随 bundle 内置 `dsh-obsidian`，提供 Obsidian 风格的 md 知识库（搜索、wikilink、backlinks），供 Lead 与全部 Worker 共享：
 
-- **vault 根**：`kb_vault`，位于 DSH 主工作区根下。`cordis.patch.yml` 中 vaultPath 通过动态表达式解析：优先读环境变量 `DSH_VAULT_PATH`（部署服务器或自定义工作区位置时设置），否则取 DSH 主工作区根下的 `kb_vault`。
+- **vault 根**：`kb_vault`，位于 DSH 主工作区根下。orchestrator 启动时代码内自动写入默认 `DSH_VAULT_PATH`（与 `cordis.patch.yml` 中 vaultPath 的动态表达式同源推导，无需人工配置）；如部署服务器或自定义工作区位置，可用环境变量 `DSH_VAULT_PATH` 覆盖到任意位置。
 - **自动初始化**：orchestrator 在每次主会话（Lead）建立时自动 `mkdir kb_vault`（仅建根，不预建 session/assets；session/assets 由归档任务按会话创建）。
 - **目录结构**：
   ```

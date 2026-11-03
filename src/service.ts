@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { readFileSync } from 'node:fs'
-import { mkdir, rmdir, readFile, writeFile, appendFile } from 'node:fs/promises'
+import { mkdir, readdir, readFile, rename, rmdir, writeFile, appendFile } from 'node:fs/promises'
 import { dirname, join, resolve, sep } from 'node:path'
 import { Context, Service } from '@deepseek-ai/cordis'
 import sz from '@deepseek-ai/schemastery'
@@ -20,7 +20,17 @@ import { toJson } from './json.ts'
 import { isWorkerToolForbidden } from './worker-policy.ts'
 import { LEAD_SUPPRESSED_SECTIONS, LEAD_TOOL_ALLOW } from './lead-policy.ts'
 import { normalizeProgressSteps } from './progress.ts'
-import { buildChildWorkspace, MEMORY_VAULT_DIRNAME, resolveVaultRoot } from './workspaces.ts'
+import { buildChildWorkspace, ensureVaultPathEnv, resolveVaultRoot } from './workspaces.ts'
+import {
+  MEMORY_DREAM_WORKSPACE,
+  MEMORY_REFLECT_WORKSPACE,
+  DREAM_IDLE_MS,
+  claimDreamLease,
+  finishDreamLease,
+  buildDreamPrompt,
+  buildReflectPrompt,
+  recallMemoryEntries,
+} from './memory-dream.ts'
 import { orchestratorDomain } from './storage.ts'
 import { buildPresetDefinitions, LEAD_PRESET, WORKER_PRESET } from './presets.ts'
 import {
@@ -84,6 +94,12 @@ type DomainType = Domain<typeof orchestratorDomain>
 type DispatchProvision =
   | { ok: true; conv: ConversationRecord; task: TaskRecord }
   | { ok: false; result: unknown }
+
+/** ad-hoc 上报任务（定时提醒/Worker 自发上报）的 prompt 标记：创建与反思过滤共用。 */
+const AD_HOC_TASK_PROMPT = '（定时触发或 Worker 自发上报）'
+
+/** 反思工作量门槛（对齐喵记忆 reflectTurns）：任务内放行的工具步数达到该值才算"干过活"。 */
+const REFLECT_MIN_TOOL_STEPS = 5
 
 /** schedule/changed 在任务创建/更新、删除、投递时都会触发，合并后再核对，避免每轮触发都全量 list。 */
 const SCHEDULE_SYNC_DEBOUNCE_MS = 500
@@ -206,10 +222,21 @@ export class OrchestratorService extends TypertRemoteService {
   private readonly syncedTitles = new Map<string, string>()
   private scheduleSyncTimer: ReturnType<typeof setTimeout> | undefined
   private recoveryTimer: ReturnType<typeof setInterval> | undefined
-  private distillationTimer: ReturnType<typeof setInterval> | undefined
+  /** 记忆 Dream 空闲触发定时器。 */
+  private dreamTimer: ReturnType<typeof setTimeout> | undefined
+  /** 最近用户/Lead 活动时间戳，用于判定空闲。 */
+  private lastActivityAt = Date.now()
+  /** sessionId -> 最近一条用户问题/任务文本（记忆 BM25 召回的 query）。 */
+  private readonly lastUserQuery = new Map<string, string>()
+  /** taskId -> 任务期间放行的工具步数（Worker tools.guard 计数），反思工作量门槛的数据源。 */
+  private readonly taskToolSteps = new Map<string, number>()
 
   constructor(private readonly hostCtx: Context, private readonly configRefs?: OrchestratorConfigRefs) {
     super(hostCtx, 'orchestrator', { namespace: 'orchestrator' })
+    // 代码内兜底设置 DSH_VAULT_PATH（显式环境变量优先，不覆盖）：Lead/Worker/Host
+    // 各处 resolveVaultRoot 与 cordis.patch.yml 的 dsh-obsidian vaultPath 无需人工
+    // setx 即共享同一 vault 根。
+    ensureVaultPathEnv()
     this.markRemote('snapshot')
     this.markRemote('setScheduleStatus')
     this.markRemote('answerTaskQuestions')
@@ -279,12 +306,8 @@ export class OrchestratorService extends TypertRemoteService {
           })
         this.recoveryTimer = setInterval(() => { void this.recoverDeliveries() }, RECOVERY_INTERVAL_MS)
         this.recoveryTimer.unref()
-        // 记忆蒸馏：Host 级后台维护，每小时检查一次，避免依赖 Worker prompt。
-        void this.runMemoryDistillation().catch(error => {
-          this.hostCtx.logger.warn(`orchestrator: initial memory distillation failed: ${String(error)}`)
-        })
-        this.distillationTimer = setInterval(() => { void this.runMemoryDistillation() }, 60 * 60 * 1000)
-        this.distillationTimer.unref()
+        // 记忆 Dream：用户空闲 3h 后触发，优先派发 LLM 整理任务，带 lease 锁避免重复/崩溃残留。
+        this.armDreamTimer()
         return async () => {
           offPreset()
           offCreated()
@@ -292,7 +315,7 @@ export class OrchestratorService extends TypertRemoteService {
           offActivity()
           if (this.scheduleSyncTimer) clearTimeout(this.scheduleSyncTimer)
           if (this.recoveryTimer) clearInterval(this.recoveryTimer)
-          if (this.distillationTimer) clearInterval(this.distillationTimer)
+          if (this.dreamTimer) clearTimeout(this.dreamTimer)
           await this.chain.catch(() => undefined)
           await domain.close()
         }
@@ -335,6 +358,8 @@ export class OrchestratorService extends TypertRemoteService {
   }
 
   private snapshotFor(parentSessionId: string): Snapshot {
+    const parent = this.hostCtx.agents.get(parentSessionId as SessionId)
+    const vaultRoot = parent ? resolveVaultRoot(parent.session.header.cwd ?? process.cwd()) : undefined
     const conversations = [...this.conversations().entries()]
       .map(([, conv]) => conv)
       .filter(conv => conv.parentSessionId === parentSessionId)
@@ -354,7 +379,7 @@ export class OrchestratorService extends TypertRemoteService {
       .filter(item => item.parentSessionId === parentSessionId)
       .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
       .map(item => ({ ...item, conversationTitle: titles.get(item.conversationId) ?? '' }))
-    return { conversations, tasks, schedules }
+    return { conversations, tasks, schedules, ...(vaultRoot ? { vaultRoot } : {}) }
   }
 
   async snapshot(request: { parentSessionId: string }): Promise<Snapshot> {
@@ -515,11 +540,20 @@ export class OrchestratorService extends TypertRemoteService {
       this.keep(agent, scoped.systemPrompt.section({ name: sectionName, order: 0, text: '', interpolate: false }))
     }
     this.applyLeadToolAllowlist(agent, scoped)
+    // Lead 会话收到用户消息时：记录活动推迟 Dream，并把问题文本作为记忆召回 query。
+    this.keep(agent, scoped.on('session/event', (session, event) => {
+      if (String(session.id) !== String(agent.session.id)) return
+      const ev = event as unknown as { type?: unknown; data?: { source?: { kind?: unknown } } }
+      if (ev.type === 'user/message' && ev.data?.source?.kind === 'user') {
+        this.noteActivity()
+        this.setLastUserQuery(String(agent.session.id), this.messageQueryOf(ev.data))
+      }
+    }))
     // Obsidian 记忆上下文注入：主控只读，写入统一由 Worker 完成。
     this.keep(agent, scoped.systemPrompt.section({
       name: 'orchestrator:memory-context',
       order: 620,
-      text: () => this.renderMemoryContext(agent.session.header.cwd),
+      text: () => this.renderMemoryContext(String(agent.session.id), agent.session.header.cwd),
     }))
     for (const tool of this.leadTools(agent)) this.keep(agent, scoped.tools.register(tool as any))
   }
@@ -570,7 +604,13 @@ export class OrchestratorService extends TypertRemoteService {
     const scoped = agent.ctx
     // 不做工具白名单裁剪：宿主与用户安装的其他工具（浏览器、MCP、技能等）对 Worker 全部可见；
     // 通用行为约束和 task_update 协议已固化在 WORKER_PRESET 的 persona 中。
-    this.keep(agent, scoped.tools.guard(exec => isWorkerToolForbidden(exec.name)))
+    this.keep(agent, scoped.tools.guard(exec => {
+      const forbidden = isWorkerToolForbidden(exec.name)
+      // 工作量计数：Worker 每次放行的工具调用都记到当前活动任务名下，
+      // 终态后供反思工作量门槛判断（建提醒日程这类事务性轮次只有两三次工具调用）。
+      if (!forbidden) this.noteTaskToolStep(String(agent.session.id))
+      return forbidden
+    }))
     // 遮蔽与 Worker 任务无关的全局系统提示段（DSH 自举开发说明、Web GUI/HMR 说明、
     // 面向终端用户的文件卡片/Markdown 链接指引），每个子会话可省约 2.2k 字符；
     // scoped 同名 section 只影响本子会话，主会话仍保留。
@@ -582,7 +622,7 @@ export class OrchestratorService extends TypertRemoteService {
     this.keep(agent, scoped.systemPrompt.section({
       name: 'orchestrator:memory-context',
       order: 620,
-      text: () => this.renderMemoryContext(agent.session.header.cwd ? dirname(agent.session.header.cwd) : undefined),
+      text: () => this.renderMemoryContext(String(agent.session.id), agent.session.header.cwd ? dirname(agent.session.header.cwd) : undefined),
     }))
     this.keep(agent, scoped.on('session/event', (session, event) => {
       if (String(session.id) !== String(agent.session.id)) return
@@ -590,6 +630,11 @@ export class OrchestratorService extends TypertRemoteService {
       if (ev.type === 'user/message') {
         const kind = ev.data?.source?.kind
         if (typeof kind === 'string') this.lastInboundSource.set(String(agent.session.id), kind)
+        const conv = this.conversationByChild(String(agent.session.id))
+        if (kind === 'user' && conv?.workspaceName !== MEMORY_DREAM_WORKSPACE && conv?.workspaceName !== MEMORY_REFLECT_WORKSPACE) {
+          this.noteActivity()
+          this.setLastUserQuery(String(agent.session.id), this.messageQueryOf(ev.data))
+        }
         return
       }
       if (ev.type === 'todo/write') {
@@ -701,49 +746,97 @@ export class OrchestratorService extends TypertRemoteService {
   }
 
   /**
-   * 记忆注入钩子：会话建立时只读取共享 vault 根下的 USER.md + MEMORY.md，
-   * 注入 persona 作为记忆上下文。缺失文件静默跳过；读取失败降级为空段，
-   * 不阻塞会话启动；严格控制长度，整体压缩在 3 行左右。
+   * 记忆注入钩子：USER.md（用户画像）静态全文注入；MEMORY.md 按当前问题做关键词召回
+   * （query 取该会话最近一条用户问题/任务文本，进程内分词计分，无外部依赖）。
+   * 无查询或没有命中时退回静态头部截断。缺失文件静默跳过；读取失败降级为空段。
    *
-   * 注意：dsh runtime 的 system-prompt 服务目前只支持同步 text 函数，因此本方法保持同步。
+   * 注意：dsh runtime 的 system-prompt 服务目前只支持同步 text 函数，因此召回保持同步，
+   * 不能用 obsidian_search 工具（那是模型侧的异步工具）。
    */
-  private renderMemoryContext(rootCwd: string | undefined): string {
+  private renderMemoryContext(sessionId: string, rootCwd: string | undefined): string {
     const vaultRoot = resolveVaultRoot(rootCwd ?? process.cwd())
-    const files = ['USER.md', 'MEMORY.md']
-    const MAX_FILE_CHARS = 1200
     const parts: string[] = []
-    for (const rel of files) {
-      let text = ''
-      try {
-        text = readFileSync(join(vaultRoot, rel), 'utf8')
-      } catch {
-        text = ''
-      }
-      const trimmed = text.trim().replace(/\s+/g, ' ')
-      if (!trimmed) continue
-      parts.push(`${rel}：${trimmed.slice(0, MAX_FILE_CHARS)}${trimmed.length > MAX_FILE_CHARS ? '…' : ''}`)
+    const userText = this.readVaultText(vaultRoot, 'USER.md')
+    if (userText) parts.push(`USER.md：${userText}`)
+    const memoryLines = this.readVaultLines(vaultRoot, 'MEMORY.md')
+    if (memoryLines.length > 0) {
+      const recalled = recallMemoryEntries(memoryLines, this.lastUserQuery.get(sessionId))
+        .map(line => line.slice(0, 200))
+      parts.push(`MEMORY.md：${(recalled.length > 0 ? recalled : memoryLines).join('\n').slice(0, 1200)}`)
     }
     if (parts.length === 0) return ''
     return `# 记忆上下文\n${parts.join('\n')}`
   }
 
+  /** 读 vault 根下文件并压成单行文本（静态注入用），缺失/为空返回空串。 */
+  private readVaultText(vaultRoot: string, rel: string, max = 1200): string {
+    try {
+      const text = readFileSync(join(vaultRoot, rel), 'utf8').trim()
+      if (!text) return ''
+      const collapsed = text.replace(/\s+/g, ' ')
+      return collapsed.slice(0, max) + (collapsed.length > max ? '…' : '')
+    } catch {
+      return ''
+    }
+  }
+
+  /** 读 vault 根下文件并按行拆成记忆条目（一行一条事实，去掉列表符与标题）。 */
+  private readVaultLines(vaultRoot: string, rel: string): string[] {
+    try {
+      return readFileSync(join(vaultRoot, rel), 'utf8')
+        .split('\n')
+        .map(line => line.trim().replace(/^[-*]\s*/, '').replace(/\s+/g, ' '))
+        .filter(line => line.length > 0 && !line.startsWith('#'))
+    } catch {
+      return []
+    }
+  }
+
+  /** 记录会话最近一条用户问题/任务文本（记忆召回 query），超容量时淘汰最早条目。 */
+  private setLastUserQuery(sessionId: string, query: string): void {
+    const trimmed = query.trim().slice(0, 400)
+    if (!trimmed) return
+    if (this.lastUserQuery.size >= 100) {
+      const oldest = this.lastUserQuery.keys().next().value
+      if (oldest !== undefined) this.lastUserQuery.delete(oldest)
+    }
+    this.lastUserQuery.set(sessionId, trimmed)
+  }
+
+  /** user/message 事件的 data 即消息本体：抽取 text 内容片段。 */
+  private messageQueryOf(data: unknown): string {
+    const rec = data as { content?: Array<{ type?: unknown; text?: unknown }> } | undefined
+    if (!rec || !Array.isArray(rec.content)) return ''
+    return rec.content
+      .filter(item => item && item.type === 'text' && typeof item.text === 'string')
+      .map(item => item.text as string)
+      .join(' ')
+  }
+
   /**
-   * Host 级记忆蒸馏维护任务：每小时检查一次近 7 日 memory/YYYY-MM-DD.md，
-   * 把未标注 [distilled] 的原始条目追加到 MEMORY.md，并在原文件标注 [distilled]，
-   * 最后在 DREAMS.md 写审计记录。不依赖 Worker prompt，失败只告警不阻塞。
+   * Host 级机械蒸馏（纯 Node.js，不经 LLM），补齐图片要求的 6 项操作：
+   * 1) 收集近 7 日 memory/*.md 未标注 [distilled] 的行，汇总到 memory/pending.md，源行标注 [distilled]；
+   * 2) MEMORY.md 行级精确去重（归一化后相同的合并，语义合并留给语义提炼步）；
+   * 3) memory/ 超过 14 天且已整文件蒸馏的移入 memory/archive/，归档文件头部标 [distilled]；
+   * 4) DREAMS.md 只保留最近 50 条审计，旧的移入 DREAMS.archive.md；
+   * 5) 检查 kb_vault/<session_id>/00-会话归档总览索引.md 完整性，缺失记 warn；
+   * 6) 返回 pending 条目数（idle Dream 据此决定是否派发语义提炼）。
+   * 语义提炼（pending.md → 长期记忆）由 idle Dream 派发 silent Worker 完成；无 Lead 时调用方机械兜底。
    */
-  private async runMemoryDistillation(): Promise<void> {
+  private async runMemoryDistillation(): Promise<number> {
     const vaultRoot = resolveVaultRoot(process.cwd())
+    const memoryDir = join(vaultRoot, 'memory')
     const today = new Date()
     const dates: string[] = []
     for (let i = 0; i < 7; i++) {
       const d = new Date(today.getTime() - i * 86_400_000)
       dates.push(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`)
     }
-    let totalDistilled = 0
+    // 1) 收集待蒸馏条目 → pending.md，源行标注 [distilled]
+    let collected = 0
     const sources: string[] = []
     for (const date of dates) {
-      const filePath = join(vaultRoot, 'memory', `${date}.md`)
+      const filePath = join(memoryDir, `${date}.md`)
       let text = ''
       try { text = await readFile(filePath, 'utf8') } catch { continue }
       const lines = text.split('\n')
@@ -751,7 +844,7 @@ export class OrchestratorService extends TypertRemoteService {
       const rewritten: string[] = []
       for (const line of lines) {
         const trimmed = line.trim()
-        if (!trimmed || trimmed.startsWith('#') || trimmed.includes('[distilled]')) {
+        if (!trimmed || trimmed.startsWith('#') || trimmed.includes('[distilled]') || trimmed === '[distilled]') {
           rewritten.push(line)
           continue
         }
@@ -759,26 +852,156 @@ export class OrchestratorService extends TypertRemoteService {
         rewritten.push(`${line} [distilled]`)
       }
       if (pending.length === 0) continue
-      const memoryPath = join(vaultRoot, 'MEMORY.md')
-      const appendix = pending.map(entry => `- ${entry}`).join('\n') + '\n\n'
-      await this.withMemoryWriteLock(memoryPath, async () => {
-        await mkdir(join(vaultRoot, 'memory'), { recursive: true })
-        await appendFile(memoryPath, appendix)
-      })
       await this.withMemoryWriteLock(filePath, async () => {
         await writeFile(filePath, rewritten.join('\n'))
       })
-      totalDistilled += pending.length
+      await this.withMemoryWriteLock(join(memoryDir, 'pending.md'), async () => {
+        await mkdir(memoryDir, { recursive: true })
+        await appendFile(join(memoryDir, 'pending.md'), pending.map(entry => `- ${entry}`).join('\n') + '\n')
+      })
+      collected += pending.length
       sources.push(`${date}.md:${pending.length}`)
     }
-    if (totalDistilled > 0) {
-      const dreamsPath = join(vaultRoot, 'DREAMS.md')
-      const audit = `- ${new Date().toISOString()}: 从 memory/${sources.join(', ')} 提炼 ${totalDistilled} 条进 MEMORY.md\n`
-      await this.withMemoryWriteLock(dreamsPath, async () => {
-        await appendFile(dreamsPath, audit)
+    // 2) MEMORY.md 行级精确去重（归一化相同 → 保留最后一次出现的文本，位置取首次出现）
+    await this.dedupeMemoryMd(vaultRoot)
+    // 3) memory/ 旧文件归档轮转
+    await this.archiveOldMemoryFiles(memoryDir, 14)
+    // 4) DREAMS.md 审计轮转
+    await this.rotateDreamsAudit(vaultRoot, 50)
+    // 5) 索引完整性检查
+    await this.checkVaultIndexes(vaultRoot)
+    if (collected > 0) {
+      const audit = `- ${new Date().toISOString()}: Host 机械蒸馏：收集 ${collected} 条待蒸馏（${sources.join(', ')}），待语义提炼\n`
+      await this.withMemoryWriteLock(join(vaultRoot, 'DREAMS.md'), async () => {
+        await appendFile(join(vaultRoot, 'DREAMS.md'), audit)
       })
-      this.hostCtx.logger.info(`orchestrator: distilled ${totalDistilled} memory entries into MEMORY.md`)
+      this.hostCtx.logger.info(`orchestrator: collected ${collected} memory entries into pending.md`)
     }
+    return collected
+  }
+
+  /** MEMORY.md 行级去重：归一化（去列表符/空白/大小写）后相同的行只保留最后一次出现的文本。 */
+  private async dedupeMemoryMd(vaultRoot: string): Promise<void> {
+    const memoryPath = join(vaultRoot, 'MEMORY.md')
+    let text = ''
+    try { text = await readFile(memoryPath, 'utf8') } catch { return }
+    const lines = text.split('\n')
+    const normalize = (line: string): string => line.trim().replace(/^[-*]\s*/, '').replace(/\s+/g, '').toLowerCase()
+    const lastText = new Map<string, string>()
+    const order: string[] = []
+    for (const line of lines) {
+      const trimmed = line.trim()
+      if (!trimmed || trimmed.startsWith('#')) continue
+      const key = normalize(line)
+      if (!lastText.has(key)) order.push(key)
+      lastText.set(key, trimmed.replace(/^[-*]\s*/, ''))
+    }
+    if (order.length === 0) return
+    const deduped = order.map(key => `- ${lastText.get(key)}`).join('\n') + '\n'
+    if (deduped === text) return
+    await this.withMemoryWriteLock(memoryPath, async () => {
+      await writeFile(memoryPath, deduped)
+    })
+    this.hostCtx.logger.info(`orchestrator: MEMORY.md deduped ${lines.length} -> ${order.length} entries`)
+  }
+
+  /** memory/ 归档轮转：文件名日期超过 keepDays 且整文件已蒸馏的移入 memory/archive/，头部标 [distilled]。 */
+  private async archiveOldMemoryFiles(memoryDir: string, keepDays: number): Promise<void> {
+    let entries: Array<{ name: string; isFile: boolean }>
+    try {
+      entries = (await readdir(memoryDir, { withFileTypes: true })).map(d => ({ name: d.name, isFile: d.isFile() }))
+    } catch {
+      return
+    }
+    const cutoff = Date.now() - keepDays * 86_400_000
+    for (const entry of entries) {
+      if (!entry.isFile || !/^\d{4}-\d{2}-\d{2}\.md$/.test(entry.name)) continue
+      const dateMs = new Date(entry.name.replace('.md', '')).getTime()
+      if (Number.isNaN(dateMs) || dateMs > cutoff) continue
+      const filePath = join(memoryDir, entry.name)
+      const text = await readFile(filePath, 'utf8').catch(() => '')
+      // 只归档已整文件蒸馏的：所有实质行都带 [distilled] 标注
+      const substantive = text.split('\n').filter(line => {
+        const t = line.trim()
+        return t && !t.startsWith('#') && t !== '[distilled]'
+      })
+      if (substantive.length === 0 || !substantive.every(line => line.includes('[distilled]'))) continue
+      const archiveDir = join(memoryDir, 'archive')
+      await mkdir(archiveDir, { recursive: true })
+      await this.withMemoryWriteLock(join(archiveDir, entry.name), async () => {
+        await rename(filePath, join(archiveDir, entry.name)).catch(async error => {
+          // rename 失败（跨设备等）退化为复制语义：写新文件后删旧文件
+          this.hostCtx.logger.warn(`orchestrator: memory archive rename failed, fallback write: ${String(error)}`)
+          await writeFile(join(archiveDir, entry.name), `[distilled]\n${text}`)
+        })
+      })
+      // 归档文件头部补 [distilled] 标注
+      await this.withMemoryWriteLock(join(archiveDir, entry.name), async () => {
+        const archived = await readFile(join(archiveDir, entry.name), 'utf8').catch(() => '')
+        if (!archived.startsWith('[distilled]')) {
+          await writeFile(join(archiveDir, entry.name), `[distilled]\n${archived}`)
+        }
+      })
+      this.hostCtx.logger.info(`orchestrator: archived memory/${entry.name}`)
+    }
+  }
+
+  /** DREAMS.md 审计轮转：只保留最近 keep 条审计行，旧的追加进 DREAMS.archive.md。 */
+  private async rotateDreamsAudit(vaultRoot: string, keep: number): Promise<void> {
+    const dreamsPath = join(vaultRoot, 'DREAMS.md')
+    let text = ''
+    try { text = await readFile(dreamsPath, 'utf8') } catch { return }
+    const lines = text.split('\n')
+    const auditLines = lines.filter(line => line.trim().startsWith('- '))
+    if (auditLines.length <= keep) return
+    const overflow = auditLines.slice(0, auditLines.length - keep)
+    await this.withMemoryWriteLock(join(vaultRoot, 'DREAMS.archive.md'), async () => {
+      await appendFile(join(vaultRoot, 'DREAMS.archive.md'), overflow.join('\n') + '\n')
+    })
+    // 按出现顺序逐个移除 overflow 行（避免内容相同的审计行被误全删）
+    let removeIndex = 0
+    const kept = lines.filter(line => removeIndex < overflow.length && line === overflow[removeIndex] ? (removeIndex++, false) : true)
+    await this.withMemoryWriteLock(dreamsPath, async () => {
+      await writeFile(dreamsPath, kept.join('\n'))
+    })
+    this.hostCtx.logger.info(`orchestrator: rotated ${overflow.length} DREAMS.md audit lines to DREAMS.archive.md`)
+  }
+
+  /** 索引完整性检查：kb_vault/<session_id>/ 缺 00-会话归档总览索引.md 时记 warn。 */
+  private async checkVaultIndexes(vaultRoot: string): Promise<void> {
+    let entries: Array<{ name: string; isDirectory: boolean }>
+    try {
+      entries = (await readdir(vaultRoot, { withFileTypes: true })).map(d => ({ name: d.name, isDirectory: d.isDirectory() }))
+    } catch {
+      return
+    }
+    for (const entry of entries) {
+      if (!entry.isDirectory) continue
+      if (['memory', 'assets'].includes(entry.name)) continue
+      const indexPath = join(vaultRoot, entry.name, '00-会话归档总览索引.md')
+      try {
+        await readFile(indexPath, 'utf8')
+      } catch {
+        this.hostCtx.logger.warn(`orchestrator: kb_vault/${entry.name}/ 缺少 00-会话归档总览索引.md`)
+      }
+    }
+  }
+
+  /** 读取 memory/pending.md 的待语义提炼条目（空文件或缺失返回空数组）。 */
+  private async readPendingEntries(vaultRoot: string): Promise<string[]> {
+    let text = ''
+    try { text = await readFile(join(vaultRoot, 'memory', 'pending.md'), 'utf8') } catch { return [] }
+    return text.split('\n')
+      .map(line => line.trim().replace(/^[-*]\s*/, ''))
+      .filter(line => line.length > 0)
+  }
+
+  /** 清空 memory/pending.md（语义提炼任务结算后调用；无 Lead 机械兜底后也调用）。 */
+  private async clearPendingEntries(vaultRoot: string): Promise<void> {
+    await this.withMemoryWriteLock(join(vaultRoot, 'memory', 'pending.md'), async () => {
+      await mkdir(join(vaultRoot, 'memory'), { recursive: true })
+      await writeFile(join(vaultRoot, 'memory', 'pending.md'), '')
+    }).catch(() => undefined)
   }
 
   /**
@@ -796,6 +1019,156 @@ export class OrchestratorService extends TypertRemoteService {
         this.memoryWriteLocks.delete(filePath)
       }
     }
+  }
+
+  /** 用户/Lead 活动发生时调用，推迟 Dream 到下一次 3h 空闲。 */
+  private noteActivity(): void {
+    this.lastActivityAt = Date.now()
+    this.armDreamTimer()
+  }
+
+  private armDreamTimer(): void {
+    if (this.dreamTimer) clearTimeout(this.dreamTimer)
+    const elapsed = Date.now() - this.lastActivityAt
+    const delay = Math.max(0, DREAM_IDLE_MS - elapsed)
+    this.dreamTimer = setTimeout(() => { void this.runDream() }, delay)
+    this.dreamTimer.unref?.()
+  }
+
+  /**
+   * Idle Dream（图片要求的分工）：空闲 3h 后抢占 lease →
+   * Host 机械蒸馏（收集→pending.md、去重、归档、轮转、索引检查）→
+   * pending 非空且有 Lead 在线时派 silent Worker 只做最后一步语义提炼 →
+   * 无 Lead 或派发失败时机械兜底（条目直接进 MEMORY.md，保证不丢）。
+   * LLM 路径的 lease 与 pending.md 清理由 memory-dream 任务终态结算完成。
+   * 每次触发后以当下时间重置活动基线，避免空闲期反复触发。
+   */
+  private async runDream(): Promise<void> {
+    const idle = Date.now() - this.lastActivityAt
+    if (idle < DREAM_IDLE_MS) {
+      this.armDreamTimer()
+      return
+    }
+    const vaultRoot = resolveVaultRoot(process.cwd())
+    await mkdir(vaultRoot, { recursive: true })
+    const owner = `orchestrator:${process.pid}:${randomUUID()}`
+    const claimed = await claimDreamLease(vaultRoot, owner)
+    if (!claimed) {
+      this.hostCtx.logger.info('orchestrator: dream skipped, lease held')
+      this.settleDreamRound()
+      return
+    }
+    this.hostCtx.logger.info('orchestrator: idle dream started')
+    try {
+      await this.runMemoryDistillation()
+    } catch (error) {
+      this.hostCtx.logger.warn(`orchestrator: mechanical distillation failed: ${String(error)}`)
+    }
+    const pending = await this.readPendingEntries(vaultRoot)
+    let dispatched = false
+    if (pending.length > 0) {
+      const target = this.dreamDispatchTarget()
+      if (target) {
+        try {
+          const result = await this.dispatch({
+            subject: '记忆语义提炼 Dream',
+            workspaceName: MEMORY_DREAM_WORKSPACE,
+            prompt: buildDreamPrompt(vaultRoot),
+            ...target.conversationId ? { conversationId: target.conversationId } : {},
+            silent: true,
+          }, target.agent)
+          dispatched = (result as { kind?: unknown }).kind !== 'error'
+          if (!dispatched) this.hostCtx.logger.warn(`orchestrator: dream dispatch rejected: ${toJson(result)}`)
+        } catch (error) {
+          this.hostCtx.logger.warn(`orchestrator: dream dispatch failed: ${String(error)}`)
+        }
+      } else {
+        this.hostCtx.logger.info('orchestrator: no lead agent online, dream falls back to mechanical append')
+      }
+      if (!dispatched) {
+        // 机械兜底：pending 条目直接进 MEMORY.md，保证信息不丢；完成后清空 pending 并释放 lease。
+        try {
+          await this.withMemoryWriteLock(join(vaultRoot, 'MEMORY.md'), async () => {
+            await appendFile(join(vaultRoot, 'MEMORY.md'), pending.map(entry => `- ${entry}`).join('\n') + '\n')
+          })
+          const audit = `- ${new Date().toISOString()}: 无 Lead 在线，${pending.length} 条 pending 机械追加进 MEMORY.md\n`
+          await this.withMemoryWriteLock(join(vaultRoot, 'DREAMS.md'), async () => {
+            await appendFile(join(vaultRoot, 'DREAMS.md'), audit)
+          })
+        } catch (error) {
+          this.hostCtx.logger.warn(`orchestrator: mechanical fallback append failed: ${String(error)}`)
+        }
+        await this.clearPendingEntries(vaultRoot)
+        await finishDreamLease(vaultRoot)
+      }
+    } else {
+      // 无待提炼条目：直接释放 lease。
+      await finishDreamLease(vaultRoot)
+    }
+    if (dispatched) {
+      // LLM 语义提炼异步进行，lease 与 pending.md 清理留给 memory-dream 任务终态结算。
+      this.settleDreamRound()
+      return
+    }
+    this.settleDreamRound()
+  }
+
+  /** 一轮 Dream 收尾：重置活动基线（整理本身算维护活动），重挂 3h 计时器。 */
+  private settleDreamRound(): void {
+    this.lastActivityAt = Date.now()
+    this.armDreamTimer()
+  }
+
+  /** Dream 派发目标：最近更新的受管会话所属的 Lead agent，并尽量复用该父会话下最近的 memory-dream 子会话。 */
+  private dreamDispatchTarget(): { agent: Agent; conversationId?: string } | undefined {
+    let latest: ConversationRecord | undefined
+    for (const [, conv] of this.conversations().entries()) {
+      if (!latest || conv.updatedAt > latest.updatedAt) latest = conv
+    }
+    if (!latest) return undefined
+    const agent = this.hostCtx.agents.get(latest.parentSessionId as SessionId)
+    if (!agent) return undefined
+    let dreamConv: ConversationRecord | undefined
+    for (const [, conv] of this.conversations().entries()) {
+      if (conv.parentSessionId !== latest.parentSessionId || conv.workspaceName !== MEMORY_DREAM_WORKSPACE) continue
+      if (!dreamConv || conv.updatedAt > dreamConv.updatedAt) dreamConv = conv
+    }
+    return { agent, conversationId: dreamConv?.id }
+  }
+
+  /** Worker 工具守卫计数：把本次放行的工具调用记到该子会话当前活动任务名下。 */
+  private noteTaskToolStep(childSessionId: string): void {
+    const taskId = this.conversationByChild(childSessionId)?.activeTaskId
+    if (!taskId) return
+    this.taskToolSteps.set(taskId, (this.taskToolSteps.get(taskId) ?? 0) + 1)
+  }
+
+  /**
+   * 非记忆维护任务终态后，静默派发 memory-reflect 让 Worker 写当日运行记录。
+   * 约束：1) 记忆维护任务自身不触发；2) 任务必须有实质产出（闲聊/空跑跳过）；
+   * 3) ad-hoc 提醒/自发上报任务不触发；4) 工作量门槛：任务内放行的工具步数达到
+   * REFLECT_MIN_TOOL_STEPS 才算干过活（对齐喵记忆 reflectTurns 的工作量驱动）——
+   * 创建提醒日程等事务性任务只有两三次工具调用，产出不含新知识，不派发反思；
+   * 有制品的任务不受此限（产出即证据）。
+   */
+  private queueMemoryReflection(task: TaskRecord, conv: ConversationRecord, toolSteps: number): void {
+    if (task.silent) return
+    if (task.prompt === AD_HOC_TASK_PROMPT) return
+    // 过滤无实质产出的任务：闲聊/空跑不需要 reflect
+    const hasResult = !!(task.report?.result?.trim() || task.report?.artifacts?.length)
+    if (!hasResult) return
+    if (toolSteps < REFLECT_MIN_TOOL_STEPS && !task.report?.artifacts?.length) return
+    const agent = this.hostCtx.agents.get(conv.parentSessionId as SessionId)
+    if (!agent) return
+    const subject = `记忆反思：${task.subject}`
+    this.dispatch({
+      subject: subject.slice(0, 200),
+      workspaceName: MEMORY_REFLECT_WORKSPACE,
+      prompt: buildReflectPrompt(task),
+      silent: true,
+    }, agent).catch(error => {
+      this.hostCtx.logger.warn(`orchestrator: queue memory reflect failed: ${String(error)}`)
+    })
   }
 
   private leadTools(agent: Agent) {
@@ -905,6 +1278,7 @@ export class OrchestratorService extends TypertRemoteService {
     if (!parsed.success) return { kind: 'error', error: parsed.error.issues[0]?.message ?? 'invalid orchestrator_dispatch arguments' }
     const args: DispatchInput = parsed.data
     const parentSessionId = String(parent.session.id)
+    if (!args.silent) this.noteActivity()
 
     let provisioned: DispatchProvision
     try {
@@ -1163,6 +1537,11 @@ export class OrchestratorService extends TypertRemoteService {
    * 与 dsh-schedule 的提醒投递是同一机制。
    */
   private async deliverToWorker(childSessionId: string, text: string, summary: string): Promise<void> {
+    // 派发文本即该 Worker 会话当前的"问题"，用于记忆 BM25 召回；记忆维护会话排除在外。
+    const conv = this.conversationByChild(childSessionId)
+    if (conv?.workspaceName !== MEMORY_DREAM_WORKSPACE && conv?.workspaceName !== MEMORY_REFLECT_WORKSPACE) {
+      this.setLastUserQuery(childSessionId, text)
+    }
     await this.withAgent(childSessionId, async (agent) => {
       const message = createUserMessage({
         content: [{ type: 'text', text }],
@@ -1272,7 +1651,7 @@ export class OrchestratorService extends TypertRemoteService {
           conversationId: conv.id,
           predecessorTaskId: conv.lastTaskId,
           subject,
-          prompt: '（定时触发或 Worker 自发上报）',
+          prompt: AD_HOC_TASK_PROMPT,
         })
         // 定时触发的入站消息带 source.kind='schedule'，据此给上报任务打定时标记（仅显示用）。
         const marked = this.lastInboundSource.get(childSessionId) === 'schedule'
@@ -1303,6 +1682,29 @@ export class OrchestratorService extends TypertRemoteService {
       return { ok: true as const, status: task.status, schedules: scheduleProjection(this.schedulesOf(conv.id)), __inputRequired__: isInputRequired ? task : undefined }
     })
     if (shouldDeliver && terminalTaskId) void this.deliverPendingTask(terminalTaskId)
+    if (terminalTaskId) {
+      const task = this.taskById(terminalTaskId)
+      const conv = task ? this.conversationById(task.conversationId) : undefined
+      // 工具步数随任务终态消费，成功/失败/中断都清理，不留脏数据。
+      const toolSteps = this.taskToolSteps.get(terminalTaskId) ?? 0
+      this.taskToolSteps.delete(terminalTaskId)
+      if (task && conv) {
+        if (conv.workspaceName === MEMORY_DREAM_WORKSPACE) {
+          const vaultRoot = resolveVaultRoot(process.cwd())
+          if (task.status === 'completed') {
+            // 语义提炼成功结算：清空 pending.md（结果已进长期记忆），释放 lease。
+            this.hostCtx.logger.info('orchestrator: dream task completed, clearing lease and pending.md')
+            await this.clearPendingEntries(vaultRoot)
+          } else {
+            // 提炼失败：保留 pending.md 供下一轮 Dream 重试，仅释放 lease。
+            this.hostCtx.logger.warn(`orchestrator: dream task ended with ${task.status}, keeping pending.md`)
+          }
+          await finishDreamLease(vaultRoot).catch(() => {})
+        } else if (conv.workspaceName !== MEMORY_REFLECT_WORKSPACE && task.status === 'completed' && !task.silent) {
+          this.queueMemoryReflection(task, conv, toolSteps)
+        }
+      }
+    }
     // input_required：工具调用阻塞直到用户从任一入口作答，返回值即用户答案。
     if (result.__inputRequired__) {
       const answers = await this.blockAndWaitForAnswers(result.__inputRequired__, childSessionId)
@@ -1475,6 +1877,7 @@ export class OrchestratorService extends TypertRemoteService {
     answers: Array<{ id: string; selected?: string[]; custom?: string }>
   }): Promise<{ ok: boolean; taskId?: string; error?: string }> {
     await this.ready
+    this.noteActivity()
     const answers: QuestionAnswer[] = (request.answers ?? []).map(answer => ({
       id: answer.id,
       selected: answer.selected ?? [],
@@ -1604,7 +2007,7 @@ export const TASK_UPDATE_TOOL_PARAMETERS = {
     additionalProperties: false,
     properties: {
       result: { type: 'string', required: true, description: '完整结果，Lead 转述给用户的权威答案' },
-      artifacts: { type: 'array', items: { type: 'string' }, description: '用户会要看的产物文件，子工作区相对路径（禁止绝对路径和 ..）' },
+      artifacts: { type: 'array', items: { type: 'string' }, description: '用户会要看的产物文件：子工作区产物用相对路径（如 report.md）；共享知识库产物用 kb_vault/ 开头的主工作区相对路径（如 kb_vault/<session_id>/assets/原件.pdf）；禁止绝对路径和 ..' },
     },
     description: 'completed 时必填：最终结果与产物',
   },

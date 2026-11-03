@@ -1,5 +1,5 @@
 import type { ConversationRecord, ScheduleRecord, TaskRecord } from './types.ts'
-import { MEMORY_VAULT_DIRNAME } from './workspaces.ts'
+import { MEMORY_VAULT_DIRNAME } from './types.ts'
 
 const blockReasonLabels: Record<string, string> = {
   permission_denied: '权限',
@@ -37,34 +37,20 @@ export const LEAD_PROMPT = `你是用户的主控助理（Lead）：理解需求
 - 提醒类需求先分清主体：到点要**由你/子会话去做事**（查新闻、巡检、汇总）→ 派发并要求 Worker 用 schedule_create；只是**提醒用户本人去做事**（"提醒我 10 点出门"）→ 不要建定时任务，派发轻量任务让 Worker 用 schedules.create 创建带 remindAt 的日程，看板即刻可见、手机端可按 remindAt 提醒。同一件事禁止既建日程又建定时任务。派发时在任务里写清已知时间结构：事项有起止时段（如会议 18:00–22:00）→ 要求填 startAt/endAt；只有结束期限 → 只填 endAt；提醒时刻 → remindAt。时间格式从简（10-27 18:00），年份和时区可省。
 
 # 长期记忆（Obsidian 文件式，kb_vault 根）
-记忆与个人知识库统一存放在共享 vault kb_vault 中，由 dsh-obsidian 工具管理（记忆文件在 vault 根，知识库在 <session_id>/ 下）：
-- USER.md：用户画像与稳定偏好（称呼、职业、居住地、生活习惯、兴趣）
-- MEMORY.md：长期事实、项目关键决策、用户纠正过的教训（一条一行，按关键词/主题分组）
-- memory/YYYY-MM-DD.md：每日运行记录，跨会话临时状态、当日进展、待蒸馏的原始记忆
-- DREAMS.md：蒸馏审计（记录"何时把 memory/ 中哪些条目提炼进了 MEMORY.md"）
-记什么：用户画像与偏好、长期事实、项目关键决策、用户纠正过的教训。临时进度、任务产物路径不记。
-怎么记：一条记忆一个事实，写清关键词、所属项目和重要度；写入前先 obsidian_search 查重，新增由 Worker 用 memory_remember 追加，已有相似条目就更新而不是新增（obsidian_read → 修改 → obsidian_write）。
-谁来记：写入统一由 Worker 完成。闲聊中用户直接说出的稳定信息，你攒着派 silent 轻量任务让 Worker 写入（任务里给出写好的条目内容，不要每句话都派一次）；任务执行中产生的信息由执行它的 Worker 顺手记；主控不要重复记。
-怎么用：回答依赖历史信息时记忆上下文已注入系统提示，不要凭空假设。
-
-# 记忆与知识库的分流
-写数据前先三问定去向：
-- 主语是我、会随状态变化、单条事实 → 记忆：新增由 Worker 用 memory_remember 追加到 USER.md（偏好/状态）或 MEMORY.md（决策/教训）或 memory/YYYY-MM-DD.md，先 obsidian_search 查重再写；更新已有条目用 obsidian_read → 修改 → obsidian_write
-- 主语是外部对象、主题稳定、整篇资料 → 知识库：obsidian_write 到 <session_id>/xx.md，平铺不建主题目录
-- 原文+提炼双形态 → 双写：原文进知识库，提炼出的「我的状态/偏好」进记忆，两条通道各写各的不互相覆盖
-判断优先级：粒度（整篇/单条）优先于主语——整篇资料再个人也进知识库，单条稳定事实再客观也进记忆。
+超出注入范围的记忆/知识库内容，派 silent Worker 用 obsidian_search / memory_read 查。
+记忆写入统一由 Worker 完成：闲聊中用户直接说出的稳定信息，你攒着派 silent 轻量任务让 Worker 写（任务里给出写好的条目内容，不要每句话派一次）；你只路由与转述，不直接读写 vault。
 
 # 边界
 - 用户常在手机端，无法操作本机文件和终端：Worker 失败且带系统阻碍 reasonCode 时只简短说明，给出你能远程完成的方案，不要指导用户手动改文件、跑命令、改配置；邮箱未配置授权码等设置类问题，引导用户在设置面板完成。
 - 登录、扫码、验证码、支付密码必须由用户本人在浏览器/桌面接管，绝不索取或代填；发邮件、删除、支付等对外或不可逆操作须用户明确要求。
 - 面向用户的回复简短自然：不暴露 Worker、子会话等内部概念，不做过程播报，不提前承诺交付物。
 
-# 个人知识库（共享 Obsidian vault kb_vault）
-共享 vault：工作区根下 kb_vault（dsh-obsidian 已配置 vaultPath）。所有会话共享，结构三层：kb_vault/<session_id>/(00-会话归档总览索引.md + 笔记.md + assets/原件)。涉及上传文件归档、查找文件、知识整理类任务派发给 Worker。
+# 个人知识库（共享 Obsidian vault）
+共享 vault：工作区根下 kb_vault（dsh-obsidian 已配置 vaultPath，路径相对 vault 根读写）。所有会话共享，结构三层：<session_id>/(00-会话归档总览索引.md + 笔记.md + assets/原件)。涉及上传文件归档、查找文件、知识整理类任务派发给 Worker。
 归档规则（重要，派发任务时按下述要求写，不要含歧义）：
-- 不做主题子目录：md 一律平铺在 kb_vault/<session_id>/ 下，绝不按主题新建文件夹，绝不在主题目录下建 00-会话归档总览索引.md。
+- 不做主题子目录：md 一律平铺在 <session_id>/ 下，绝不按主题新建文件夹，绝不在主题目录下建 00-会话归档总览索引.md。
 - 主题用数字编号表达：01-09 为第一个主题，10-19 为第二个主题，20-29 为第三个主题……md 文件名以编号开头（如 10-笔记.md）。
-- 00-会话归档总览索引.md 是会话级唯一索引：一个会话仅此一份，wikilink 汇总本会话全部笔记与原件，。
+- 00-会话归档总览索引.md 是会话级唯一索引：一个会话仅此一份，wikilink 汇总本会话全部笔记与原件。
 `
 
 /**
@@ -104,12 +90,12 @@ task_update 是你与用户之间的唯一通道：普通聊天消息不会送�
 任务中产生的跨会话价值信息记入记忆：用户偏好、长期事实、项目结构与决策、用户纠正过的教训；一条一事实，写清关键词、项目和重要度，先 obsidian_search 查重再写。
 记忆文件在共享 vault kb_vault 根下（dsh-obsidian 管理，不用 Write 裸写 md）：
 - USER.md：用户画像与稳定偏好；MEMORY.md：长期事实/决策/教训（一条一行）；memory/YYYY-MM-DD.md：当日运行记录；DREAMS.md：蒸馏审计
-- 新增记忆用 memory_remember 追加到 USER.md / MEMORY.md / memory/YYYY-MM-DD.md，需要历史信息先 obsidian_read USER.md/MEMORY.md，不要凭空假设
+- 新增记忆用 memory_remember 追加：用户画像/偏好 → USER.md，临时进展/当日记录 → memory/YYYY-MM-DD.md；不要直接写 MEMORY.md。需要历史信息先 memory_read USER.md/memory/YYYY-MM-DD.md，不要凭空假设
 - 记忆和 summary 不双写：summary 只放给主控路由用的一句话摘要。
 
 # 记忆与知识库的分流
 写数据前先三问定去向：
-- 主语是我、会随状态变化、单条事实 → 记忆：新增用 memory_remember 追加到 USER.md（偏好/状态）或 MEMORY.md（决策/教训）或 memory/YYYY-MM-DD.md，先 obsidian_search 查重再写；更新已有条目用 obsidian_read → 修改 → obsidian_write
+- 主语是我、会随状态变化、单条事实 → 记忆：新增用 memory_remember 追加到 USER.md（偏好/状态）或 memory/YYYY-MM-DD.md（当日记录），先 memory_search 查重再写；MEMORY.md 由后台 Dream 提炼写入，任务中不要直接写。更新已有条目用 memory_read → 修改 → memory_write
 - 主语是外部对象、主题稳定、整篇资料 → 知识库：obsidian_write 到 <session_id>/xx.md，平铺不建主题目录
 - 原文+提炼双形态 → 双写：原文进知识库，提炼出的「我的状态/偏好」进记忆，两条通道各写各的不互相覆盖
 判断优先级：粒度（整篇/单条）优先于主语——整篇资料再个人也进知识库，单条稳定事实再客观也进记忆。
@@ -147,7 +133,7 @@ kb_vault/                         第1层：vault 根（dsh-obsidian vaultPath �
 ## 交付
 完成时把要给用户看的文件写进 task_update.report.artifacts：
 - 子工作区产物用工作区相对路径（如 "report.md"）
-- vault 产物用主工作区相对路径（含 kb_vault/ 前缀，如 "kb_vault/<session_id>/笔记.md"）
+- vault 产物用主工作区相对路径（含 kb_vault/ 前缀，如 "kb_vault/<session_id>/笔记.md"），这是报告给用户的显示约定，不代表 vault 内读写要加 kb_vault/ 前缀
 
 - 用中文，简洁、结果导向。`
 
@@ -185,11 +171,15 @@ export function deliveryNotice(
   const base = `Orchestrator 后台任务结束：\n- conversationId: ${task.conversationId}\n- 状态：${task.status}\n- 主题：${task.subject}`
   if (task.status === 'completed') {
     const result = task.report?.result ?? ''
-    const artifacts = task.report?.artifacts?.length
-      ? `\n\n制品文件（相对主工作区）：\n${task.report.artifacts.map(a => {
-        const isVault = a.startsWith(`${MEMORY_VAULT_DIRNAME}/`)
-        return `- ${isVault ? a : `${workspaceName ? `${workspaceName}/` : ''}${a}`}`
-      }).join('\n')}`
+    // 来源标记：kb_vault/ 开头是共享知识库产物（用户原件归档等，主工作区相对路径），原样展示；
+    // 其余是子工作区产物，拼工作区前缀。知识库制品用户后续要查原件，不能隐藏。
+    const allArtifacts = task.report?.artifacts ?? []
+    const artifacts = allArtifacts.length
+      ? `\n\n制品文件：\n${allArtifacts.map((a) => {
+          const isVault = a.startsWith(`${MEMORY_VAULT_DIRNAME}/`)
+          const path = isVault || !workspaceName ? a : `${workspaceName}/${a}`
+          return `- [${isVault ? '知识库' : '工作区'}] ${path}`
+        }).join('\n')}`
       : ''
     const pendingSchedules = schedules.filter(schedule => schedule.status === 'pending')
     const todos = pendingSchedules.length > 0

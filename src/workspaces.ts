@@ -1,5 +1,7 @@
 import { stat } from 'node:fs/promises'
+import { homedir } from 'node:os'
 import { resolve, sep, basename, join } from 'node:path'
+import { MEMORY_VAULT_DIRNAME } from './types.ts'
 
 const MAX_NAME_LENGTH = 64
 
@@ -52,8 +54,25 @@ export async function buildChildWorkspace(rootCwd: string, requestedName: string
   throw new Error(`无法为子会话分配工作区目录：${slug} 的可用名称已耗尽`)
 }
 
-/** 记忆库目录名：记忆与个人知识库统一由 dsh-obsidian 管理（kb_vault 内 USER.md/MEMORY.md/memory/每日/DREAMS.md）。 */
-export const MEMORY_VAULT_DIRNAME = 'kb_vault'
+/**
+ * DSH 默认共享 vault 的代码内定位：锚定 dsh 默认工作空间下的
+ * default-workspace/kb_vault（<用户目录>/Documents/deepseek-harness/default-workspace/kb_vault），
+ * 与 cordis.patch.yml 中 dsh-obsidian vaultPath 的默认推导完全一致，双源读写同一 vault，
+ * 不随进程 cwd 漂移（多实例部署时各自 cwd 不同，cwd 推导会分叉到不同目录）。
+ */
+export function defaultVaultPath(): string {
+  return resolve(homedir(), 'Documents', 'deepseek-harness', 'default-workspace', MEMORY_VAULT_DIRNAME)
+}
+
+/**
+ * 进程内兜底设置 DSH_VAULT_PATH：未显式配置时填充 defaultVaultPath()，
+ * 使 Lead/Worker/Host 各处 resolveVaultRoot 与 dsh-obsidian 的 vaultPath
+ * 无需人工 setx 即指向同一 vault 根。只在当前进程生效、不持久化；显式
+ * 环境变量（setx / 启动脚本）始终优先，不会被覆盖。
+ */
+export function ensureVaultPathEnv(): void {
+  if (!process.env.DSH_VAULT_PATH) process.env.DSH_VAULT_PATH = defaultVaultPath()
+}
 
 /**
  * 解析共享 vault 根路径：环境变量 DSH_VAULT_PATH 优先，否则落在主工作区根下。
@@ -64,6 +83,3 @@ export function resolveVaultRoot(workspaceRoot: string): string {
     ? resolve(process.env.DSH_VAULT_PATH)
     : resolve(workspaceRoot, MEMORY_VAULT_DIRNAME)
 }
-
-/** 共享记忆库目录名（meow-memory 的 SQLite 所在目录）。 */
-export const SHARED_MEMORY_DIRNAME = '.dsh-meow'

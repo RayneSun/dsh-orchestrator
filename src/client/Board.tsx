@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { activeTaskStatuses } from '../types.ts'
+import { activeTaskStatuses, MEMORY_VAULT_DIRNAME } from '../types.ts'
 import type { ConversationRecord, ProgressStep, QuestionItem, ScheduleSnapshot, Snapshot, TaskRecord } from '../types.ts'
 
 interface BoardProps {
@@ -363,13 +363,18 @@ function TaskLine({ task, conv, nowMs, onOpenArtifact }: TaskLineProps): React.R
   if (task.acceptanceCriteria) detailSections.push(<div key="ac" className="dsho-detailSec"><b>验收标准</b>：{task.acceptanceCriteria}</div>)
   if (artifacts.length > 0) detailSections.push(<div key="arts" className="dsho-detailSec">
     <b>制品</b>（点击打开）：
-    <div className="dsho-arts">{artifacts.map(artifact => <button
-      key={artifact}
-      type="button"
-      className="dsho-art"
-      title={`${conv.workspaceName ? `${conv.workspaceName}/` : ''}${artifact}`}
-      onClick={() => onOpenArtifact(conv, artifact)}
-    ><FileIcon />{artifact}</button>)}</div>
+    <div className="dsho-arts">{artifacts.map(artifact => {
+      // 来源标记：kb_vault/ 开头是共享知识库产物（用户原件归档，主工作区相对路径），原样展示；
+      // 其余是子工作区产物，展示时拼工作区前缀。
+      const isVault = artifact.startsWith(`${MEMORY_VAULT_DIRNAME}/`)
+      return <button
+        key={artifact}
+        type="button"
+        className="dsho-art"
+        title={isVault ? artifact : `${conv.workspaceName ? `${conv.workspaceName}/` : ''}${artifact}`}
+        onClick={() => onOpenArtifact(conv, artifact)}
+      ><FileIcon />{isVault ? `[知识库] ${artifact}` : artifact}</button>
+    })}</div>
   </div>)
   if (task.delivery?.state === 'pending') detailSections.push(<div key="dp" className="dsho-detailSec dsho-subtle">
     {task.delivery.attempts === 0 ? '正在把结果同步回主会话…' : `同步未成功（已重试 ${task.delivery.attempts} 次，将自动继续）${task.delivery.lastError ? ` · ${task.delivery.lastError}` : ''}`}
@@ -617,7 +622,15 @@ export function Board({ sessionId: propSessionId, useTabInfo, orchestrator, remo
       const opener = remoteEvents.session?.openWorkspacePath
       if (!opener) { showToast('当前环境不支持打开文件'); return }
       if (!conv.workspaceDir) { showToast('缺少工作区路径，无法打开'); return }
-      const path = `${conv.workspaceDir.replace(/\/+$/, '')}/${artifact}`
+      // kb_vault/ 开头是共享知识库产物（主工作区相对路径，含 kb_vault/ 前缀）：
+      // base 取 Host 解析的 vault 根上一级（默认即主工作区根，vault = 主工作区根/kb_vault），
+      // 再拼 artifact 自带的 kb_vault/ 前缀即真实路径；直接拿 vaultRoot 拼会变成 kb_vault/kb_vault 双重前缀。
+      // 其余是子工作区产物，按工作区目录解析。
+      const isVault = artifact.startsWith(`${MEMORY_VAULT_DIRNAME}/`)
+      const base = isVault && snapshot?.vaultRoot
+        ? snapshot.vaultRoot.replace(/[\\/]+$/, '').replace(/[\\/][^\\/]*$/, '')
+        : conv.workspaceDir
+      const path = `${base.replace(/[\\/]+$/, '')}/${artifact}`
       const opened = await opener({ path })
       if (opened?.ok) { showToast(`已打开：${artifact}`); return }
       const revealed = await opener({ path, action: 'reveal' })
@@ -625,7 +638,7 @@ export function Board({ sessionId: propSessionId, useTabInfo, orchestrator, remo
     } catch (err) {
       showToast(`打开失败：${err instanceof Error ? err.message : String(err)}`)
     }
-  }, [remoteEvents, showToast])
+  }, [remoteEvents, showToast, snapshot])
 
   // 用户画勾/取消日程：走 RPC 持久化后立刻刷新看板（用户/Worker 双向同步同一张表）。
   const toggleSchedule = useCallback(async (schedule: ScheduleSnapshot) => {
