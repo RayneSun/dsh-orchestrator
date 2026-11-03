@@ -17,7 +17,7 @@ import { deliveryNotice, questionListText, revisionPrompt, rosterSummarySegment,
 import { type ScheduleServiceLike, type SessionActivityGroup } from './schedule-marks.ts'
 import { toJson } from './json.ts'
 import { isWorkerToolForbidden } from './worker-policy.ts'
-import { LEAD_SUPPRESSED_SECTIONS, leadToolDenyList } from './lead-policy.ts'
+import { LEAD_SUPPRESSED_SECTIONS, leadToolDenyList, unrecognizedGlobalTools } from './lead-policy.ts'
 import { buildLeadMemoryTools, disableLeadMemoryInjection } from './lead-memory.ts'
 import { normalizeProgressSteps } from './progress.ts'
 import { buildChildWorkspace, ensureSharedMemoryLink } from './workspaces.ts'
@@ -518,8 +518,11 @@ export class OrchestratorService extends TypertRemoteService {
       const globalNames = [...new Set(scoped.tools.schemas().map(schema => schema.name))]
       const deny = leadToolDenyList(globalNames)
       if (deny.length > 0) this.keep(agent, scoped.tools.restrict({ deny }))
-      else this.hostCtx.logger.info('orchestrator: lead denylist matched no global tools; skipping restriction')
-      this.hostCtx.logger.info(`orchestrator: lead denylist hid ${deny.length}/${globalNames.length} global tools: ${deny.join(', ')}`)
+      // 工具清单巡检：陌生名字（非自带基线、未命中 deny）主动提醒复查名单。
+      const unrecognized = unrecognizedGlobalTools(globalNames)
+      if (unrecognized.length > 0) {
+        this.hostCtx.logger.warn(`orchestrator: unrecognized global tools visible to Lead: ${unrecognized.join(', ')} — review LEAD_TOOL_DENY in lead-policy.ts`)
+      }
     } catch (error) {
       // 枚举失败时退回无限制，避免主控完全失去工具。
       this.hostCtx.logger.warn(`orchestrator: lead tool denylist failed: ${String(error)}`)

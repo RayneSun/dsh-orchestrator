@@ -41,6 +41,41 @@ export const LEAD_TOOL_DENY = [
   'type_text',
 ] as const
 
+/**
+ * DSH 自带全局工具基线快照（2026-11-03 实测枚举，55 个）。
+ * 用途：Lead 挂载时对比当前注册表——出现在注册表但既不在基线、也未命中 deny
+ * 的名字 = 新装第三方插件（或 DSH 新增自带工具），打 warn 提醒复查
+ * LEAD_TOOL_DENY。本清单只在"发现变化 → 确认归属"时更新，不参与过滤。
+ */
+export const DSH_CORE_TOOL_BASELINE: readonly string[] = [
+  'ask_user_question', 'bash', 'cordis_inspect_list', 'cordis_inspect_query', 'create_goal',
+  'create_worktree', 'edit', 'get_goal', 'glob', 'grep', 'interrupt_agent', 'job_kill',
+  'job_list', 'job_output', 'list_agents', 'list_mcp_resource_templates', 'list_mcp_resources',
+  'list_subagent_models', 'load_workspace_dependencies', 'present', 'pwsh', 'ralph', 'read',
+  'read_image', 'read_mcp_resource', 'schedule_create', 'schedule_delete', 'schedule_list',
+  'schedule_update', 'send_message', 'session_event_read', 'session_event_search',
+  'session_event_trace', 'session_search', 'session_trace', 'skill', 'spawn_teammate',
+  'str_replace_editor', 'team_task_create', 'team_task_get', 'team_task_list',
+  'team_task_update', 'terminal_close', 'terminal_list', 'terminal_open', 'terminal_read',
+  'terminal_send', 'terminal_signal', 'todo_write', 'update_goal', 'wait_agent', 'web_fetch',
+  'web_search', 'working_directory', 'write',
+]
+
+/**
+ * 陌生工具检测：注册表中不在自带基线、也不命中 deny 名单/前缀的名字。
+ * 这些工具当前对 Lead 可见——新装第三方插件会走到这里，触发 warn 提醒。
+ */
+/** 基线外的有意保留项：meow 影子只读（Lead 侧复刻实现，不依赖全局注册）。 */
+export const LEAD_TOOL_KEEP: readonly string[] = ['memory_search', 'memory_read']
+
+export function unrecognizedGlobalTools(registeredNames: readonly string[]): string[] {
+  const baseline = new Set([...DSH_CORE_TOOL_BASELINE, ...LEAD_TOOL_KEEP])
+  return registeredNames.filter(name =>
+    !baseline.has(name)
+    && !(LEAD_TOOL_DENY as readonly string[]).includes(name)
+    && !LEAD_TOOL_DENY_PREFIXES.test(name))
+}
+
 /** 浏览器操控类前缀兜底（browser-skill / ego-browser，未激活也不怕将来出现）。 */
 const LEAD_TOOL_DENY_PREFIXES = /^(bsk|ego)_/
 

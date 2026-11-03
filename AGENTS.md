@@ -93,6 +93,7 @@ dsh plugin --profile web add <tgz 绝对路径>
 
 - Lead：**黑名单裁剪**（0.3.16 起。0.3.13 曾完全放开——浏览器/邮件/记忆写入等执行类工具与手册注入主控上下文，拖慢路由；0.3.15 改 allow 白名单——DSH 升级新增自带工具会被误藏；0.3.16 定稿 deny 第三方黑名单）。denylist 按精确名运行时匹配（工具不存在自动跳过，不会重演 0.3.12 的静默缺失——meow 只读走影子工具，不依赖全局名存在）。memory_search/read 的 meow 检索逻辑在 lead-memory.ts 复刻（getDb/search/readSeen/markSearched/markAccessed/projectCovers），tsdown neverBundle 'meow-memory' 保证与插件共用同一模块实例；剔除 meow 时只删 patch 行 + 依赖，代码自动降级。
 - Worker：`scoped.tools.guard(isWorkerToolForbidden)`（worker-policy.ts）。编排/派生类禁止项见 `workerForbiddenPatterns`（workflow/ralph/orchestrator），直接向用户提问类见 `workerQuestionPatterns`（ask_user 系，命中时引导改走 task_update input_required）；新增"禁止类"工具只改这两张表。子智能体工具由 Worker 预设的 delegation 组显式组合（与平台 standard 预设同款，spawn/fork 后端驻留宿主平面）。
+- **工具清单巡检（每次相关改动必做）**：改 lead-policy/service 工具面相关代码、或 DSH/插件升级后，重新枚举全局工具（扫 DSH core + profile 插件的 defineTool 名字）与 `DSH_CORE_TOOL_BASELINE` 快照对比。运行时也有兜底：Lead 挂载时 `unrecognizedGlobalTools` 发现基线外且未命中 deny 的名字会打 warn。发现新工具 → 确认归属 → 自带的更新基线、第三方的评估加入 LEAD_TOOL_DENY（或确认放行）。用户主动装新插件同样适用。
 - 不要用黑名单裁剪 Worker——用户后装工具（MCP/浏览器/技能）必须默认可用。
 - 会话权限：Worker 在 configureWorker 时切 `danger-full-access`（沙箱全开放+审批 never）：后台无人值守，默认 workspace-write+ask 会把敏感操作永远卡在审批上；Lead 保持默认。**注意**：cordis 4 的 context proxy 对未 inject 的服务属性访问直接抛错（cannot get property without inject），permissionPresets/schedule 这类不在 static inject 里的可选服务必须用 `ctx.get(name)` 访问，否则 silently 失效（权限切换曾因此从未生效，定时标记同步同因）。
 

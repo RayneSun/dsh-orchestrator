@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { LEAD_SUPPRESSED_SECTIONS, LEAD_TOOL_DENY, leadToolDenyList } from '../src/lead-policy.ts'
+import { DSH_CORE_TOOL_BASELINE, LEAD_SUPPRESSED_SECTIONS, LEAD_TOOL_DENY, LEAD_TOOL_KEEP, leadToolDenyList, unrecognizedGlobalTools } from '../src/lead-policy.ts'
 
 describe('Lead 工具黑名单与提示段抑制', () => {
   it('deny 只含第三方执行类：meow 写/管理、qqmail 全家桶、桌面操控', () => {
@@ -12,13 +12,26 @@ describe('Lead 工具黑名单与提示段抑制', () => {
     ].sort())
   })
 
-  it('deny 名单不含 DSH 自带工具与记忆只读', () => {
+  it('deny 名单不含 DSH 自带基线工具与记忆只读', () => {
     for (const name of LEAD_TOOL_DENY) {
-      expect(name.startsWith('memory_') ? name : name).not.toMatch(/^(bash|write|edit|read|glob|grep|web_|todo_|schedule_|session_|job_|terminal_|present|skill)$/)
+      expect(DSH_CORE_TOOL_BASELINE).not.toContain(name)
     }
     expect(LEAD_TOOL_DENY).not.toContain('memory_search')
     expect(LEAD_TOOL_DENY).not.toContain('memory_read')
     expect(LEAD_TOOL_DENY).not.toContain('ask_user_question')
+  })
+
+  it('陌生工具巡检：基线外且未命中 deny 的名字被报告', () => {
+    const registered = [...DSH_CORE_TOOL_BASELINE, 'memory_search', 'memory_read', 'some_new_plugin_tool', 'bsk_x']
+    expect(unrecognizedGlobalTools(registered)).toEqual(['some_new_plugin_tool'])
+    expect(unrecognizedGlobalTools([...DSH_CORE_TOOL_BASELINE, 'memory_search', 'memory_read'])).toEqual([])
+  })
+
+  it('keep 集不与基线/deny 重叠', () => {
+    for (const name of LEAD_TOOL_KEEP) {
+      expect(DSH_CORE_TOOL_BASELINE).not.toContain(name)
+      expect(LEAD_TOOL_DENY).not.toContain(name)
+    }
   })
 
   it('leadToolDenyList 按注册表过滤并按前缀兜底浏览器操控', () => {
