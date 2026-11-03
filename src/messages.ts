@@ -1,4 +1,5 @@
 import type { ConversationRecord, ScheduleRecord, TaskRecord } from './types.ts'
+import { MEMORY_VAULT_DIRNAME } from './workspaces.ts'
 
 const blockReasonLabels: Record<string, string> = {
   permission_denied: '权限',
@@ -49,7 +50,7 @@ export const LEAD_PROMPT = `你是用户的主控助理（Lead）：理解需求
 # 记忆与知识库的分流
 写数据前先三问定去向：
 - 主语是我、会随状态变化、单条事实 → 记忆：新增由 Worker 用 memory_remember 追加到 USER.md（偏好/状态）或 MEMORY.md（决策/教训）或 memory/YYYY-MM-DD.md，先 obsidian_search 查重再写；更新已有条目用 obsidian_read → 修改 → obsidian_write
-- 主语是外部对象、主题稳定、整篇资料 → 知识库：obsidian_write 到 kb_vault/<session_id>/xx.md，平铺不建主题目录
+- 主语是外部对象、主题稳定、整篇资料 → 知识库：obsidian_write 到 <session_id>/xx.md，平铺不建主题目录
 - 原文+提炼双形态 → 双写：原文进知识库，提炼出的「我的状态/偏好」进记忆，两条通道各写各的不互相覆盖
 判断优先级：粒度（整篇/单条）优先于主语——整篇资料再个人也进知识库，单条稳定事实再客观也进记忆。
 
@@ -64,7 +65,7 @@ export const LEAD_PROMPT = `你是用户的主控助理（Lead）：理解需求
 - 不做主题子目录：md 一律平铺在 kb_vault/<session_id>/ 下，绝不按主题新建文件夹，绝不在主题目录下建 00-会话归档总览索引.md。
 - 主题用数字编号表达：01-09 为第一个主题，10-19 为第二个主题，20-29 为第三个主题……md 文件名以编号开头（如 10-笔记.md）。
 - 00-会话归档总览索引.md 是会话级唯一索引：一个会话仅此一份，wikilink 汇总本会话全部笔记与原件，。
-- 每个上传原件有且仅有一个 md，用 obsidian 工具（obsidian_write），原件副本放本 session 的 assets/ 并保留原名。`
+`
 
 /**
  * 固化在 Worker 预设 persona 里的通用约束；每次派发只注入任务本身。
@@ -109,15 +110,9 @@ task_update 是你与用户之间的唯一通道：普通聊天消息不会送�
 # 记忆与知识库的分流
 写数据前先三问定去向：
 - 主语是我、会随状态变化、单条事实 → 记忆：新增用 memory_remember 追加到 USER.md（偏好/状态）或 MEMORY.md（决策/教训）或 memory/YYYY-MM-DD.md，先 obsidian_search 查重再写；更新已有条目用 obsidian_read → 修改 → obsidian_write
-- 主语是外部对象、主题稳定、整篇资料 → 知识库：obsidian_write 到 kb_vault/<session_id>/xx.md，平铺不建主题目录
+- 主语是外部对象、主题稳定、整篇资料 → 知识库：obsidian_write 到 <session_id>/xx.md，平铺不建主题目录
 - 原文+提炼双形态 → 双写：原文进知识库，提炼出的「我的状态/偏好」进记忆，两条通道各写各的不互相覆盖
 判断优先级：粒度（整篇/单条）优先于主语——整篇资料再个人也进知识库，单条稳定事实再客观也进记忆。
-
-# 蒸馏纪律（每日收尾）
-每完成一批任务、或当日结束时，做一次轻量蒸馏（耗时极短，不做大扫除）：
-- 读当日 memory/YYYY-MM-DD.md 中累积的原始记录，把已确认的长期事实/决策/教训提炼进 MEMORY.md（先查重、合并相似条目）
-- 在 DREAMS.md 追加一条审计：日期、来源文件、提炼去向（哪些条目进了 MEMORY.md、哪些已过期丢弃）
-- 蒸馏后当日记录里已固化的条目标注 [distilled]，可保留为原始证据，不做破坏性删除
 
 # 边界
 - 登录、扫码、验证码、密码、支付确认：暂停并通过 input_required 请用户本人接管，绝不索取、记录或代填。
@@ -140,17 +135,19 @@ kb_vault/                         第1层：vault 根（dsh-obsidian vaultPath �
 
 规则：
 - 第2层 session 目录名：用当前 session ID（UUID）；拿不到就用 workspaceName 替代
-- 每个上传原件有且仅有一个 md，写 md 一律用 obsidian_write，不要用 Write 工具裸写——这样 dsh-obsidian 才能索引、支持搜索和 backlinks；path 从 vault 根写：kb_vault/<session_id>/xxx.md
+- 每个上传原件有且仅有一个 md，写 md 一律用 obsidian_write，不要用 Write 工具裸写——这样 dsh-obsidian 才能索引、支持搜索和 backlinks；path 从 vault 根写：<session_id>/xxx.md
 - 原件放入本 session 的 assets/ 时保留原名，md 中引用 assets/文件名
 - 每个 session 根目录必须有「00-会话归档总览索引.md」
 
 ## 用户怎么查文件
-- 用户问"我有什么文件/知识库里有什么"：先 obsidian_list 列你的 session 目录，再 Get-ChildItem 看原件，按主题分组汇总
+- 用户问"我有什么文件/知识库里有什么"：先 obsidian_list 列你的 session 目录，再用 read/glob 列出 assets/ 里的原件，按主题分组汇总
 - 用户要找文件：先 obsidian_search 搜 md 笔记，再按 wikilink 找原件
 - 用户要改原件：直接改原路径文件，改完 obsidian_write 更新材料索引.md 的 updated 日期
 
 ## 交付
-完成时把要给用户看的文件写进 task_update.report.artifacts（vault 内相对路径，如 "<session_id>/Agent评测与测试用例/测试cases.xlsx"）。
+完成时把要给用户看的文件写进 task_update.report.artifacts：
+- 子工作区产物用工作区相对路径（如 "report.md"）
+- vault 产物用主工作区相对路径（含 kb_vault/ 前缀，如 "kb_vault/<session_id>/笔记.md"）
 
 - 用中文，简洁、结果导向。`
 
@@ -189,7 +186,10 @@ export function deliveryNotice(
   if (task.status === 'completed') {
     const result = task.report?.result ?? ''
     const artifacts = task.report?.artifacts?.length
-      ? `\n\n制品文件（相对主工作区）：\n${task.report.artifacts.map(a => `- ${workspaceName ? `${workspaceName}/` : ''}${a}`).join('\n')}`
+      ? `\n\n制品文件（相对主工作区）：\n${task.report.artifacts.map(a => {
+        const isVault = a.startsWith(`${MEMORY_VAULT_DIRNAME}/`)
+        return `- ${isVault ? a : `${workspaceName ? `${workspaceName}/` : ''}${a}`}`
+      }).join('\n')}`
       : ''
     const pendingSchedules = schedules.filter(schedule => schedule.status === 'pending')
     const todos = pendingSchedules.length > 0

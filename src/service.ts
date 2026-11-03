@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { readFileSync } from 'node:fs'
-import { mkdir, rmdir, readFile, appendFile } from 'node:fs/promises'
+import { mkdir, rmdir, readFile, writeFile, appendFile } from 'node:fs/promises'
 import { dirname, join, resolve, sep } from 'node:path'
 import { Context, Service } from '@deepseek-ai/cordis'
 import sz from '@deepseek-ai/schemastery'
@@ -20,7 +20,7 @@ import { toJson } from './json.ts'
 import { isWorkerToolForbidden } from './worker-policy.ts'
 import { LEAD_SUPPRESSED_SECTIONS, LEAD_TOOL_ALLOW } from './lead-policy.ts'
 import { normalizeProgressSteps } from './progress.ts'
-import { buildChildWorkspace, MEMORY_VAULT_DIRNAME } from './workspaces.ts'
+import { buildChildWorkspace, MEMORY_VAULT_DIRNAME, resolveVaultRoot } from './workspaces.ts'
 import { orchestratorDomain } from './storage.ts'
 import { buildPresetDefinitions, LEAD_PRESET, WORKER_PRESET } from './presets.ts'
 import {
@@ -206,6 +206,7 @@ export class OrchestratorService extends TypertRemoteService {
   private readonly syncedTitles = new Map<string, string>()
   private scheduleSyncTimer: ReturnType<typeof setTimeout> | undefined
   private recoveryTimer: ReturnType<typeof setInterval> | undefined
+  private distillationTimer: ReturnType<typeof setInterval> | undefined
 
   constructor(private readonly hostCtx: Context, private readonly configRefs?: OrchestratorConfigRefs) {
     super(hostCtx, 'orchestrator', { namespace: 'orchestrator' })
@@ -278,6 +279,12 @@ export class OrchestratorService extends TypertRemoteService {
           })
         this.recoveryTimer = setInterval(() => { void this.recoverDeliveries() }, RECOVERY_INTERVAL_MS)
         this.recoveryTimer.unref()
+        // 记忆蒸馏：Host 级后台维护，每小时检查一次，避免依赖 Worker prompt。
+        void this.runMemoryDistillation().catch(error => {
+          this.hostCtx.logger.warn(`orchestrator: initial memory distillation failed: ${String(error)}`)
+        })
+        this.distillationTimer = setInterval(() => { void this.runMemoryDistillation() }, 60 * 60 * 1000)
+        this.distillationTimer.unref()
         return async () => {
           offPreset()
           offCreated()
@@ -285,6 +292,7 @@ export class OrchestratorService extends TypertRemoteService {
           offActivity()
           if (this.scheduleSyncTimer) clearTimeout(this.scheduleSyncTimer)
           if (this.recoveryTimer) clearInterval(this.recoveryTimer)
+          if (this.distillationTimer) clearInterval(this.distillationTimer)
           await this.chain.catch(() => undefined)
           await domain.close()
         }
@@ -489,7 +497,8 @@ export class OrchestratorService extends TypertRemoteService {
     await this.resetInstalled(String(agent.session.id))
     // 自动初始化共享 vault（工作区根下仅建 kb_vault 根；session/assets 由归档任务按会话创建）
     try {
-      const vaultRoot = join(agent.session.header.cwd ?? process.cwd(), MEMORY_VAULT_DIRNAME)
+      const workspaceRoot = agent.session.header.cwd ?? process.cwd()
+      const vaultRoot = resolveVaultRoot(workspaceRoot)
       await mkdir(vaultRoot, { recursive: true })
       this.hostCtx.logger.info(`orchestrator: kb_vault ready at ${vaultRoot}`)
     } catch (error) {
@@ -692,19 +701,16 @@ export class OrchestratorService extends TypertRemoteService {
   }
 
   /**
-   * 记忆注入钩子：会话建立时读取共享 vault 根下的记忆文件，注入 persona 作为记忆上下文。
-   * 缺失文件静默跳过；读取失败降级为空段，不阻塞会话启动；超长时按条目截断防膨胀。
+   * 记忆注入钩子：会话建立时只读取共享 vault 根下的 USER.md + MEMORY.md，
+   * 注入 persona 作为记忆上下文。缺失文件静默跳过；读取失败降级为空段，
+   * 不阻塞会话启动；严格控制长度，整体压缩在 3 行左右。
    *
    * 注意：dsh runtime 的 system-prompt 服务目前只支持同步 text 函数，因此本方法保持同步。
    */
   private renderMemoryContext(rootCwd: string | undefined): string {
-    const vaultRoot = join(rootCwd ?? process.cwd(), MEMORY_VAULT_DIRNAME)
-    const recentDayKeys = Array.from({ length: 3 }, (_, i) => {
-      const d = new Date(Date.now() - (i + 1) * 86_400_000)
-      return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
-    })
-    const files = ['USER.md', 'MEMORY.md', ...recentDayKeys.map(d => `memory/${d}.md`), 'DREAMS.md']
-    const MAX_FILE_CHARS = 4000
+    const vaultRoot = resolveVaultRoot(rootCwd ?? process.cwd())
+    const files = ['USER.md', 'MEMORY.md']
+    const MAX_FILE_CHARS = 1200
     const parts: string[] = []
     for (const rel of files) {
       let text = ''
@@ -713,12 +719,66 @@ export class OrchestratorService extends TypertRemoteService {
       } catch {
         text = ''
       }
-      const trimmed = text.trim()
+      const trimmed = text.trim().replace(/\s+/g, ' ')
       if (!trimmed) continue
-      parts.push(`## ${rel}\n${truncateByEntries(trimmed, MAX_FILE_CHARS)}`)
+      parts.push(`${rel}：${trimmed.slice(0, MAX_FILE_CHARS)}${trimmed.length > MAX_FILE_CHARS ? '…' : ''}`)
     }
     if (parts.length === 0) return ''
-    return `# 记忆上下文（${MEMORY_VAULT_DIRNAME} 根，跨会话共享；可用 obsidian_read 读全文）\n${parts.join('\n\n')}`
+    return `# 记忆上下文\n${parts.join('\n')}`
+  }
+
+  /**
+   * Host 级记忆蒸馏维护任务：每小时检查一次近 7 日 memory/YYYY-MM-DD.md，
+   * 把未标注 [distilled] 的原始条目追加到 MEMORY.md，并在原文件标注 [distilled]，
+   * 最后在 DREAMS.md 写审计记录。不依赖 Worker prompt，失败只告警不阻塞。
+   */
+  private async runMemoryDistillation(): Promise<void> {
+    const vaultRoot = resolveVaultRoot(process.cwd())
+    const today = new Date()
+    const dates: string[] = []
+    for (let i = 0; i < 7; i++) {
+      const d = new Date(today.getTime() - i * 86_400_000)
+      dates.push(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`)
+    }
+    let totalDistilled = 0
+    const sources: string[] = []
+    for (const date of dates) {
+      const filePath = join(vaultRoot, 'memory', `${date}.md`)
+      let text = ''
+      try { text = await readFile(filePath, 'utf8') } catch { continue }
+      const lines = text.split('\n')
+      const pending: string[] = []
+      const rewritten: string[] = []
+      for (const line of lines) {
+        const trimmed = line.trim()
+        if (!trimmed || trimmed.startsWith('#') || trimmed.includes('[distilled]')) {
+          rewritten.push(line)
+          continue
+        }
+        pending.push(trimmed.replace(/^[-*]\s*/, ''))
+        rewritten.push(`${line} [distilled]`)
+      }
+      if (pending.length === 0) continue
+      const memoryPath = join(vaultRoot, 'MEMORY.md')
+      const appendix = pending.map(entry => `- ${entry}`).join('\n') + '\n\n'
+      await this.withMemoryWriteLock(memoryPath, async () => {
+        await mkdir(join(vaultRoot, 'memory'), { recursive: true })
+        await appendFile(memoryPath, appendix)
+      })
+      await this.withMemoryWriteLock(filePath, async () => {
+        await writeFile(filePath, rewritten.join('\n'))
+      })
+      totalDistilled += pending.length
+      sources.push(`${date}.md:${pending.length}`)
+    }
+    if (totalDistilled > 0) {
+      const dreamsPath = join(vaultRoot, 'DREAMS.md')
+      const audit = `- ${new Date().toISOString()}: 从 memory/${sources.join(', ')} 提炼 ${totalDistilled} 条进 MEMORY.md\n`
+      await this.withMemoryWriteLock(dreamsPath, async () => {
+        await appendFile(dreamsPath, audit)
+      })
+      this.hostCtx.logger.info(`orchestrator: distilled ${totalDistilled} memory entries into MEMORY.md`)
+    }
   }
 
   /**
@@ -819,8 +879,8 @@ export class OrchestratorService extends TypertRemoteService {
         if (!parsed.success) return toJson({ error: parsed.error.issues[0]?.message ?? 'invalid arguments' })
         const { relPath, content } = parsed.data
         const cwd = agent.session.header.cwd
-        const rootCwd = this.composedPreset(agent) === WORKER_PRESET && cwd ? dirname(cwd) : cwd
-        const vaultRoot = resolve(rootCwd ?? process.cwd(), MEMORY_VAULT_DIRNAME)
+        const workspaceRoot = this.composedPreset(agent) === WORKER_PRESET && cwd ? dirname(cwd) : cwd
+        const vaultRoot = resolveVaultRoot(workspaceRoot ?? process.cwd())
         const filePath = resolve(vaultRoot, relPath)
         if (!filePath.startsWith(vaultRoot + sep)) {
           return toJson({ error: `invalid memory path: ${relPath}` })
@@ -1682,23 +1742,5 @@ export const TASK_UPDATE_TOOL_PARAMETERS = {
     description: '用户日程：新的放 create，改的放 update（抄 id）',
   },
 } as const
-
-/**
- * 按条目（行/段）截断文本，优先保留完整条目，避免截断到半句话。
- * 适用于 memory/、USER.md 等以条目行为单位的记忆文件。
- */
-function truncateByEntries(text: string, maxChars: number): string {
-  const lines = text.split('\n')
-  let result = ''
-  for (const line of lines) {
-    if (result.length + line.length + 1 > maxChars) {
-      result = result.trimEnd()
-      if (result) result += '\n…（已截断）'
-      return result
-    }
-    result += line + '\n'
-  }
-  return result.trimEnd()
-}
 
 export default OrchestratorService

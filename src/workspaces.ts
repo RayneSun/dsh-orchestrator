@@ -1,5 +1,5 @@
 import { stat } from 'node:fs/promises'
-import { resolve, sep, basename } from 'node:path'
+import { resolve, sep, basename, join } from 'node:path'
 
 const MAX_NAME_LENGTH = 64
 
@@ -54,6 +54,16 @@ export async function buildChildWorkspace(rootCwd: string, requestedName: string
 
 /** 记忆库目录名：记忆与个人知识库统一由 dsh-obsidian 管理（kb_vault 内 USER.md/MEMORY.md/memory/每日/DREAMS.md）。 */
 export const MEMORY_VAULT_DIRNAME = 'kb_vault'
+
+/**
+ * 解析共享 vault 根路径：环境变量 DSH_VAULT_PATH 优先，否则落在主工作区根下。
+ * 与 cordis.patch.yml 中 dsh-obsidian 的 vaultPath 推导保持一致。
+ */
+export function resolveVaultRoot(workspaceRoot: string): string {
+  return process.env.DSH_VAULT_PATH
+    ? resolve(process.env.DSH_VAULT_PATH)
+    : resolve(workspaceRoot, MEMORY_VAULT_DIRNAME)
+}
 
 /** 共享记忆库目录名（meow-memory 的 SQLite 所在目录）。 */
 export const SHARED_MEMORY_DIRNAME = '.dsh-meow'
