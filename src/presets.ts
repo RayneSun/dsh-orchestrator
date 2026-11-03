@@ -71,6 +71,15 @@ export function buildPresetDefinitions(): PresetDefinition[] {
           config: { prefix: LEAD_PROMPT },
         },
         ...basics,
+        // 一步查询与轻量自带工具（0.2.7 起 tool-web 被误删，一步查询一度只是空头承诺）：
+        // web（web_search/web_fetch）、fs-search（glob/grep）、fs（read/write/edit/read_image）、
+        // todo/goal。执行与调试类（bash/terminal/jobs/present/session-query/mcp-resources）
+        // 与编排旁路（subagent/schedule）仍不挂载——那些是 Worker 的活，Lead 保持轻量。
+        { id: 'tool-web', name: '@deepseek-ai/dsh-tool-web', config: { fetch: true, searchTimeoutMs: 60_000 } },
+        { id: 'tool-fs-search', name: '@deepseek-ai/dsh-tool-fs-search', config: { sampleOverCapGlobResults: false } },
+        { id: 'tool-fs', name: '@deepseek-ai/dsh-tool-fs' },
+        { id: 'tool-todo', name: '@deepseek-ai/dsh-tool-todo', config: { allowParallelInProgress: false } },
+        { id: 'tool-goal', name: '@deepseek-ai/dsh-tool-goal' },
         { id: 'tool-ask-user', name: '@deepseek-ai/dsh-tool-ask-user' },
         compaction,
       ],

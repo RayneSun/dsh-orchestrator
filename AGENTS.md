@@ -91,6 +91,7 @@ dsh plugin --profile web add <tgz 绝对路径>
 
 ### 工具权限
 
+- Lead **预设挂载面**（presets.ts）：显式挂载自带插件 tool-web（web_search/web_fetch）、tool-fs-search（glob/grep，必配 `sampleOverCapGlobResults`）、tool-fs（read/write/edit/read_image）、tool-todo（必配 `allowParallelInProgress`）、tool-goal、tool-ask-user。0.2.7 起 tool-web 曾被误删，"一步查询"长期是空头承诺，0.3.16 补回。不挂 bash/terminal/jobs/schedule/session-query/present/skill/mcp-resources/subagent/teams/worktree——执行与编排都在 Worker 侧；缺必配 config 会新建会话即报 agent-preset/invalid。
 - Lead：**黑名单裁剪**（0.3.16 起。0.3.13 曾完全放开——浏览器/邮件/记忆写入等执行类工具与手册注入主控上下文，拖慢路由；0.3.15 改 allow 白名单——DSH 升级新增自带工具会被误藏；0.3.16 定稿 deny 第三方黑名单）。denylist 按精确名运行时匹配（工具不存在自动跳过，不会重演 0.3.12 的静默缺失——meow 只读走影子工具，不依赖全局名存在）。memory_search/read 的 meow 检索逻辑在 lead-memory.ts 复刻（getDb/search/readSeen/markSearched/markAccessed/projectCovers），tsdown neverBundle 'meow-memory' 保证与插件共用同一模块实例；剔除 meow 时只删 patch 行 + 依赖，代码自动降级。
 - Worker：`scoped.tools.guard(isWorkerToolForbidden)`（worker-policy.ts）。编排/派生类禁止项见 `workerForbiddenPatterns`（workflow/ralph/orchestrator），直接向用户提问类见 `workerQuestionPatterns`（ask_user 系，命中时引导改走 task_update input_required）；新增"禁止类"工具只改这两张表。子智能体工具由 Worker 预设的 delegation 组显式组合（与平台 standard 预设同款，spawn/fork 后端驻留宿主平面）。
 - **工具清单巡检（每次相关改动必做）**：改 lead-policy/service 工具面相关代码、或 DSH/插件升级后，重新枚举全局工具（扫 DSH core + profile 插件的 defineTool 名字）与 `DSH_CORE_TOOL_BASELINE` 快照对比。运行时也有兜底：Lead 挂载时 `unrecognizedGlobalTools` 发现基线外且未命中 deny 的名字会打 warn。发现新工具 → 确认归属 → 自带的更新基线、第三方的评估加入 LEAD_TOOL_DENY（或确认放行）。用户主动装新插件同样适用。
