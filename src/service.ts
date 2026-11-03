@@ -17,7 +17,7 @@ import { deliveryNotice, questionListText, revisionPrompt, rosterSummarySegment,
 import { type ScheduleServiceLike, type SessionActivityGroup } from './schedule-marks.ts'
 import { toJson } from './json.ts'
 import { isWorkerToolForbidden } from './worker-policy.ts'
-import { LEAD_SUPPRESSED_SECTIONS, LEAD_TOOL_ALLOW } from './lead-policy.ts'
+import { LEAD_SUPPRESSED_SECTIONS, leadToolDenyList } from './lead-policy.ts'
 import { buildLeadMemoryTools, disableLeadMemoryInjection } from './lead-memory.ts'
 import { normalizeProgressSteps } from './progress.ts'
 import { buildChildWorkspace, ensureSharedMemoryLink } from './workspaces.ts'
@@ -494,7 +494,7 @@ export class OrchestratorService extends TypertRemoteService {
     for (const sectionName of LEAD_SUPPRESSED_SECTIONS) {
       this.keep(agent, scoped.systemPrompt.section({ name: sectionName, order: 0, text: '', interpolate: false }))
     }
-    this.applyLeadToolAllowlist(agent, scoped)
+    this.applyLeadToolDenylist(agent, scoped)
     // 记忆只读层：关自动注入/写回/整理，再挂影子 search/read（meow 缺失时自动跳过）。
     const header = agent.session.header as { id?: unknown; cwd?: unknown }
     const workspace = typeof header.cwd === 'string' && header.cwd.length > 0 ? header.cwd : null
@@ -511,19 +511,18 @@ export class OrchestratorService extends TypertRemoteService {
     for (const tool of this.leadTools(agent)) this.keep(agent, scoped.tools.register(tool as any))
   }
 
-  /** Lead 工具白名单：只保留显式允许且当前确实注册的全局工具。 */
-  private applyLeadToolAllowlist(agent: Agent, scoped: Agent['ctx']): void {
+  /** Lead 工具黑名单：DSH 自带工具全保留，只屏蔽第三方执行类工具（未注册的自动跳过）。 */
+  private applyLeadToolDenylist(agent: Agent, scoped: Agent['ctx']): void {
     try {
-      // restrict 只作用于全局层：scope 内注册的 orchestrator_* 与影子记忆工具不受影响。
-      const globalNames = new Set(scoped.tools.schemas().map(schema => schema.name))
-      const allow = LEAD_TOOL_ALLOW.filter(name => globalNames.has(name))
-      const hidden = [...globalNames].filter(name => !(LEAD_TOOL_ALLOW as readonly string[]).includes(name))
-      if (allow.length > 0) this.keep(agent, scoped.tools.restrict({ allow: [...allow] }))
-      else this.hostCtx.logger.warn('orchestrator: lead tool allowlist matched no global tools; skipping restriction')
-      this.hostCtx.logger.info(`orchestrator: lead allowlist kept ${allow.length}, hidden ${hidden.length} global tools`)
+      // deny 只作用于全局层：scope 内注册的 orchestrator_* 与影子记忆工具不受影响。
+      const globalNames = [...new Set(scoped.tools.schemas().map(schema => schema.name))]
+      const deny = leadToolDenyList(globalNames)
+      if (deny.length > 0) this.keep(agent, scoped.tools.restrict({ deny }))
+      else this.hostCtx.logger.info('orchestrator: lead denylist matched no global tools; skipping restriction')
+      this.hostCtx.logger.info(`orchestrator: lead denylist hid ${deny.length}/${globalNames.length} global tools: ${deny.join(', ')}`)
     } catch (error) {
       // 枚举失败时退回无限制，避免主控完全失去工具。
-      this.hostCtx.logger.warn(`orchestrator: lead tool allowlist failed: ${String(error)}`)
+      this.hostCtx.logger.warn(`orchestrator: lead tool denylist failed: ${String(error)}`)
     }
   }
 
