@@ -4,7 +4,7 @@ DSH 主控助理编排插件，也是一个开箱即用的个人助理能力包�
 
 ## 预设
 
-- `may-orchestrator-lead`：主控助理。工具**白名单**制：编排工具 + 向用户提问 + 一步轻量查询（web_search / web_fetch / read / glob / grep）+ 记忆只读（memory_search / memory_read）；浏览器、邮件、桌面操控、命令、文件写入、记忆写入等执行类工具对 Lead 不可见（含用户后装工具）。同时遮蔽 meow 记忆手册与 qqmail 公告提示段，并关闭 Lead 会话的记忆自动注入/写回/空闲整理——主控上下文只保留路由所需的最小面。记忆查询由影子只读工具承接；meow-memory 缺失或导出变更时整体降级，不影响其余功能。
+- `may-orchestrator-lead`：主控助理。DSH 自带工具全部可用（一步轻量查询、记忆查阅直接做）；第三方执行类工具（浏览器、邮件、桌面操控、记忆写入/管理）走黑名单对 Lead 隐藏，DSH 升级新增的自带能力不会被误伤。同时遮蔽 meow 记忆手册与 qqmail 公告提示段，并关闭 Lead 会话的记忆自动注入/写回/空闲整理——主控上下文只保留路由所需的最小面。记忆查询由影子只读工具承接；meow-memory 缺失或导出变更时整体降级，不影响其余功能。
 - `may-orchestrator-worker`：统一执行 Worker，是与主会话同级的**一等根会话**（非子代理），因此定时任务（schedule）等平台能力对其开放。工具采用**黑名单**：文件、命令、网页、浏览器、技能、MCP、定时任务等宿主自带与用户安装的工具默认可用，可使用子智能体（subagent/fork）与后台任务（job）做并行、隔离或长耗时处理；仅禁止编排循环（workflow/ralph）、调用 orchestrator 编排工具和直接向用户提问。
 
 Worker 的任务上报协议、安全红线（支付/删除等不可逆操作先确认）、文件边界与整洁约束都固化在预设 persona 中，每次派发只传递任务本身（独立工作区由运行时自动绑定，不重复环境声明）。`task_update` 状态为 running、input_required、completed、failed；每次上报可带 `header`（最多 8 个字的状态标题）与 `progressNote`（一句话进展）。`completed` 必须带 `report`；`input_required` 必须带结构化 `questions`，在看板和子会话渲染同源问题卡（阻塞工具调用，任一入口作答后工具直接返回用户答案，Worker 同轮继续）；`failed` 必须带 `fail.error`，系统阻碍另加 `fail.reasonCode`。全状态都可用顶层 `schedules` 维护**用户日程**（需要用户本人推进的事）：新的放 `create`（title 必填，可加 startAt/endAt / remindAt / priority / links / attachments / contacts / location / remark），改的放 `update`（抄 id 标 done 或 cancelled 作废）；日程主会话 scope 独立成表，`conversationId` 归属回链，代办/修改都派回所属子会话处理。看板会话卡片上以日程框展示、用户可画勾。

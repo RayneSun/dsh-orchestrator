@@ -1,5 +1,5 @@
 import { mkdtemp, rm, readdir } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
+import { homedir, tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { buildChildWorkspace, ensureVaultPathEnv, resolveVaultRoot, sanitizeWorkspaceName } from '../src/workspaces.ts'
@@ -63,7 +63,7 @@ describe('DSH_VAULT_PATH 代码内兜底', () => {
   it('未配置时填充与 patch.yml 推导一致的默认值；显式配置优先不覆盖', () => {
     delete process.env.DSH_VAULT_PATH
     ensureVaultPathEnv()
-    expect(process.env.DSH_VAULT_PATH).toBe(resolve(process.cwd(), '..', '..', 'default-workspace', 'kb_vault'))
+    expect(process.env.DSH_VAULT_PATH).toBe(resolve(homedir(), 'Documents', 'deepseek-harness', 'default-workspace', 'kb_vault'))
     process.env.DSH_VAULT_PATH = 'D:/custom/vault'
     ensureVaultPathEnv()
     expect(process.env.DSH_VAULT_PATH).toBe('D:/custom/vault')

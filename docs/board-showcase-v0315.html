@@ -1,0 +1,418 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>DSH 任务看板 · v0.3.15 UI 全景（悬停看字段）</title>
+<style>
+:root{
+  --dsw-alias-bg-layer-1:#f7f8fa;--dsw-alias-bg-layer-2:#ffffff;--dsw-alias-bg-layer-3:#f6f6f8;
+  --dsw-alias-border-l2:#ececf0;--dsw-alias-border-l4:#e4e7eb;
+  --dsw-alias-label-primary:#1f2329;--dsw-alias-label-secondary:#5f6368;--dsw-alias-label-tertiary:#9aa0a6;
+  --dsw-alias-interactive-bg-hover:#f0f1f3;
+  --dsho-brand:#1a73e8;--dsho-brand-ink:#1557b0;--dsho-pos:#188038;--dsho-pos-ink:#146c2f;
+  --dsho-err:#d93025;--dsho-err-ink:#b3261e;--dsho-warn:#a35200;--dsho-line:#e4e7eb;
+}
+*{box-sizing:border-box;margin:0}
+body{background:#e8eaef;font-family:-apple-system,"SF Pro Text","PingFang SC",sans-serif;display:flex;justify-content:center;padding:20px}
+.app{width:1440px;height:980px;background:var(--dsw-alias-bg-layer-1);border-radius:14px;overflow:hidden;display:grid;grid-template-columns:190px 410px 1fr;box-shadow:0 10px 40px rgb(0 0 0 / 12%)}
+.side{background:#fbfbfc;border-right:1px solid var(--dsw-alias-border-l2);padding:12px 8px}
+.side h3{font-size:11px;font-weight:600;color:var(--dsw-alias-label-tertiary);padding:4px 10px 8px;letter-spacing:.03em}
+.sitem{font-size:12.5px;color:var(--dsw-alias-label-secondary);padding:7px 10px;border-radius:8px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.sitem.active{background:color-mix(in srgb,var(--dsho-brand) 9%,transparent);color:var(--dsho-brand-ink);font-weight:600}
+.sitem .dot{display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--dsho-pos);margin-right:6px;vertical-align:1px}
+.chat{border-right:1px solid var(--dsw-alias-border-l2);display:flex;flex-direction:column;background:var(--dsw-alias-bg-layer-2)}
+.chatHead{padding:13px 16px;border-bottom:1px solid var(--dsw-alias-border-l2);font-size:13px;font-weight:650}
+.chatBody{flex:1;overflow:auto;padding:14px;display:flex;flex-direction:column;gap:12px}
+.msg{max-width:88%;font-size:12.5px;line-height:1.65;border-radius:12px;padding:9px 12px}
+.msg.user{align-self:flex-end;background:var(--dsho-brand);color:#fff;border-bottom-right-radius:4px}
+.msg.bot{align-self:flex-start;background:var(--dsw-alias-bg-layer-3);border-bottom-left-radius:4px}
+.chatInput{margin:12px;border:1px solid var(--dsw-alias-border-l4);border-radius:10px;padding:9px 12px;font-size:12.5px;color:var(--dsw-alias-label-tertiary)}
+.board{overflow:auto;position:relative}
+.boardBar{position:sticky;top:0;z-index:5;background:color-mix(in srgb,var(--dsw-alias-bg-layer-1) 90%,transparent);backdrop-filter:blur(4px);padding:10px 14px 8px;border-bottom:1px solid var(--dsw-alias-border-l2)}
+.boardBar .row{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px}
+.boardBar b{font-size:14px}
+.mapBtn{font-size:11px;font-weight:600;color:var(--dsho-brand-ink);background:color-mix(in srgb,var(--dsho-brand) 8%,transparent);border:1px solid color-mix(in srgb,var(--dsho-brand) 30%,transparent);border-radius:999px;padding:3px 10px;cursor:pointer;user-select:none}
+body.map .mapBtn{background:var(--dsho-brand);color:#fff}
+.dsho-board{padding:0 14px 16px}
+.dsho-tab{position:relative;font-size:12px;font-weight:500;border:.5px solid var(--dsw-alias-border-l4);background:var(--dsw-alias-bg-layer-3);color:var(--dsw-alias-label-secondary);border-radius:8px;padding:3px 16px;cursor:pointer}
+.dsho-tab.on{background:color-mix(in srgb,var(--dsho-brand) 12%,transparent);border-color:color-mix(in srgb,var(--dsho-brand) 35%,transparent);color:var(--dsho-brand-ink)}
+.dsho-tab .notif{position:absolute;top:-4px;right:-4px;width:10px;height:10px;border-radius:50%;background:var(--dsho-warn);border:2px solid var(--dsw-alias-bg-layer-1)}
+.dsho-conv{position:relative;border:.5px solid var(--dsw-alias-border-l4);border-radius:12px;background:var(--dsw-alias-bg-layer-2);margin:12px 0;overflow:hidden}
+.dsho-conv-active{border-color:color-mix(in srgb,var(--dsho-pos) 26%,transparent)}
+.dsho-convHead{display:flex;align-items:center;gap:8px;padding:11px 13px;border-bottom:.5px solid var(--dsw-alias-border-l2);cursor:pointer}
+.dsho-convHead:hover{background:var(--dsw-alias-interactive-bg-hover)}
+.dsho-chevron{width:0;height:0;border-left:4.5px solid transparent;border-right:4.5px solid transparent;border-top:5px solid var(--dsw-alias-label-tertiary);transition:transform .18s;flex:none}
+.dsho-conv-collapsed .dsho-chevron{transform:rotate(-90deg)}
+.dsho-tag{flex:none;display:inline-flex;align-items:center}
+.dsho-tag svg{width:13px;height:13px}
+.dsho-tag-silent{color:var(--dsw-alias-label-secondary)}
+.dsho-tag-scheduled{color:var(--dsho-brand-ink)}
+.dsho-convTitle{min-width:0;flex:1;font-size:13px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.dsho-badge{flex:none;font-size:10.5px;font-weight:600;border-radius:999px;padding:2px 9px}
+.dsho-badge-queued{background:color-mix(in srgb,var(--dsho-brand) 13%,transparent);color:var(--dsho-brand-ink)}
+.dsho-badge-running{background:color-mix(in srgb,var(--dsho-pos) 14%,transparent);color:var(--dsho-pos-ink);padding-left:7px;position:relative}
+.dsho-badge-running::before{content:'';display:inline-block;width:6px;height:6px;border-radius:50%;background:currentColor;margin-right:5px;vertical-align:1px;animation:pulse 1.5s ease-in-out infinite}
+.dsho-badge-completed{background:var(--dsho-pos);color:#fff}
+.dsho-badge-idle{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-secondary)}
+.dsho-badge-input_required{background:color-mix(in srgb,var(--dsho-warn) 15%,transparent);color:var(--dsho-warn)}
+.dsho-badge-failed{background:color-mix(in srgb,var(--dsho-err) 11%,transparent);color:var(--dsho-err-ink)}
+.dsho-badge-interrupted{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-tertiary)}
+.dsho-open{flex:none;font-size:11px;font-weight:600;color:var(--dsho-brand-ink);background:color-mix(in srgb,var(--dsho-brand) 8%,transparent);border:1px solid color-mix(in srgb,var(--dsho-brand) 28%,transparent);border-radius:999px;padding:2px 10px}
+.dsho-body{padding:2px 13px 11px}
+.dsho-meta{font-size:11px;color:var(--dsw-alias-label-tertiary);padding:6px 0 2px}
+.dsho-collapsedTime{display:none;padding:6px 13px;font-size:10.5px;color:var(--dsw-alias-label-tertiary);border-top:.5px dashed var(--dsho-line)}
+.dsho-conv-collapsed .dsho-collapsedTime{display:block}
+/* 问题卡 */
+.dsho-ask{margin:10px 13px 0;border:1px solid color-mix(in srgb,var(--dsho-warn) 35%,transparent);border-radius:10px;background:color-mix(in srgb,var(--dsho-warn) 5%,transparent);padding:10px 12px}
+.dsho-askHead{font-size:11px;font-weight:600;color:var(--dsho-warn)}
+.dsho-askQ{font-size:12.5px;font-weight:550;line-height:1.5;margin-top:4px}
+.dsho-askOpts{display:flex;flex-wrap:wrap;gap:6px;margin-top:7px}
+.dsho-askOpt{font-size:11.5px;border:1px solid var(--dsw-alias-border-l4);background:#fff;border-radius:999px;padding:3px 11px;color:var(--dsw-alias-label-secondary);cursor:pointer}
+.dsho-askOpt.sel{border-color:var(--dsho-brand);color:var(--dsho-brand-ink);background:color-mix(in srgb,var(--dsho-brand) 8%,transparent)}
+.dsho-askInput{margin-top:7px;width:100%;font:inherit;font-size:11.5px;border:1px solid var(--dsw-alias-border-l4);border-radius:8px;padding:5px 9px;color:var(--dsw-alias-label-secondary)}
+.dsho-askBtn{margin-top:8px;font-size:11.5px;font-weight:600;color:#fff;background:var(--dsho-brand);border:none;border-radius:8px;padding:4px 14px;cursor:pointer}
+/* 任务框 + 任务行 */
+.dsho-taskBox{margin:7px 0 0;border:1px solid var(--dsw-alias-border-l2);border-radius:10px;overflow:hidden}
+.dsho-taskBoxHead{display:flex;align-items:center;gap:7px;padding:6px 11px;font-size:11.5px;font-weight:600;color:var(--dsw-alias-label-secondary);background:var(--dsw-alias-bg-layer-3);cursor:pointer}
+.dsho-taskBoxCnt{font-weight:400;color:var(--dsw-alias-label-tertiary)}
+.dsho-tasks{list-style:none;padding:4px 10px}
+.dsho-task{padding:8px 10px;border:1px solid var(--dsw-alias-border-l2);border-radius:10px;margin:6px 0;background:var(--dsw-alias-bg-layer-2)}
+.dsho-taskMuted{opacity:.75;background:var(--dsw-alias-bg-layer-3)}
+.dsho-taskHead{display:flex;align-items:center;gap:8px}
+.dsho-taskSubject{min-width:0;font-size:12px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.dsho-note{font-size:11.5px;color:var(--dsw-alias-label-secondary);margin-top:4px;line-height:1.55;display:flex;align-items:baseline;gap:4px;flex-wrap:wrap}
+.dsho-noteTitle{font-size:11.5px;font-weight:650;color:var(--dsw-alias-label-primary);border:1px solid var(--dsw-alias-border-l4);border-radius:6px;padding:0 6px}
+.dsho-noteText{min-width:0}
+.dsho-note-live .dsho-noteText{background:linear-gradient(90deg,var(--dsw-alias-label-secondary) 30%,var(--dsho-brand) 50%,var(--dsw-alias-label-secondary) 70%);background-size:200% 100%;-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent;animation:shimmer 1.8s linear infinite}
+.dsho-expander{flex:none;font-size:10.5px;color:var(--dsho-brand-ink);background:color-mix(in srgb,var(--dsho-brand) 7%,transparent);border:none;border-radius:6px;padding:1px 8px;cursor:pointer}
+.dsho-detail{font-size:11.5px;color:var(--dsw-alias-label-secondary);line-height:1.6;border-top:.5px dashed var(--dsw-alias-border-l2);margin-top:6px;padding-top:6px}
+.dsho-detailSec{margin:2px 0}
+.dsho-detailSec b{color:var(--dsw-alias-label-primary);font-weight:600}
+.dsho-detail-err{background:color-mix(in srgb,var(--dsho-err) 5%,transparent);border-radius:8px;padding:6px 9px}
+.dsho-subtle{color:var(--dsw-alias-label-tertiary);font-size:11px}
+.dsho-steps{list-style:none;margin:7px 0 0;padding:6px 9px;border:1px solid var(--dsw-alias-border-l2);border-radius:8px;background:var(--dsw-alias-bg-layer-3)}
+.dsho-steps li{display:flex;gap:7px;align-items:baseline;font-size:11.5px;color:var(--dsw-alias-label-secondary);padding:2px 0}
+.dsho-stepIcon{flex:none;width:14px;text-align:center;font-size:10px}
+.dsho-steps .dsho-step-completed{color:var(--dsho-pos-ink)}
+.dsho-steps .dsho-step-in_progress{color:var(--dsho-brand-ink);font-weight:600}
+.dsho-taskFoot{display:flex;gap:10px;font-size:10.5px;color:var(--dsw-alias-label-tertiary);margin-top:7px}
+.dsho-dur-live{color:var(--dsho-pos-ink);font-weight:600}
+.dsho-art{display:inline-flex;align-items:center;gap:5px;font-size:10.5px;color:#6941c6;background:color-mix(in srgb,#7a5af5 7%,transparent);border:none;border-radius:6px;padding:2px 8px;margin:3px 4px 0 0;cursor:pointer}
+/* 日程框/行 */
+.dsho-todos{margin:9px 0 0;border:.5px solid var(--dsw-alias-border-l4);border-radius:10px;background:var(--dsw-alias-bg-layer-3);padding:6px 10px 8px}
+.dsho-todosHead{display:flex;align-items:center;gap:6px;font-size:11px;font-weight:600;color:var(--dsw-alias-label-secondary);padding:2px 0 5px}
+.dsho-todosCount{font-weight:500;color:var(--dsw-alias-label-tertiary)}
+.dsho-todo{display:flex;align-items:flex-start;gap:8px;padding:5px 0;border-top:.5px dashed var(--dsw-alias-border-l2)}
+.dsho-todo:first-of-type{border-top:none}
+.dsho-todoCheck{flex:none;width:15px;height:15px;margin-top:1px;border-radius:50%;border:1.5px solid var(--dsw-alias-border-l4);background:#fff;display:inline-flex;align-items:center;justify-content:center;font-size:10px;color:transparent;cursor:pointer}
+.dsho-todo-done .dsho-todoCheck{background:color-mix(in srgb,var(--dsho-pos) 15%,transparent);border-color:transparent;color:var(--dsho-pos-ink)}
+.dsho-todoBody{flex:1;min-width:0;cursor:pointer}
+.dsho-todoLine{display:flex;align-items:baseline;gap:6px;min-width:0;flex-wrap:wrap}
+.dsho-todoTitle{min-width:0;font-size:12px;font-weight:550;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.dsho-todo-done .dsho-todoTitle{color:var(--dsw-alias-label-tertiary);text-decoration:line-through;font-weight:400}
+.dsho-todoPriority{flex:none;font-size:10px;font-weight:600;border-radius:999px;padding:0 7px;line-height:15px;border:.5px solid transparent}
+.dsho-todoPriority-P0{color:#d5483f;border-color:color-mix(in srgb,#d5483f 35%,transparent);background:color-mix(in srgb,#d5483f 8%,transparent)}
+.dsho-todoPriority-P1{color:#e08300;border-color:color-mix(in srgb,#e08300 35%,transparent);background:color-mix(in srgb,#e08300 8%,transparent)}
+.dsho-todoPriority-P2{color:#b59a00;border-color:color-mix(in srgb,#b59a00 35%,transparent);background:color-mix(in srgb,#b59a00 8%,transparent)}
+.dsho-todoPriority-P3{color:#3d9a50;border-color:color-mix(in srgb,#3d9a50 35%,transparent);background:color-mix(in srgb,#3d9a50 8%,transparent)}
+.dsho-todoTime{flex:none;display:inline-flex;align-items:center;font-size:10px;border-radius:999px;padding:0 7px;line-height:15px;border:.5px solid var(--dsho-line);background:#fff;color:var(--dsw-alias-label-tertiary);white-space:nowrap}
+.dsho-todoTime-soon{color:var(--dsho-warn);border-color:color-mix(in srgb,var(--dsho-warn) 35%,transparent);background:color-mix(in srgb,var(--dsho-warn) 6%,transparent)}
+.dsho-todoTime-over{color:var(--dsho-err);border-color:color-mix(in srgb,var(--dsho-err) 35%,transparent);background:color-mix(in srgb,var(--dsho-err) 6%,transparent)}
+.dsho-todoTime-active{color:var(--dsho-brand-ink);border-color:color-mix(in srgb,var(--dsho-brand) 35%,transparent);background:color-mix(in srgb,var(--dsho-brand) 6%,transparent)}
+.dsho-todoTime-active .dsho-dot{width:5px;height:5px;border-radius:50%;background:currentColor;margin-right:4px;animation:pulse 1.6s ease-in-out infinite}
+.dsho-todo-done .dsho-todoTime{opacity:.55;text-decoration:line-through}
+.dsho-src{font-size:10px;color:var(--dsw-alias-label-tertiary);margin-top:3px;padding-left:23px}
+.dsho-todoMeta{display:flex;flex-wrap:wrap;gap:4px;margin-top:4px}
+.dsho-todoRemind{font-size:10px;color:var(--dsho-brand-ink);background:color-mix(in srgb,var(--dsho-brand) 7%,transparent);border:.5px solid color-mix(in srgb,var(--dsho-brand) 30%,transparent);border-radius:999px;padding:0 7px;line-height:15px}
+.dsho-todoDetail{display:none;padding:4px 0 2px}
+.dsho-todo-open .dsho-todoDetail{display:block}
+.dsho-dRow{display:flex;gap:6px;align-items:flex-start;margin-top:4px;font-size:11px;color:var(--dsw-alias-label-secondary);line-height:1.6}
+.dsho-dIcon{flex:none;width:16px;text-align:center;font-size:11px;margin-top:1px}
+.dsho-dChips{display:flex;flex-wrap:wrap;gap:4px}
+.dsho-chip{display:inline-flex;align-items:center;gap:4px;font-size:10px;border-radius:6px;padding:2px 7px;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.dsho-chip-link{color:var(--dsho-brand-ink);background:color-mix(in srgb,var(--dsho-brand) 7%,transparent)}
+.dsho-chip-file{color:#6941c6;background:color-mix(in srgb,#7a5af5 7%,transparent)}
+.dsho-chip-person{color:#0e7c86;background:color-mix(in srgb,#0e7c86 7%,transparent)}
+.dsho-chip-place{color:var(--dsw-alias-label-secondary);background:#fff;border:.5px solid var(--dsw-alias-border-l4)}
+/* 日程页 */
+.dsho-cal{margin:12px 0}
+.dsho-calHead{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px}
+.dsho-calTitle{font-size:13px;font-weight:650}
+.dsho-calNav{display:flex;gap:5px}
+.dsho-calNav button{width:25px;height:25px;border-radius:7px;border:.5px solid var(--dsw-alias-border-l4);background:#fff;color:var(--dsw-alias-label-secondary);cursor:pointer;font-size:12px}
+.dsho-calGrid{display:grid;grid-template-columns:repeat(7,1fr);gap:3px}
+.dsho-calDow{font-size:10px;color:var(--dsw-alias-label-tertiary);text-align:center;padding:2px 0}
+.dsho-calDay{position:relative;min-height:34px;border-radius:8px;border:.5px solid transparent;font-size:11px;color:var(--dsw-alias-label-secondary);padding:3px 5px;cursor:pointer}
+.dsho-calDay:hover{background:var(--dsw-alias-interactive-bg-hover)}
+.dsho-calDay.sel{border-color:var(--dsho-brand);color:var(--dsho-brand-ink);font-weight:600}
+.dsho-calDay.dim{opacity:.35}
+.dsho-calDay .dots{position:absolute;bottom:3px;left:5px;display:flex;gap:2px}
+.dsho-calDay .dots i{width:5px;height:5px;border-radius:50%}
+.dsho-dayHead{font-size:12px;font-weight:650;margin:12px 0 6px}
+.dsho-dayGroup{font-size:10.5px;font-weight:600;color:var(--dsho-err-ink);margin:8px 0 2px}
+[data-field]{border-radius:6px}
+body.map [data-field]{outline:1.5px dashed color-mix(in srgb,var(--dsho-brand) 55%,transparent);outline-offset:2px;cursor:help}
+.tip{position:fixed;z-index:99;max-width:340px;background:#1f2329;color:#e8eaed;border-radius:10px;padding:9px 12px;font-size:11.5px;line-height:1.55;box-shadow:0 8px 28px rgb(0 0 0 / 30%);pointer-events:none;display:none}
+.tip .f{font-family:ui-monospace,Menlo,monospace;font-size:11px;color:#8ab4f8}
+.tip .ty{display:inline-block;font-size:10px;color:#9aa0a6;border:1px solid #5f6368;border-radius:4px;padding:0 5px;margin-left:6px;vertical-align:1px}
+.tip .d{color:#c9cdd4;margin-top:3px}
+@keyframes shimmer{0%{background-position:100% 0}100%{background-position:0 0}}
+@keyframes pulse{0%,100%{opacity:.4}50%{opacity:1}}
+</style>
+</head>
+<body>
+<div class="tip" id="tip"></div>
+<div class="app">
+  <div class="side">
+    <h3>会话</h3>
+    <div class="sitem active" data-field="主会话（Lead）" data-type="session" data-desc="看板数据按 parentSessionId 隔离，只展示该主会话派发的子会话与日程"><span class="dot"></span>个人助理</div>
+    <div class="sitem">工作助手</div>
+    <div class="sitem">生活管家</div>
+  </div>
+  <div class="chat">
+    <div class="chatHead" data-field="Conversation.parentSessionId" data-type="string" data-desc="主会话标题栏；snapshot(parentSessionId) 按 主会话 取数">个人助理</div>
+    <div class="chatBody">
+      <div class="msg user" data-field="用户消息" data-type="chat" data-desc="用户在主会话输入（可能在手机端）；Lead 拆分派发">帮我订周五的会议室，另外上次那份采购单怎么一直没批下来？</div>
+      <div class="msg bot" data-field="Lead 回复 ← Task.report.result / questions" data-type="string" data-desc="Lead 用自然语言转述 Worker 结果；input_required 的问题会同时出现在主会话原生卡和看板问题卡（双入口，共用 answerTaskQuestions RPC）">会议室已订好（周五 14:00-16:00）。采购单那边系统显示卡在部门审批，我把问题列在看板右侧了，你选一下处理方式就行。</div>
+    </div>
+    <div class="chatInput">发消息…</div>
+  </div>
+  <div class="board">
+    <div class="boardBar">
+      <div class="row"><b>任务看板 · 5 个子会话</b><button class="mapBtn" id="mapBtn">字段映射：关</button></div>
+      <div data-field="看板双页签" data-type="ui" data-desc="「会话」= 子会话+任务+日程框；「日程」= 全部日程的月历视图（按日组织、过期置顶）。日程页右上角小红点：切走期间有任务更新"><span class="dsho-tab on">会话</span> <span class="dsho-tab" id="tabSched">日程<span class="notif"></span></span></div>
+    </div>
+    <div class="dsho-board" id="paneBoard">
+
+      <!-- Conv 1: running + scheduled -->
+      <div class="dsho-conv dsho-conv-active">
+        <div class="dsho-convHead">
+          <span class="dsho-chevron"></span>
+          <span class="dsho-tag dsho-tag-scheduled" data-field="Conversation.hasActiveSchedule" data-type="boolean?" data-desc="投影字段：子会话绑定了活动定时任务。图标=Material Schedule 时钟；标题前缀 ⏰（平台侧）"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M11.99 2C6.47 2 2 6.48 2 12s4.47 10 9.99 10C17.52 22 22 17.52 22 12S17.52 2 11.99 2zM12 20c-4.42 0-8-3.58-8-8s3.58-8 8-8 8 3.58 8 8-3.58 8-8 8zm.5-13H11v6l5.25 3.15.75-1.23-4.5-2.67z"/></svg></span>
+          <span class="dsho-convTitle" data-field="Conversation.title" data-type="string" data-desc="子会话标题；复用派发可用 conversationTitle 更新">北京行程安排</span>
+          <span class="dsho-badge dsho-badge-running" data-field="会话头徽标 = 最新任务状态" data-type="enum" data-desc="跟随最新一轮任务；无任务时回退 Conversation.state（启动中/进行中/空闲/待你操作/失败）">进行中</span>
+          <button class="dsho-open" data-field="Conversation.childSessionId" data-type="string" data-desc="Worker 是一级根会话，按普通会话打开（subagent 寻址会被平台拒绝）">打开子会话</button>
+        </div>
+        <div class="dsho-body">
+          <div class="dsho-meta" data-field="Conversation.workspaceName" data-type="string?" data-desc="子工作区目录名（英文 slug）；attachments/artifacts 打开时拼 <workspaceName>/<path>">工作区：beijing-trip</div>
+          <div class="dsho-taskBox">
+            <div class="dsho-taskBoxHead" data-field="TaskBox（任务框）" data-type="ui" data-desc="圈住该会话的全部任务轮次，默认折叠只显示最新一轮（新→旧）"><span class="dsho-chevron"></span>任务<span class="dsho-taskBoxCnt" data-field="tasks.length" data-type="number" data-desc="任务轮次数（含改单/定时触发的历次）">3 轮 · 显示最新</span></div>
+            <ul class="dsho-tasks">
+              <li class="dsho-task">
+                <div class="dsho-taskHead">
+                  <span class="dsho-badge dsho-badge-running" data-field="Task.status = running" data-type="enum: queued/running/input_required/completed/failed/interrupted" data-desc="v0.3.14 起 blocked 并入 failed（reasonCode 表达系统阻碍），不再有独立 blocked 状态">进行中</span>
+                  <span class="dsho-tag dsho-tag-scheduled" data-field="Task.scheduled" data-type="boolean?" data-desc="本次由定时任务触发产生（applicable to 改单/定时轮次）；与 silent 可叠加"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M11.99 2C6.47 2 2 6.48 2 12s4.47 10 9.99 10C17.52 22 22 17.52 22 12S17.52 2 11.99 2zM12 20c-4.42 0-8-3.58-8-8s3.58-8 8-8 8 3.58 8 8-3.58 8-8 8zm.5-13H11v6l5.25 3.15.75-1.23-4.5-2.67z"/></svg></span>
+                  <span class="dsho-taskSubject" data-field="Task.subject" data-type="string" data-desc="任务主题，极简约 10 字">查 11-10 高铁余票</span>
+                </div>
+                <ul class="dsho-steps" data-field="Task.progressSteps[]" data-type="{content, status}" data-desc="来自 Worker 的 todo_write；status: pending/in_progress/completed。todo 全完成 ≠ 任务完成，终态以 task_update 为准">
+                  <li class="dsho-step-completed"><span class="dsho-stepIcon">✓</span>查询 G671/G367 余票</li>
+                  <li class="dsho-step-in_progress"><span class="dsho-stepIcon">●</span>比对价格与时刻</li>
+                  <li><span class="dsho-stepIcon"></span>汇总购票方案</li>
+                </ul>
+                <div class="dsho-note dsho-note-live">
+                  <span class="dsho-noteTitle" data-field="Task.header（≤8字）" data-type="string?" data-desc="极简状态标题（v0.3.13 的 title 更名），手机端/折叠态主展示">查车次余票</span><span style="color:var(--dsw-alias-label-tertiary)">:</span>
+                  <span class="dsho-noteText" data-field="Task.progressNote" data-type="string?" data-desc="一句话进展（拟人风格实时刷新；running 时流光动效）">已查完 4 个车次，正在比对价格——G671 二等座还有票</span>
+                </div>
+                <div class="dsho-taskFoot" data-field="Task.createdAt / startedAt / endedAt" data-type="ISO 8601" data-desc="创建时间 + 耗时实时跳动；endedAt 存在后固定。与日程的 startAt/endAt 语义无关"><span>创建 11-02 10:12</span><span class="dsho-dur-live" data-field="耗时（实时）" data-type="computed" data-desc="running → now-startedAt 实时">耗时 6m32s</span></div>
+              </li>
+            </ul>
+          </div>
+
+          <div class="dsho-todos" data-field="SchedulePane 数据在会话页的投影" data-type="ScheduleSnapshot[]" data-desc="v0.3.15：用户待办升级为用户日程（独立表 snapshot.schedules）。归属子会话仅作回链；头部只统计 pending">
+            <div class="dsho-todosHead">日程 <span class="dsho-todosCount" data-field="pending 统计" data-type="computed" data-desc="status==pending 的数量；0 项显示「全部完成」">3 项待处理</span></div>
+            <div class="dsho-todo dsho-todo-open">
+              <button class="dsho-todoCheck" data-field="setScheduleStatus RPC" data-type="{scheduleId, status}" data-desc="画勾/取消走 orchestrator/setScheduleStatus（原 setTodoStatus 更名）：只允许 pending↔done，落库 completedBy:'user'。cancelled 只能由子会话标">✓</button>
+              <div class="dsho-todoBody">
+                <div class="dsho-todoLine">
+                  <span class="dsho-todoTitle" data-field="ScheduleRecord.title" data-type="string ≤30字" data-desc="日程标题。展开态（点击行切换详情）">预约本周内的体检号源</span>
+                  <span class="dsho-todoPriority dsho-todoPriority-P0" data-field="ScheduleRecord.priority" data-type="enum P0-P3 默认 P3" data-desc="P0 红/P1 橙/P2 黄/P3 绿；日程页月历用同色圆点标注">P0</span>
+                  <span class="dsho-todoTime dsho-todoTime-active" data-field="ScheduleRecord.startAt / endAt（进行中）" data-type="ISO 8601 带时区" data-desc="时间窗：now ∈ [startAt, endAt] → 蓝+呼吸点。日程页按 startAt 归属、跨天逐日出现（最多铺 62 天防脏数据）"><span class="dsho-dot"></span>11-01 → 11-05</span>
+                </div>
+                <div class="dsho-todoMeta"><span class="dsho-todoRemind" data-field="ScheduleRecord.remindAt" data-type="ISO 8601?" data-desc="提醒时刻，App 做本地通知用；插件侧不调度">⏰ 11-03 09:00 提醒</span></div>
+                <div class="dsho-todoDetail">
+                  <div class="dsho-dRow"><span class="dsho-dIcon">📍</span><span class="dsho-dChips"><span class="dsho-chip dsho-chip-place" data-field="ScheduleRecord.location {name, address?}" data-type="对象?" data-desc="地点，纯信息展示无坐标">爱康国宾高新分院 · 沣惠南路恬静园4层</span></span></div>
+                  <div class="dsho-dRow"><span class="dsho-dIcon">📞</span><span class="dsho-dChips"><span class="dsho-chip dsho-chip-person" data-field="ScheduleRecord.contacts[] {name, phone?, email?, note?}" data-type="数组 ≤5" data-desc="联系人卡；App 渲染 tel:/mailto: 点按"><b>爱康预约</b><em>4008100120转2902</em></span></span></div>
+                  <div class="dsho-dRow"><span class="dsho-dIcon">📝</span><span data-field="ScheduleRecord.remark" data-type="string?" data-desc="备注，纯文字；结构化信息不堆这里">空腹 8-12 小时，带身份证，10 点前到院</span></div>
+                </div>
+              </div>
+            </div>
+            <div class="dsho-todo">
+              <button class="dsho-todoCheck"></button>
+              <div class="dsho-todoBody"><div class="dsho-todoLine">
+                <span class="dsho-todoTitle">购买 11-10 G671 高铁票</span>
+                <span class="dsho-todoPriority dsho-todoPriority-P1">P1</span>
+                <span class="dsho-todoTime" data-field="ScheduleRecord.endAt（仅终点）" data-type="ISO 8601?" data-desc="只有 endAt → 「结束 MM-DD」；≤3 天临期橙色">结束 11-10</span>
+              </div></div>
+            </div>
+            <div class="dsho-todo">
+              <button class="dsho-todoCheck"></button>
+              <div class="dsho-todoBody"><div class="dsho-todoLine">
+                <span class="dsho-todoTitle">办理宽带过户</span>
+                <span class="dsho-todoPriority dsho-todoPriority-P2">P2</span>
+                <span class="dsho-todoTime" data-field="同日带时刻" data-type="ISO 8601" data-desc="同日第二个时间省略日期。模型输入宽松：10-28 18:00 / 纯日期 / 完整 ISO 均可（normalizeTimePoint 归一化）">11-03 09:00 → 12:00</span>
+              </div></div>
+            </div>
+            <div class="dsho-todo">
+              <button class="dsho-todoCheck"></button>
+              <div class="dsho-todoBody"><div class="dsho-todoLine">
+                <span class="dsho-todoTitle">回复供应商报价邮件</span>
+                <span class="dsho-todoPriority dsho-todoPriority-P2">P2</span>
+                <span class="dsho-todoTime dsho-todoTime-over" data-field="已过期" data-type="ISO 8601" data-desc="now > endAt 未勾 → 红。日程页过期条目置顶分组">已过期 10-31</span>
+              </div></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Conv 2: input_required + AskCard（折叠也显示） -->
+      <div class="dsho-conv dsho-conv-collapsed">
+        <div class="dsho-convHead">
+          <span class="dsho-chevron"></span>
+          <span class="dsho-convTitle">采购单审批跟进</span>
+          <span class="dsho-badge dsho-badge-input_required" data-field="Task.status = input_required" data-type="enum" data-desc="需要用户操作/决策。label 是「待你操作」">待你操作</span>
+          <button class="dsho-open">打开子会话</button>
+        </div>
+        <div class="dsho-ask" data-field="AskCard（问题卡）" data-type="Task.questions[]" data-desc="双入口之一：input_required 且 questions 非空 → 会话头下方恒显（折叠也显示）；另一入口在主会话原生卡。提交走 answerTaskQuestions RPC，Host 唤醒 Worker 继续推进">
+          <div class="dsho-askHead">需要你操作 · 1 个问题</div>
+          <div class="dsho-askQ" data-field="Task.questions[].question" data-type="string ≤2000" data-desc="问题项：{id, question, header?, detail?, options?, multi_select?}，id 由 Host 补齐。options 供点选，也可自定义填写">采购单卡在部门审批，要怎么处理？</div>
+          <div class="dsho-askOpts" data-field="questions[].options（单选）" data-type="string[] ≤10" data-desc="multi_select: true 时可多选；selected + custom 一起提交">
+            <span class="dsho-askOpt" data-field="作答项（单选）" data-type="selected[]" data-desc="点选后高亮，提交时进入 answers[].selected">催一下审批人</span>
+            <span class="dsho-askOpt" data-field="作答项（单选）" data-type="selected[]" data-desc="多选时同一 question 可选多项">改走加急通道</span>
+            <span class="dsho-askOpt" data-field="作答项（单选）" data-type="selected[]" data-desc="都不合适时在输入框写自定义回答">先撤回修改金额</span>
+          </div>
+          <input class="dsho-askInput" data-field="answers[].custom" data-type="string ≤2000" data-desc="自定义回答；selected 与 custom 至少填一项才能提交" placeholder="或者直接输入你的要求…">
+          <button class="dsho-askBtn" data-field="answerTaskQuestions RPC" data-type="answers[]" data-desc="提交后 Worker 在下一轮收到答案继续执行；已回答记录进 Task.answers">提交</button>
+        </div>
+        <div class="dsho-collapsedTime" data-field="折叠态时间行" data-type="ui" data-desc="折叠时显示：最新任务 · 创建时间 · 耗时">最新任务 · 创建 11-02 09:40 · 耗时 1m12s</div>
+        <div class="dsho-body"><div><div class="dsho-bodyInner"><div class="dsho-taskBox"><div class="dsho-taskBoxHead"><span class="dsho-chevron"></span>任务<span class="dsho-taskBoxCnt">1 轮 · 显示最新</span></div></div></div></div></div>
+      </div>
+
+      <!-- Conv 3: silent -->
+      <div class="dsho-conv">
+        <div class="dsho-convHead">
+          <span class="dsho-chevron"></span>
+          <span class="dsho-tag dsho-tag-silent" data-field="静默工作流 TagChip" data-type="ui" data-desc="图标=Material DoNotDisturbOn（圆+横杠）：该会话的任务终态不投递主会话（记忆维护等后台任务）"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm5 11H7v-2h10v2z"/></svg></span>
+          <span class="dsho-convTitle">记忆维护</span>
+          <span class="dsho-badge dsho-badge-completed">已完成</span>
+          <button class="dsho-open">打开子会话</button>
+        </div>
+        <div class="dsho-body">
+          <div class="dsho-meta">工作区：meow-memory-sync</div>
+          <div class="dsho-taskBox"><div class="dsho-taskBoxHead"><span class="dsho-chevron"></span>任务<span class="dsho-taskBoxCnt">2 轮 · 显示最新</span></div>
+            <ul class="dsho-tasks"><li class="dsho-task">
+              <div class="dsho-taskHead">
+                <span class="dsho-badge dsho-badge-completed">已完成</span>
+                <span class="dsho-tag dsho-tag-silent" data-field="Task.silent" data-type="boolean" data-desc="任务级静默标记：silent 任务不产生 delivery 字段（不投递）"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm5 11H7v-2h10v2z"/></svg></span>
+                <span class="dsho-taskSubject">同步偏好设置到长期记忆</span>
+              </div>
+              <div class="dsho-note"><span class="dsho-noteTitle">记忆已同步</span><span style="color:var(--dsw-alias-label-tertiary)">:</span><span class="dsho-noteText">写入 2 条偏好、更新 1 条过时事实，无冲突</span></div>
+              <div class="dsho-taskFoot"><span>创建 11-01 22:10</span><span>耗时 0m48s</span></div>
+            </li></ul>
+          </div>
+        </div>
+      </div>
+
+      <!-- Conv 4: failed -->
+      <div class="dsho-conv dsho-conv-collapsed">
+        <div class="dsho-convHead">
+          <span class="dsho-chevron"></span>
+          <span class="dsho-convTitle">抓取物流信息</span>
+          <span class="dsho-badge dsho-badge-failed" data-field="Task.status = failed" data-type="enum" data-desc="执行失败。v0.3.14 起 blocked（系统阻碍）并入 failed，用 fail.reasonCode 区分——权限/配置/依赖/网络/资源/运行时">失败</span>
+          <button class="dsho-open">打开子会话</button>
+        </div>
+        <div class="dsho-collapsedTime">最新任务 · 创建 11-01 15:02 · 耗时 3m05s</div>
+        <div class="dsho-body"><div><div class="dsho-bodyInner">
+          <div class="dsho-taskBox"><div class="dsho-taskBoxHead"><span class="dsho-chevron"></span>任务<span class="dsho-taskBoxCnt">1 轮 · 全部展开</span></div>
+            <ul class="dsho-tasks"><li class="dsho-task">
+              <div class="dsho-taskHead"><span class="dsho-badge dsho-badge-failed">失败</span><span class="dsho-taskSubject">抓取顺丰运单轨迹</span></div>
+              <div class="dsho-note"><span class="dsho-noteTitle">查询失败</span><span style="color:var(--dsw-alias-label-tertiary)">:</span><span class="dsho-noteText" data-field="Task.fail.error 首行（折叠态 headline）" data-type="string" data-desc="failed 的折叠态标题取 fail.error 首行">连续 3 次抓取超时</span><button class="dsho-expander" data-field="查看错误" data-type="ui" data-desc="failed 任务的展开按钮文案是「查看错误」（普通任务为「查看结果」）">查看错误</button></div>
+              <div class="dsho-detail dsho-detail-err" data-field="Task.fail {error, reasonCode?}" data-type="对象" data-desc="失败原因 + 系统阻碍类别。remediation 字段已废除（v0.3.14），补救建议并入 error 文本"><div class="dsho-detailSec"><b>失败原因</b>：连续 3 次抓取超时（<b data-field="Task.fail.reasonCode = network" data-type="enum" data-desc="权限/配置/依赖/网络/资源/运行时 六类；Lead 可修复后重派">网络</b> 阻碍，处理后可继续）</div></div>
+              <div class="dsho-taskFoot"><span>创建 11-01 15:02</span><span>耗时 3m05s</span></div>
+            </li></ul>
+          </div>
+        </div></div></div>
+      </div>
+
+      <!-- Conv 5: interrupted -->
+      <div class="dsho-conv dsho-conv-collapsed">
+        <div class="dsho-convHead">
+          <span class="dsho-chevron"></span>
+          <span class="dsho-convTitle">下载年报数据</span>
+          <span class="dsho-badge dsho-badge-interrupted" data-field="Task.status = interrupted" data-type="enum" data-desc="用户手动中断（非失败）：子会话与进展保留，用户可续派。会话头徽标灰灰">已中断</span>
+          <button class="dsho-open">打开子会话</button>
+        </div>
+        <div class="dsho-collapsedTime">最新任务 · 创建 11-01 11:20 · 耗时 2m40s</div>
+        <div class="dsho-body"><div><div class="dsho-bodyInner">
+          <div class="dsho-taskBox"><div class="dsho-taskBoxHead"><span class="dsho-chevron"></span>任务<span class="dsho-taskBoxCnt">1 轮 · 全部展开</span></div>
+            <ul class="dsho-tasks"><li class="dsho-task dsho-taskMuted" data-field="interrupted 简化行" data-type="ui" data-desc="中断任务整行弱化（muted），只保留 badge + cancelledReason + 创建/耗时，无步骤无展开">
+              <div class="dsho-taskHead"><span class="dsho-badge dsho-badge-interrupted">已中断</span><span class="dsho-taskSubject">下载 2025 年年报数据</span></div>
+              <p class="dsho-subtle" data-field="Task.cancelledReason" data-type="string?" data-desc="中断归类（如 parent=用户手动停止）。中断后 Lead 会询问继续还是改需求，答复后复用同一 conversationId 续派">用户手动中断</p>
+              <div class="dsho-taskFoot"><span>创建 11-01 11:20</span><span>耗时 2m40s</span></div>
+            </li></ul>
+          </div>
+        </div></div></div>
+      </div>
+
+    </div>
+
+    <!-- ===== 日程页 ===== -->
+    <div class="dsho-board" id="paneSched" style="display:none">
+      <div class="dsho-cal" data-field="SchedulePane（日程页）" data-type="snapshot.schedules" data-desc="全部子会话的日程汇总：月历（优先级色点）+ 选中日列表。无时间字段的日程不进日程页（只留在会话页）">
+        <div class="dsho-calHead">
+          <div class="dsho-calTitle" data-field="当前月份" data-type="ui" data-desc="周一起始；左右箭头翻月；「今天」快速回跳">2026年11月</div>
+          <div class="dsho-calNav"><button>‹</button><button class="wide">今天</button><button>›</button></div>
+        </div>
+        <div class="dsho-calGrid" data-field="月历（优先级色点）" data-type="ui" data-desc="每个日程在其覆盖的每一天出现（startAt 起至 endAt），圆点颜色 = priority">
+          <span class="dsho-calDow">一</span><span class="dsho-calDow">二</span><span class="dsho-calDow">三</span><span class="dsho-calDow">四</span><span class="dsho-calDow">五</span><span class="dsho-calDow">六</span><span class="dsho-calDow">日</span>
+          <span class="dsho-calDay dim">26</span><span class="dsho-calDay dim">27</span><span class="dsho-calDay dim">28</span><span class="dsho-calDay dim">29</span><span class="dsho-calDay dim">30</span><span class="dsho-calDay dim">31</span>
+          <span class="dsho-calDay">1<div class="dots"><i style="background:#d5483f"></i></div></span>
+          <span class="dsho-calDay">2<div class="dots"><i style="background:#d5483f"></i></div></span>
+          <span class="dsho-calDay sel" data-field="选中日" data-type="ui" data-desc="点击某天查看当日日程；默认选中今天">3<div class="dots"><i style="background:#d5483f"></i><i style="background:#b59a00"></i></div></span>
+          <span class="dsho-calDay">4<div class="dots"><i style="background:#d5483f"></i><i style="background:#e08300"></i></div></span>
+          <span class="dsho-calDay">5<div class="dots"><i style="background:#d5483f"></i></div></span>
+          <span class="dsho-calDay">6</span><span class="dsho-calDay">7</span><span class="dsho-calDay">8</span><span class="dsho-calDay">9</span>
+          <span class="dsho-calDay">10<div class="dots"><i style="background:#e08300"></i></div></span>
+          <span class="dsho-calDay">11</span><span class="dsho-calDay">12</span><span class="dsho-calDay">13</span><span class="dsho-calDay">14</span><span class="dsho-calDay">15</span><span class="dsho-calDay">16</span><span class="dsho-calDay">17</span><span class="dsho-calDay">18</span><span class="dsho-calDay">19</span><span class="dsho-calDay">20</span><span class="dsho-calDay">21</span><span class="dsho-calDay">22</span><span class="dsho-calDay">23</span><span class="dsho-calDay">24</span><span class="dsho-calDay">25</span><span class="dsho-calDay">26</span><span class="dsho-calDay">27</span><span class="dsho-calDay">28</span><span class="dsho-calDay">29</span><span class="dsho-calDay">30</span>
+          <span class="dsho-calDay dim">1</span><span class="dsho-calDay dim">2</span><span class="dsho-calDay dim">3</span><span class="dsho-calDay dim">4</span><span class="dsho-calDay dim">5</span><span class="dsho-calDay dim">6</span>
+        </div>
+        <div class="dsho-dayHead" data-field="选中日列表" data-type="ScheduleSnapshot[]" data-desc="11月3日（周二）的日程；行组件与会话页共用">11月3日 · 周二</div>
+        <div class="dsho-dayGroup" data-field="过期置顶组" data-type="分组" data-desc="当日已过期的日程置顶显示，方便补办">已过期</div>
+        <div class="dsho-todos" style="margin:4px 0">
+          <div class="dsho-todo"><button class="dsho-todoCheck"></button><div class="dsho-todoBody"><div class="dsho-todoLine"><span class="dsho-todoTitle">回复供应商报价邮件</span><span class="dsho-todoPriority dsho-todoPriority-P2">P2</span><span class="dsho-todoTime dsho-todoTime-over">已过期 10-31</span></div></div><div class="dsho-src" data-field="ScheduleSnapshot.conversationTitle（来源回链）" data-type="string" data-desc="日程独立表冗余的来源会话标题：日程页可跨会话看到条目，回链不用二次查。点击标题可跳会话页">来自 北京行程安排</div></div>
+        </div>
+        <div class="dsho-dayGroup" style="color:var(--dsw-alias-label-tertiary)" data-field="进行中/今日组" data-type="分组" data-desc="非过期的当日日程">今日</div>
+        <div class="dsho-todos" style="margin:4px 0">
+          <div class="dsho-todo dsho-todo-open"><button class="dsho-todoCheck">✓</button><div class="dsho-todoBody"><div class="dsho-todoLine"><span class="dsho-todoTitle">预约本周内的体检号源</span><span class="dsho-todoPriority dsho-todoPriority-P0">P0</span><span class="dsho-todoTime dsho-todoTime-active"><span class="dsho-dot"></span>11-01 → 11-05</span></div><div class="dsho-todoMeta"><span class="dsho-todoRemind">⏰ 11-03 09:00 提醒</span></div><div class="dsho-src">来自 北京行程安排</div></div></div>
+          <div class="dsho-todo"><button class="dsho-todoCheck"></button><div class="dsho-todoBody"><div class="dsho-todoLine"><span class="dsho-todoTitle">办理宽带过户</span><span class="dsho-todoPriority dsho-todoPriority-P2">P2</span><span class="dsho-todoTime">11-03 09:00 → 12:00</span></div><div class="dsho-src">来自 北京行程安排</div></div></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+<script>
+const tip = document.getElementById('tip');
+document.addEventListener('mouseover', e => {
+  const el = e.target.closest('[data-field]');
+  if (!el) { tip.style.display = 'none'; return; }
+  tip.innerHTML = `<span class="f">${el.dataset.field}</span><span class="ty">${el.dataset.type || ''}</span>` + (el.dataset.desc ? `<div class="d">${el.dataset.desc}</div>` : '');
+  tip.style.display = 'block'; move(e);
+});
+document.addEventListener('mousemove', e => { if (tip.style.display === 'block') move(e); });
+function move(e){ const pad=14; let x=e.clientX+pad, y=e.clientY+pad; const r=tip.getBoundingClientRect();
+  if(x+r.width>innerWidth-8) x=e.clientX-r.width-pad; if(y+r.height>innerHeight-8) y=e.clientY-r.height-pad;
+  tip.style.left=x+'px'; tip.style.top=y+'px'; }
+const btn = document.getElementById('mapBtn');
+btn.addEventListener('click', () => { document.body.classList.toggle('map'); btn.textContent = '字段映射：' + (document.body.classList.contains('map') ? '开' : '关'); });
+document.querySelectorAll('.dsho-todoBody').forEach(b => b.addEventListener('click', () => b.parentElement.classList.toggle('dsho-todo-open')));
+document.querySelectorAll('.dsho-askOpt').forEach(o => o.addEventListener('click', () => { o.parentElement.querySelectorAll('.dsho-askOpt').forEach(x => x.classList.remove('sel')); o.classList.add('sel'); }));
+document.getElementById('tabSched').addEventListener('click', () => {
+  document.getElementById('paneBoard').style.display = 'none';
+  document.getElementById('paneSched').style.display = 'block';
+});
+document.querySelector('#paneBoard').closest('.boardBar') && document.querySelectorAll('.dsho-tab')[0].addEventListener('click', () => {
+  document.getElementById('paneBoard').style.display = 'block';
+  document.getElementById('paneSched').style.display = 'none';
+});
+</script>
+</body>
+</html>

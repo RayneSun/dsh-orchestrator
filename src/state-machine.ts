@@ -64,6 +64,14 @@ export function activateConversation(conv: ConversationRecord, taskId: string, a
   return { ...touch(conv, at), state: 'running', activeTaskId: taskId, lastTaskId: taskId }
 }
 
+/**
+ * input_required 阻塞等待作答：会话聚合状态同步为待决策（消费方约定非 idle 会话读 Conversation.state），
+ * 但轮次未结束——activeTaskId 保留，作答后由 answerTaskQuestions 回 running 并重开同一 TaskRun。
+ */
+export function awaitingConversation(conv: ConversationRecord, at = new Date().toISOString()): ConversationRecord {
+  return { ...touch(conv, at), state: 'input_required' }
+}
+
 export function settleConversation(
   conv: ConversationRecord,
   task: TaskRecord,

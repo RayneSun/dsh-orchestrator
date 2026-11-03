@@ -18,7 +18,7 @@ import { deliveryNotice, questionListText, revisionPrompt, rosterSummarySegment,
 import { type ScheduleServiceLike, type SessionActivityGroup } from './schedule-marks.ts'
 import { toJson } from './json.ts'
 import { isWorkerToolForbidden } from './worker-policy.ts'
-import { LEAD_SUPPRESSED_SECTIONS, LEAD_TOOL_ALLOW } from './lead-policy.ts'
+import { LEAD_SUPPRESSED_SECTIONS, leadToolDenyList, unrecognizedGlobalTools } from './lead-policy.ts'
 import { normalizeProgressSteps } from './progress.ts'
 import { buildChildWorkspace, ensureVaultPathEnv, resolveVaultRoot } from './workspaces.ts'
 import {
@@ -42,6 +42,7 @@ import {
   failTask,
   interruptTaskAfterRestart,
   resumeTaskWithAnswers,
+  awaitingConversation,
   settleConversation,
   startConversation,
   deliveryEnabledFor,
@@ -539,7 +540,7 @@ export class OrchestratorService extends TypertRemoteService {
     for (const sectionName of LEAD_SUPPRESSED_SECTIONS) {
       this.keep(agent, scoped.systemPrompt.section({ name: sectionName, order: 0, text: '', interpolate: false }))
     }
-    this.applyLeadToolAllowlist(agent, scoped)
+    this.applyLeadToolDenylist(agent, scoped)
     // Lead 会话收到用户消息时：记录活动推迟 Dream，并把问题文本作为记忆召回 query。
     this.keep(agent, scoped.on('session/event', (session, event) => {
       if (String(session.id) !== String(agent.session.id)) return
@@ -558,19 +559,21 @@ export class OrchestratorService extends TypertRemoteService {
     for (const tool of this.leadTools(agent)) this.keep(agent, scoped.tools.register(tool as any))
   }
 
-  /** Lead 工具白名单：只保留显式允许且当前确实注册的全局工具。 */
-  private applyLeadToolAllowlist(agent: Agent, scoped: Agent['ctx']): void {
+  /** Lead 工具黑名单：DSH 自带工具全保留，只屏蔽第三方执行类工具（未注册的自动跳过）。 */
+  private applyLeadToolDenylist(agent: Agent, scoped: Agent['ctx']): void {
     try {
-      // restrict 只作用于全局层：scope 内注册的 orchestrator_* 与影子记忆工具不受影响。
-      const globalNames = new Set(scoped.tools.schemas().map(schema => schema.name))
-      const allow = LEAD_TOOL_ALLOW.filter(name => globalNames.has(name))
-      const hidden = [...globalNames].filter(name => !(LEAD_TOOL_ALLOW as readonly string[]).includes(name))
-      if (allow.length > 0) this.keep(agent, scoped.tools.restrict({ allow: [...allow] }))
-      else this.hostCtx.logger.warn('orchestrator: lead tool allowlist matched no global tools; skipping restriction')
-      this.hostCtx.logger.info(`orchestrator: lead allowlist kept ${allow.length}, hidden ${hidden.length} global tools`)
+      // deny 只作用于全局层：scope 内注册的 orchestrator_* 与影子记忆工具不受影响。
+      const globalNames = [...new Set(scoped.tools.schemas().map(schema => schema.name))]
+      const deny = leadToolDenyList(globalNames)
+      if (deny.length > 0) this.keep(agent, scoped.tools.restrict({ deny }))
+      // 工具清单巡检：陌生名字（非自带基线、未命中 deny）主动提醒复查名单。
+      const unrecognized = unrecognizedGlobalTools(globalNames)
+      if (unrecognized.length > 0) {
+        this.hostCtx.logger.warn(`orchestrator: unrecognized global tools visible to Lead: ${unrecognized.join(', ')} — review LEAD_TOOL_DENY in lead-policy.ts`)
+      }
     } catch (error) {
       // 枚举失败时退回无限制，避免主控完全失去工具。
-      this.hostCtx.logger.warn(`orchestrator: lead tool allowlist failed: ${String(error)}`)
+      this.hostCtx.logger.warn(`orchestrator: lead tool denylist failed: ${String(error)}`)
     }
   }
 
@@ -1672,8 +1675,11 @@ export class OrchestratorService extends TypertRemoteService {
       const terminal = (deliverableTaskStatuses as readonly string[]).includes(task.status)
       const isInputRequired = task.status === 'input_required'
       await this.applyUpdateSideEffects(conv, args)
-      // input_required 不 settle（工具阻塞等用户作答），其余终态照常 settle。
-      const nextConv = terminal && !isInputRequired ? settleConversation(conv, task) : conv
+      // input_required 不 settle（activeTaskId 保留、轮次未结束），但聚合状态要同步为待决策；
+      // 其余终态照常 settle 回 idle。
+      const nextConv = terminal && !isInputRequired
+        ? settleConversation(conv, task)
+        : isInputRequired ? awaitingConversation(conv) : conv
       await this.putPair(nextConv, task)
       if (terminal && !isInputRequired) {
         terminalTaskId = task.id
