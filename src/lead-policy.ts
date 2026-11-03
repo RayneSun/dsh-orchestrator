@@ -61,31 +61,32 @@ export const DSH_CORE_TOOL_BASELINE: readonly string[] = [
   'web_search', 'working_directory', 'write',
 ]
 
-/**
- * 陌生工具检测：注册表中不在自带基线、也不命中 deny 名单/前缀的名字。
- * 这些工具当前对 Lead 可见——新装第三方插件会走到这里，触发 warn 提醒。
- */
 /** 基线外的有意保留项：meow 影子只读（Lead 侧复刻实现，不依赖全局注册）。 */
 export const LEAD_TOOL_KEEP: readonly string[] = ['memory_search', 'memory_read']
 
-export function unrecognizedGlobalTools(registeredNames: readonly string[]): string[] {
-  const baseline = new Set([...DSH_CORE_TOOL_BASELINE, ...LEAD_TOOL_KEEP])
-  return registeredNames.filter(name =>
-    !baseline.has(name)
-    && !(LEAD_TOOL_DENY as readonly string[]).includes(name)
-    && !LEAD_TOOL_DENY_PREFIXES.test(name))
-}
-
 /** 浏览器操控类前缀兜底（browser-skill / ego-browser，未激活也不怕将来出现）。 */
 const LEAD_TOOL_DENY_PREFIXES = /^(bsk|ego)_/
+
+/** 工具名是否命中 deny：精确名单或浏览器操控类前缀。 */
+function isDeniedTool(name: string): boolean {
+  return (LEAD_TOOL_DENY as readonly string[]).includes(name) || LEAD_TOOL_DENY_PREFIXES.test(name)
+}
 
 /**
  * 计算要 deny 的工具名：精确名单 ∩ 当前注册集合，加上命中前缀的注册工具。
  * restrict 只接受已注册的全局工具名，必须先按运行时注册表过滤。
  */
 export function leadToolDenyList(registeredNames: readonly string[]): string[] {
-  return registeredNames.filter(name =>
-    (LEAD_TOOL_DENY as readonly string[]).includes(name) || LEAD_TOOL_DENY_PREFIXES.test(name))
+  return registeredNames.filter(isDeniedTool)
+}
+
+/**
+ * 陌生工具检测：注册表中不在自带基线/keep、也不命中 deny 名单/前缀的名字。
+ * 这些工具当前对 Lead 可见——新装第三方插件会走到这里，触发 warn 提醒。
+ */
+export function unrecognizedGlobalTools(registeredNames: readonly string[]): string[] {
+  const known = new Set([...DSH_CORE_TOOL_BASELINE, ...LEAD_TOOL_KEEP])
+  return registeredNames.filter(name => !known.has(name) && !isDeniedTool(name))
 }
 
 /**
