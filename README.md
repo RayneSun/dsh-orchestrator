@@ -21,9 +21,29 @@ Worker 的任务上报协议、安全红线（支付/删除等不可逆操作先
 - `meow-memory`：跨会话长期记忆，是唯一长期记忆库。Lead 与所有 Worker 子会话通过共享链接（macOS/Linux 符号链接、Windows junction）指向主工作区下的同一份记忆库，任何一端写入、全端可查。
 - `@wxg-prc-cpg/browser-skill-dsh-plugin`：浏览器自动化；需自行安装 `bsk` CLI 和浏览器扩展。
 - `@zhengjunyao/dsh-qqmail`：QQ 邮箱/IMAP/SMTP，默认只读，外发或删除需用户确认与配置授权码。
+- `dsh-obsidian`：共享 Obsidian 知识库（kb_vault）。vault 根随 DSH 工作区自动解析（`<用户 Documents>/deepseek-harness/default-workspace/kb_vault`），首次启动主会话时由 orchestrator 自动创建；可用环境变量 `DSH_VAULT_PATH` 覆盖到任意位置。归档任务按 `kb_vault/<session_id>/` 结构写入，详见下文「个人知识库（Obsidian vault）」。
 - 桌面操控：macOS 使用本包内 vendored 的 `dsh-computer-use` 驱动；Windows 安装 `@milkuovo/dsh-computer-use`。两者通过平台 gate 二选一启用。vendored 驱动的 MIT 许可证见 `lib/vendor/dsh-computer-use-darwin/LICENSE`，仍需系统提供可执行的 `cua-driver`。
 
 这些能力插件的普通依赖不会把旧版 DSH runtime 提升到 profile 依赖树；macOS 驱动只通过宿主的 peer runtime 加载，避免覆盖 `@deepseek-ai/dsh-tools`。
+
+## 个人知识库（Obsidian vault）
+
+插件随 bundle 内置 `dsh-obsidian`，提供 Obsidian 风格的 md 知识库（搜索、wikilink、backlinks），供 Lead 与全部 Worker 共享：
+
+- **vault 根**：`kb_vault`，位于 DSH 主工作区根下（默认 `<用户 Documents>/deepseek-harness/default-workspace/kb_vault`）。`cordis.patch.yml` 中 vaultPath 通过动态表达式解析：优先读环境变量 `DSH_VAULT_PATH`（部署服务器或自定义工作区位置时设置），否则按用户 Documents 目录推导。
+- **自动初始化**：orchestrator 在每次主会话（Lead）建立时自动 `mkdir kb_vault`（仅建根，不预建 session/assets；session/assets 由归档任务按会话创建）。
+- **目录结构**：
+  ```
+  kb_vault/                      vault 根（vaultPath 指向这里）
+  └── <session_id>/              每个会话一个目录（目录名 = 会话 ID，拿不到用 workspaceName）
+      ├── 00-会话归档总览索引.md  会话级唯一索引（wikilink 汇总本会话全部笔记/原件）
+      ├── 10-笔记.md             笔记 md（编号段位即主题：01-09 主题一、10-19 主题二、20-29 主题三…）
+      ├── 20-笔记2.md
+      └── assets/                原件目录（pdf/图片/Office 等，保留原名）
+  ```
+- **写入纪律**（固化在 Lead/Worker persona）：md 一律用 `obsidian_write`（不要用 Write 裸写）以便索引与搜索；一原件一 md；原件放本会话 `assets/` 保留原名；不建主题子目录；每个会话根目录必须有 `00-会话归档总览索引.md`。
+- **用户侧查询**：向主会话问"我有什么文件/知识库里有什么/找一下 XX"，Lead 会经 `obsidian_list` / `obsidian_search` 汇总回答。
+- **覆盖 vaultPath**：设置环境变量后重启即可，如 `$env:DSH_VAULT_PATH = "D:\data\kb_vault"`（Windows）/ `export DSH_VAULT_PATH=/srv/kb_vault`（Linux）。
 
 ## 工作方式
 
@@ -54,10 +74,10 @@ Worker 的任务上报协议、安全红线（支付/删除等不可逆操作先
 
 要求接收方已安装 DSH `0.2.1-rc.2` 或更高版本，并且使用 Web profile。
 
-把 `may-dsh-orchestrator-0.3.13.tgz` 发给对方后执行（安装后新会话自动进入主控助理预设，无需手改配置）：
+把 `may-dsh-orchestrator-0.3.14.tgz` 发给对方后执行（安装后新会话自动进入主控助理预设，无需手改配置）：
 
 ```sh
-dsh plugin --profile web add /path/to/may-dsh-orchestrator-0.3.13.tgz
+dsh plugin --profile web add /path/to/may-dsh-orchestrator-0.3.14.tgz
 dsh web --no-open --host 127.0.0.1 --port 3080
 ```
 
@@ -65,7 +85,7 @@ dsh web --no-open --host 127.0.0.1 --port 3080
 
 ```sh
 dsh plugin --profile web remove @may/dsh-orchestrator
-dsh plugin --profile web add /path/to/may-dsh-orchestrator-0.3.13.tgz
+dsh plugin --profile web add /path/to/may-dsh-orchestrator-0.3.14.tgz
 ```
 
 重新生成分发包：

@@ -15,9 +15,6 @@ export const LEAD_TOOL_ALLOW = [
   'read',
   'glob',
   'grep',
-  // 记忆只读（写入全部派发 Worker）
-  'memory_search',
-  'memory_read',
 ] as const
 
 /**

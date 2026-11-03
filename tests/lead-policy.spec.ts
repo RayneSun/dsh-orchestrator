@@ -2,10 +2,10 @@ import { describe, expect, it } from 'vitest'
 import { LEAD_SUPPRESSED_SECTIONS, LEAD_TOOL_ALLOW } from '../src/lead-policy.ts'
 
 describe('Lead 工具白名单与提示段抑制', () => {
-  it('只保留提问、一步查询与记忆只读', () => {
+  it('只保留提问、一步查询（记忆上下文由系统提示注入，Lead 不直接读写）', () => {
     expect([...LEAD_TOOL_ALLOW].sort()).toEqual([
       'ask_user', 'ask_user_question',
-      'glob', 'grep', 'memory_read', 'memory_search', 'read', 'web_fetch', 'web_search',
+      'glob', 'grep', 'read', 'web_fetch', 'web_search',
     ])
   })
 
