@@ -54,10 +54,10 @@ Worker 的任务上报协议、安全红线（支付/删除等不可逆操作先
 
 要求接收方已安装 DSH `0.2.1-rc.2` 或更高版本，并且使用 Web profile。
 
-把 `may-dsh-orchestrator-0.3.13.tgz` 发给对方后执行（安装后新会话自动进入主控助理预设，无需手改配置）：
+把 `may-dsh-orchestrator-0.3.16.tgz` 发给对方后执行（安装后新会话自动进入主控助理预设，无需手改配置）：
 
 ```sh
-dsh plugin --profile web add /path/to/may-dsh-orchestrator-0.3.13.tgz
+dsh plugin --profile web add /path/to/may-dsh-orchestrator-0.3.16.tgz
 dsh web --no-open --host 127.0.0.1 --port 3080
 ```
 
@@ -65,7 +65,7 @@ dsh web --no-open --host 127.0.0.1 --port 3080
 
 ```sh
 dsh plugin --profile web remove @may/dsh-orchestrator
-dsh plugin --profile web add /path/to/may-dsh-orchestrator-0.3.13.tgz
+dsh plugin --profile web add /path/to/may-dsh-orchestrator-0.3.16.tgz
 ```
 
 重新生成分发包：
