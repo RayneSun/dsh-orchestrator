@@ -20,7 +20,9 @@ function harness() {
   const fake: Record<string, unknown> = {
     serialize: (fn: () => Promise<unknown>) => fn(),
     conversationByChild: () => conv,
+    conversationById: () => conv,
     taskById: (id: string) => id === 'task_1' ? task : undefined,
+    taskToolSteps: new Map(),
     applyUpdateSideEffects: async () => {},
     schedulesOf: () => [],
     deliveryToggles: () => ({ completed: true, failed: true, inputRequired: false, interrupted: true }),

@@ -1,8 +1,9 @@
 import { mkdtemp, rm, readdir } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { homedir, tmpdir } from 'node:os'
+import { join, resolve } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
-import { buildChildWorkspace, ensureSharedMemoryLink, sanitizeWorkspaceName, SHARED_MEMORY_DIRNAME } from '../src/workspaces.ts'
+import { buildChildWorkspace, ensureVaultPathEnv, resolveVaultRoot, sanitizeWorkspaceName } from '../src/workspaces.ts'
+import { MEMORY_VAULT_DIRNAME } from '../src/types.ts'
 
 const roots: string[] = []
 afterEach(async () => {
@@ -46,34 +47,33 @@ describe('子会话工作区路径', () => {
   })
 })
 
-describe('共享记忆库链接', () => {
-  it('Worker 工作区的 .dsh-meow 链接到主工作区，且幂等', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'dsh-orchestrator-'))
-    roots.push(root)
-    const { mkdir, lstat, readlink } = await import('node:fs/promises')
-    const worker = join(root, 'worker-a')
-    await mkdir(worker)
-    await expect(ensureSharedMemoryLink(worker, root)).resolves.toBe(true)
-    const link = join(worker, SHARED_MEMORY_DIRNAME)
-    expect((await lstat(link)).isSymbolicLink()).toBe(true)
-    expect(await readlink(link)).toBe(join(root, SHARED_MEMORY_DIRNAME))
-    // 目标目录被真实创建，幂等重入不报错
-    await expect(ensureSharedMemoryLink(worker, root)).resolves.toBe(true)
+describe('记忆库常量', () => {
+  it('记忆与知识库统一由 dsh-obsidian 管理（kb_vault）', () => {
+    expect(MEMORY_VAULT_DIRNAME).toBe('kb_vault')
+  })
+})
+
+describe('DSH_VAULT_PATH 代码内兜底', () => {
+  const original = process.env.DSH_VAULT_PATH
+  afterEach(() => {
+    if (original === undefined) delete process.env.DSH_VAULT_PATH
+    else process.env.DSH_VAULT_PATH = original
   })
 
-  it('已存在真实目录（历史孤立记忆）时保留现状', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'dsh-orchestrator-'))
-    roots.push(root)
-    const { mkdir } = await import('node:fs/promises')
-    const worker = join(root, 'worker-b')
-    await mkdir(join(worker, SHARED_MEMORY_DIRNAME), { recursive: true })
-    await expect(ensureSharedMemoryLink(worker, root)).resolves.toBe(false)
+  it('未配置时填充与 patch.yml 推导一致的默认值；显式配置优先不覆盖', () => {
+    delete process.env.DSH_VAULT_PATH
+    ensureVaultPathEnv()
+    expect(process.env.DSH_VAULT_PATH).toBe(resolve(homedir(), 'Documents', 'deepseek-harness', 'default-workspace', 'kb_vault'))
+    process.env.DSH_VAULT_PATH = 'D:/custom/vault'
+    ensureVaultPathEnv()
+    expect(process.env.DSH_VAULT_PATH).toBe('D:/custom/vault')
   })
 
-  it('主工作区自身或非子目录不建链接', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'dsh-orchestrator-'))
-    roots.push(root)
-    await expect(ensureSharedMemoryLink(root, root)).resolves.toBe(false)
-    await expect(ensureSharedMemoryLink(join(root, '..'), root)).resolves.toBe(false)
+  it('resolveVaultRoot 优先读代码填充的环境变量，无值时才落主工作区根', () => {
+    delete process.env.DSH_VAULT_PATH
+    ensureVaultPathEnv()
+    expect(resolveVaultRoot('C:/any/workspace')).toBe(resolve(process.env.DSH_VAULT_PATH!))
+    delete process.env.DSH_VAULT_PATH
+    expect(resolveVaultRoot('C:/any/workspace')).toBe(resolve('C:/any/workspace', 'kb_vault'))
   })
 })

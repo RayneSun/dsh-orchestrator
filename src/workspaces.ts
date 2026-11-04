@@ -1,5 +1,7 @@
-import { lstat, mkdir, readlink, stat, symlink } from 'node:fs/promises'
+import { stat } from 'node:fs/promises'
+import { homedir } from 'node:os'
 import { resolve, sep, basename, join } from 'node:path'
+import { MEMORY_VAULT_DIRNAME } from './types.ts'
 
 const MAX_NAME_LENGTH = 64
 
@@ -52,28 +54,32 @@ export async function buildChildWorkspace(rootCwd: string, requestedName: string
   throw new Error(`无法为子会话分配工作区目录：${slug} 的可用名称已耗尽`)
 }
 
-/** meow-memory 记忆库目录名（其库文件为 <会话cwd>/.dsh-meow/memory.db，per-workspace）。 */
-export const SHARED_MEMORY_DIRNAME = '.dsh-meow'
+/**
+ * DSH 默认共享 vault 的代码内定位：锚定 dsh 默认工作空间下的
+ * default-workspace/kb_vault（<用户目录>/Documents/deepseek-harness/default-workspace/kb_vault），
+ * 与 cordis.patch.yml 中 dsh-obsidian vaultPath 的默认推导完全一致，双源读写同一 vault，
+ * 不随进程 cwd 漂移（多实例部署时各自 cwd 不同，cwd 推导会分叉到不同目录）。
+ */
+export function defaultVaultPath(): string {
+  return resolve(homedir(), 'Documents', 'deepseek-harness', 'default-workspace', MEMORY_VAULT_DIRNAME)
+}
 
 /**
- * 把 Worker 工作区下的记忆库目录链接到主工作区的共享库，让 Lead 与全部 Worker
- * 共用同一份长期记忆（meow-memory 开 WAL + busy_timeout，多连接并发安全）。
- * 已存在真实目录（历史孤立记忆）时保留现状返回 false，由调用方决定告警；
- * 链接已正确指向目标时幂等返回 true。
+ * 进程内兜底设置 DSH_VAULT_PATH：未显式配置时填充 defaultVaultPath()，
+ * 使 Lead/Worker/Host 各处 resolveVaultRoot 与 dsh-obsidian 的 vaultPath
+ * 无需人工 setx 即指向同一 vault 根。只在当前进程生效、不持久化；显式
+ * 环境变量（setx / 启动脚本）始终优先，不会被覆盖。
  */
-export async function ensureSharedMemoryLink(workerDir: string, rootCwd: string): Promise<boolean> {
-  const root = resolve(rootCwd)
-  const worker = resolve(workerDir)
-  if (worker === root || !worker.startsWith(root + sep)) return false
-  const target = join(root, SHARED_MEMORY_DIRNAME)
-  const link = join(worker, SHARED_MEMORY_DIRNAME)
-  const existing = await lstat(link).catch(() => undefined)
-  if (existing) {
-    if (!existing.isSymbolicLink()) return false
-    const points = await readlink(link).catch(() => undefined)
-    return points === target
-  }
-  await mkdir(target, { recursive: true })
-  await symlink(target, link, process.platform === 'win32' ? 'junction' : 'dir')
-  return true
+export function ensureVaultPathEnv(): void {
+  if (!process.env.DSH_VAULT_PATH) process.env.DSH_VAULT_PATH = defaultVaultPath()
+}
+
+/**
+ * 解析共享 vault 根路径：环境变量 DSH_VAULT_PATH 优先，否则落在主工作区根下。
+ * 与 cordis.patch.yml 中 dsh-obsidian 的 vaultPath 推导保持一致。
+ */
+export function resolveVaultRoot(workspaceRoot: string): string {
+  return process.env.DSH_VAULT_PATH
+    ? resolve(process.env.DSH_VAULT_PATH)
+    : resolve(workspaceRoot, MEMORY_VAULT_DIRNAME)
 }
