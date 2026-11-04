@@ -109,9 +109,18 @@ function taskHeadline(task: TaskRecord): string {
   }
 }
 
-/** ISO 8601 时间点 → { date: 'MM-DD', time: ' HH:mm'（整点/23:59 省略）, t }。 */
-function fmtTimePoint(iso: string): { date: string; time: string; t: number } | undefined {
-  const t = Date.parse(iso)
+/** ISO 8601 时间点或全天纯日期 → { date: 'MM-DD', time: ' HH:mm'（整点/23:59 省略）, t }。
+ * endOfDay 用于全天 endAt 的过期判定（按当日 23:59:59.999，整日有效）。 */
+function parseTimePoint(raw: string, endOfDay = false): { date: string; time: string; t: number } | undefined {
+  const dateOnly = raw.match(/^(\d{4})-(\d{2})-(\d{2})$/)
+  if (dateOnly) {
+    const [, y, m, d] = dateOnly
+    const t = endOfDay
+      ? new Date(Number(y), Number(m) - 1, Number(d), 23, 59, 59, 999).getTime()
+      : new Date(Number(y), Number(m) - 1, Number(d)).getTime()
+    return { date: `${m}-${d}`, time: '', t }
+  }
+  const t = Date.parse(raw)
   if (Number.isNaN(t)) return undefined
   const d = new Date(t)
   const pad = (n: number) => String(n).padStart(2, '0')
@@ -127,8 +136,8 @@ type TodoTimeTone = 'neutral' | 'active' | 'soon' | 'over'
 /** startAt/endAt → 时间胶囊文本与状态色。 */
 function timeRange(schedule: ScheduleSnapshot): { text: string; tone: TodoTimeTone } | undefined {
   if (!schedule.startAt && !schedule.endAt) return undefined
-  const start = schedule.startAt ? fmtTimePoint(schedule.startAt) : undefined
-  const end = schedule.endAt ? fmtTimePoint(schedule.endAt) : undefined
+  const start = schedule.startAt ? parseTimePoint(schedule.startAt) : undefined
+  const end = schedule.endAt ? parseTimePoint(schedule.endAt, true) : undefined
   if ((schedule.startAt && !start) || (schedule.endAt && !end)) {
     return { text: [schedule.startAt, schedule.endAt].filter(Boolean).join(' → '), tone: 'neutral' }
   }
@@ -427,15 +436,41 @@ const pad2 = (n: number): string => String(n).padStart(2, '0')
 /** 本地时区 YYYY-MM-DD（与月历/日列表共用）。 */
 const dateKey = (d: Date): string => `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`
 const WEEKDAYS = ['日', '一', '二', '三', '四', '五', '六'] as const
+const DATE_ONLY_RE = /^\d{4}-\d{2}-\d{2}$/
 
-/** 日程覆盖某天：按 startAt 归属；跨天事项（endAt）期间每天都出现。 */
+/** 时间值 → 本地日历日 YYYY-MM-DD：全天纯日期原样返回（不经 Date.parse，避免时区平移），时刻值转本地日。 */
+function dayKeyOf(raw: string): string | undefined {
+  if (DATE_ONLY_RE.test(raw)) return raw
+  const t = Date.parse(raw)
+  return Number.isNaN(t) ? undefined : dateKey(new Date(t))
+}
+
+/** 日程结束毫秒：全天纯日期按当日 23:59:59.999（尾日包含），时刻值按时间戳。 */
+function scheduleEndMs(schedule: ScheduleSnapshot): number | undefined {
+  if (!schedule.endAt) return undefined
+  if (DATE_ONLY_RE.test(schedule.endAt)) return new Date(`${schedule.endAt}T23:59:59.999`).getTime()
+  const t = Date.parse(schedule.endAt)
+  return Number.isNaN(t) ? undefined : t
+}
+
+/** 由近及远排序：有 startAt 的按开始时间升序（纯日期按本地零点），无时间沉底，同组按创建时间稳定排序。 */
+function scheduleStartMs(schedule: ScheduleSnapshot): number {
+  if (!schedule.startAt) return Number.MAX_SAFE_INTEGER
+  const dateOnly = schedule.startAt.match(/^(\d{4})-(\d{2})-(\d{2})$/)
+  if (dateOnly) return new Date(Number(dateOnly[1]), Number(dateOnly[2]) - 1, Number(dateOnly[3])).getTime()
+  const t = Date.parse(schedule.startAt)
+  return Number.isNaN(t) ? Number.MAX_SAFE_INTEGER : t
+}
+const sortSchedules = (list: ScheduleSnapshot[]): ScheduleSnapshot[] =>
+  [...list].sort((a, b) => scheduleStartMs(a) - scheduleStartMs(b) || a.createdAt.localeCompare(b.createdAt))
+
+/** 日程覆盖某天：按 startAt 归属；跨天事项（endAt，尾日包含）期间每天都出现。 */
 function scheduleCoversDay(schedule: ScheduleSnapshot, day: string): boolean {
   if (!schedule.startAt) return false
-  const startMs = Date.parse(schedule.startAt)
-  if (Number.isNaN(startMs)) return false
-  const start = dateKey(new Date(startMs))
-  const end = schedule.endAt && !Number.isNaN(Date.parse(schedule.endAt)) ? dateKey(new Date(schedule.endAt)) : start
-  return day >= start && day <= end
+  const start = dayKeyOf(schedule.startAt)
+  if (!start) return false
+  const end = schedule.endAt ? dayKeyOf(schedule.endAt) : undefined
+  return day >= start && day <= (end ?? start)
 }
 
 /** 日程页：月历（优先级色点）+ 选中日列表（过期置顶组），行组件与看板共用。 */
@@ -454,10 +489,9 @@ function SchedulePane({ schedules, onToggle, onOpenAttachment, showToast }: {
     const map = new Map<string, ScheduleSnapshot[]>()
     for (const schedule of schedules) {
       if (!schedule.startAt || schedule.status === 'cancelled') continue
-      const startMs = Date.parse(schedule.startAt)
-      if (Number.isNaN(startMs)) continue
-      const start = dateKey(new Date(startMs))
-      const end = schedule.endAt && !Number.isNaN(Date.parse(schedule.endAt)) ? dateKey(new Date(schedule.endAt)) : start
+      const start = dayKeyOf(schedule.startAt)
+      if (!start) continue
+      const end = (schedule.endAt ? dayKeyOf(schedule.endAt) : undefined) ?? start
       // 跨度保护：脏数据（endAt 在几年后）最多铺 62 天，避免死循环。
       const cursor = new Date(`${start}T00:00:00`)
       for (let i = 0; i < 62; i++) {
@@ -467,6 +501,7 @@ function SchedulePane({ schedules, onToggle, onOpenAttachment, showToast }: {
         cursor.setDate(cursor.getDate() + 1)
       }
     }
+    for (const [key, list] of map) map.set(key, sortSchedules(list))
     return map
   }, [schedules])
 
@@ -476,7 +511,7 @@ function SchedulePane({ schedules, onToggle, onOpenAttachment, showToast }: {
   const daySchedules = (byDay.get(selected) ?? [])
     .filter(schedule => schedule.status !== 'cancelled')
   const overdue = daySchedules.filter(schedule =>
-    schedule.status === 'pending' && schedule.endAt && !Number.isNaN(Date.parse(schedule.endAt)) && Date.parse(schedule.endAt) < now.getTime())
+    schedule.status === 'pending' && (end => end !== undefined && end < now.getTime())(scheduleEndMs(schedule)))
   const current = daySchedules.filter(schedule => !overdue.includes(schedule))
   const selDate = new Date(`${selected}T00:00:00`)
 
@@ -509,8 +544,9 @@ function SchedulePane({ schedules, onToggle, onOpenAttachment, showToast }: {
         {Array.from({ length: firstDow }, (_, i) => <div key={`blank-${i}`} />)}
         {Array.from({ length: daysInMonth }, (_, i) => {
           const key = `${view.y}-${pad2(view.m + 1)}-${pad2(i + 1)}`
-          const dots = (byDay.get(key) ?? []).filter(s => s.status === 'pending').slice(0, 3)
-          const total = (byDay.get(key) ?? []).filter(s => s.status === 'pending').length
+          const dayPending = sortSchedules(byDay.get(key) ?? []).filter(s => s.status === 'pending')
+          const dots = dayPending.slice(0, 3)
+          const total = dayPending.length
           return <div key={key}
             className={`dsho-day${key === todayKey ? ' today' : ''}${key === selected ? ' sel' : ''}`}
             onClick={() => setSelected(key)}>
@@ -597,6 +633,8 @@ export function Board({ sessionId: propSessionId, useTabInfo, orchestrator, remo
     for (const schedule of snapshot?.schedules ?? []) {
       map.set(schedule.conversationId, [...(map.get(schedule.conversationId) ?? []), schedule])
     }
+    // 由近及远：会话内日程按 startAt 升序，无时间沉底
+    for (const [key, list] of map) map.set(key, sortSchedules(list))
     return map
   }, [snapshot])
 

@@ -4,11 +4,12 @@ import {
   normalizeTimePoint,
   createConversation,
   createTask,
-  userTodoSchema,
   conversationIdInputSchema,
   dispatchInputSchema,
   taskSchema,
   taskUpdateInputSchema,
+  scheduleConsistencyError,
+  scheduleObjectSchema,
 } from '../src/types.ts'
 
 describe('工具输入 Zod 校验', () => {
@@ -223,8 +224,12 @@ describe('task_update 日程与标题协议', () => {
     for (const bad of ['明天', '下周三', '2026/10/25', '2026-13-01', '2026-02-30', '18:00', '']) {
       expect(taskUpdateInputSchema.safeParse({ ...base, schedules: { create: [{ title: 'x', endAt: bad }] } }).success).toBe(false)
     }
-    for (const good of ['10-25', '10-25 18:00', '2026-10-25', '2026-10-25T09:00', '2026-10-25T09:00:00+08:00']) {
+    for (const good of ['10-25 18:00', '2026-10-25T09:00', '2026-10-25T09:00:00+08:00']) {
       expect(taskUpdateInputSchema.safeParse({ ...base, schedules: { create: [{ title: 'x', endAt: good }] } }).success).toBe(true)
+    }
+    // 纯日期属于全天日程：allDay 缺省时拒绝（强制模型表态，不再猜午夜）
+    for (const dateOnly of ['10-25', '2026-10-25']) {
+      expect(taskUpdateInputSchema.safeParse({ ...base, schedules: { create: [{ title: 'x', endAt: dateOnly }] } }).success).toBe(false)
     }
     expect(taskUpdateInputSchema.safeParse({ ...base, schedules: { create: [{ title: 'x', links: [{ url: 'ftp://a' }] }] } }).success).toBe(false)
     expect(taskUpdateInputSchema.safeParse({ ...base, schedules: { create: [{ title: 'x', attachments: [{ path: '/etc/passwd' }] }] } }).success).toBe(false)
@@ -246,12 +251,6 @@ describe('task_update 日程与标题协议', () => {
       schedules: { update: [{ id: 'todo_1', status: 'cancelled' }] },
     })
     expect(parsed.success).toBe(true)
-    const todo = userTodoSchema.parse({
-      id: 'todo_1', title: 'x', status: 'cancelled', completedBy: 'worker',
-      createdAt: '2026-10-23T00:00:00Z', updatedAt: '2026-10-23T00:00:00Z',
-    })
-    expect(todo.status).toBe('cancelled')
-    expect(todo.links).toEqual([])
   })
 
   it('时间归一化：简写补本地时区、省略年份取最近未来、完整 ISO 原样保留', () => {
@@ -292,26 +291,73 @@ describe('task_update 日程与标题协议', () => {
     expect(taskUpdateInputSchema.safeParse({ ...base, schedules: { create: [{ title: 'x', startAt: '2026-10-28T09:00:00+08:00', endAt: '2026-10-28T09:00:00+08:00' }] } }).success).toBe(true)
   })
 
-  it('旧日程迁移：dueDate(YYYY-MM-DD) → endAt（当日 23:59 本地转 ISO）', () => {
-    const todo = userTodoSchema.parse({
-      id: 'todo_1', title: 'x', status: 'pending', dueDate: '2026-10-30',
-      createdAt: '2026-10-23T00:00:00Z', updatedAt: '2026-10-23T00:00:00Z',
-    })
-    expect(todo.endAt).toBe(new Date('2026-10-30T23:59:59').toISOString())
-    expect((todo as Record<string, unknown>).dueDate).toBeUndefined()
-    // 新数据不带 dueDate 时不受影响
-    const fresh = userTodoSchema.parse({
-      id: 'todo_2', title: 'y', status: 'pending', endAt: '2026-11-01T18:00:00+08:00',
-      createdAt: '2026-10-23T00:00:00Z', updatedAt: '2026-10-23T00:00:00Z',
-    })
-    expect(fresh.endAt).toBe('2026-11-01T18:00:00+08:00')
+  it('schedules 全天日程：allDay 纯日期契约（新建必填 startAt、update 原子切换）', () => {
+    const base = { status: 'running' as const }
+    // 新建：allDay=true 必填完整纯日期 startAt；endAt 尾日包含、>= startAt
+    const parsed = taskUpdateInputSchema.parse({ ...base, schedules: { create: [{ title: '假期', allDay: true, startAt: '2026-11-04', endAt: '2026-11-06' }] } })
+    expect(parsed.schedules?.create?.[0]).toMatchObject({ allDay: true, startAt: '2026-11-04', endAt: '2026-11-06' })
+    // 单日全天可省略 endAt；缺省 allDay 落 false
+    const single = taskUpdateInputSchema.parse({ ...base, schedules: { create: [{ title: 'x', allDay: true, startAt: '2026-11-04' }] } })
+    expect(single.schedules?.create?.[0]).toMatchObject({ allDay: true, startAt: '2026-11-04' })
+    expect(taskUpdateInputSchema.parse({ ...base, schedules: { create: [{ title: 'x' }] } }).schedules?.create?.[0]).toMatchObject({ allDay: false })
+    // allDay=true 但缺 startAt / 带时刻 / 不完整日期 / 倒置 → 拒绝
+    expect(taskUpdateInputSchema.safeParse({ ...base, schedules: { create: [{ title: 'x', allDay: true }] } }).success).toBe(false)
+    expect(taskUpdateInputSchema.safeParse({ ...base, schedules: { create: [{ title: 'x', allDay: true, startAt: '2026-11-04 09:00' }] } }).success).toBe(false)
+    expect(taskUpdateInputSchema.safeParse({ ...base, schedules: { create: [{ title: 'x', allDay: true, startAt: '2026-11-4' }] } }).success).toBe(false)
+    expect(taskUpdateInputSchema.safeParse({ ...base, schedules: { create: [{ title: 'x', allDay: true, startAt: '2026-11-06', endAt: '2026-11-04' }] } }).success).toBe(false)
+    // allDay 缺省或显式 false：纯日期拒绝
+    expect(taskUpdateInputSchema.safeParse({ ...base, schedules: { create: [{ title: 'x', startAt: '2026-11-04' }] } }).success).toBe(false)
+    expect(taskUpdateInputSchema.safeParse({ ...base, schedules: { create: [{ title: 'x', allDay: false, startAt: '2026-11-04' }] } }).success).toBe(false)
+    // update：只改 allDay 不带 startAt → 拒绝（原子切换）
+    expect(taskUpdateInputSchema.safeParse({ ...base, schedules: { update: [{ id: 'a', allDay: true }] } }).success).toBe(false)
+    expect(taskUpdateInputSchema.safeParse({ ...base, schedules: { update: [{ id: 'a', allDay: false }] } }).success).toBe(false)
+    // update：allDay:true + 纯日期 startAt → 通过；allDay 缺省 + 纯日期 → 拒绝
+    expect(taskUpdateInputSchema.safeParse({ ...base, schedules: { update: [{ id: 'a', allDay: true, startAt: '2026-11-04' }] } }).success).toBe(true)
+    expect(taskUpdateInputSchema.safeParse({ ...base, schedules: { update: [{ id: 'a', startAt: '2026-11-04' }] } }).success).toBe(false)
+    // update：只改标题不碰时间 → patch 不携带 allDay/时间字段（避免合并覆盖旧值）
+    const titleOnly = taskUpdateInputSchema.parse({ ...base, schedules: { update: [{ id: 'a', title: '新标题' }] } })
+    expect(titleOnly.schedules?.update?.[0]).toEqual({ id: 'a', title: '新标题' })
   })
 
-  it('旧会话记录无 todos 字段时默认空清单', () => {
-    const conv = createConversation({ id: 'c1', childSessionId: 's1', parentSessionId: 'p1', title: 't' })
-    const { todos, ...legacy } = conv
-    const parsed = conversationSchema.parse(legacy)
-    expect(parsed.todos).toEqual([])
+  it('scheduleConsistencyError：allDay 与时间格式互洽（service 合并后兜底）', () => {
+    expect(scheduleConsistencyError({ allDay: true, startAt: '2026-11-04', endAt: '2026-11-06' })).toBeUndefined()
+    expect(scheduleConsistencyError({ allDay: false, startAt: '2026-10-28T09:00:00+08:00', endAt: '2026-10-30T18:00:00+08:00' })).toBeUndefined()
+    // allDay=true 但 startAt 带时刻（update 只带时间戳、allDay 沿用 true 的残留场景）
+    expect(scheduleConsistencyError({ allDay: true, startAt: '2026-11-04T09:00:00+08:00' })).toBeTruthy()
+    expect(scheduleConsistencyError({ allDay: true, startAt: '2026-11-04', endAt: '2026-11-04T18:00:00+08:00' })).toBeTruthy()
+    expect(scheduleConsistencyError({ allDay: true, startAt: '2026-11-06', endAt: '2026-11-04' })).toBeTruthy()
+    // allDay 缺省按有时刻语义：纯日期 / 倒置拒绝
+    expect(scheduleConsistencyError({ startAt: '2026-11-04' })).toBeTruthy()
+    expect(scheduleConsistencyError({ startAt: '2026-10-30T00:00:00+08:00', endAt: '2026-10-28T00:00:00+08:00' })).toBeTruthy()
+    expect(scheduleConsistencyError({})).toBeUndefined()
+  })
+
+  it('scheduleObjectSchema：allDay 缺省 false，旧记录免迁移', () => {
+    const record = scheduleObjectSchema.parse({
+      id: 'sch_1', parentSessionId: 's1', conversationId: 'c1', title: '旧日程',
+      startAt: '2026-10-28T09:00:00+08:00', priority: 'P3', status: 'pending',
+      links: [], attachments: [], contacts: [], createdAt: '2026-10-23T00:00:00Z', updatedAt: '2026-10-23T00:00:00Z',
+    })
+    expect(record.allDay).toBe(false)
+    const allDay = scheduleObjectSchema.parse({
+      id: 'sch_2', parentSessionId: 's1', conversationId: 'c1', title: '假期', allDay: true,
+      startAt: '2026-11-04', endAt: '2026-11-06', priority: 'P3', status: 'pending',
+      links: [], attachments: [], contacts: [], createdAt: '2026-10-23T00:00:00Z', updatedAt: '2026-10-23T00:00:00Z',
+    })
+    expect(allDay.allDay).toBe(true)
+    expect(allDay.startAt).toBe('2026-11-04')
+  })
+
+  it('v2 起 conv.todos 与大纲死字段直接删除（旧数据不做搬迁）', () => {
+    const parsed = conversationSchema.parse({
+      id: 'c1', childSessionId: 's1', parentSessionId: 'p1', title: 't',
+      outline: { summary: '查天气', keyFacts: ['旧事实'], entities: [], tags: [], artifacts: [], openQuestions: [] },
+      todos: [{ id: 'todo_1', title: '旧待办', status: 'done', priority: 'P3', createdAt: '2026-10-23T00:00:00Z', updatedAt: '2026-10-23T00:00:00Z' }],
+      activeTaskId: null, lastTaskId: null, revision: 0,
+      createdAt: '2026-10-23T00:00:00Z', updatedAt: '2026-10-23T00:00:00Z',
+    })
+    expect('todos' in parsed).toBe(false)
+    expect(parsed.outline).toEqual({ summary: '查天气' })
   })
 })
 
@@ -345,31 +391,6 @@ describe('旧版本存储记录迁移', () => {
     })
     expect(task.report?.result).toBe('r')
     expect(task.report && 'todos' in task.report).toBe(false)
-  })
-
-  it('0.3.12 日程的 completedAt 死字段剥离', () => {
-    const conv = conversationSchema.parse({
-      ...baseConv,
-      todos: [{
-        id: 'todo_1', title: 'x', status: 'done', priority: 'P3',
-        createdAt: '2026-10-23T00:00:00Z', updatedAt: '2026-10-23T00:00:00Z',
-        completedAt: '2026-10-23T01:00:00Z',
-      }],
-    })
-    expect(conv.todos[0]?.status).toBe('done')
-    expect(conv.todos[0] && 'completedAt' in conv.todos[0]).toBe(false)
-  })
-
-  it('0.3.12 日程 detail 迁移为 remark', () => {
-    const conv = conversationSchema.parse({
-      ...baseConv,
-      todos: [{
-        id: 'todo_1', title: 'x', detail: '旧备注', status: 'pending', priority: 'P3',
-        createdAt: '2026-10-23T00:00:00Z', updatedAt: '2026-10-23T00:00:00Z',
-      }],
-    })
-    expect(conv.todos[0]?.remark).toBe('旧备注')
-    expect(conv.todos[0] && 'detail' in conv.todos[0]).toBe(false)
   })
 
   it('会话 blocked 状态迁移为 input_required', () => {

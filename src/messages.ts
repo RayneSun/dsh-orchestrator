@@ -33,7 +33,7 @@ export const LEAD_PROMPT = `你是用户的主控助理（Lead）：理解需求
 - 新建：用户主动要记日程/提醒时，你自己没有创建日程的工具——派发给对应主题的子会话（一事一会对号，没有合适的就新建，workspaceName 如 reminders），任务里写明事项与已知信息，要求 Worker 用 schedules.create:[{title, ...}] 创建并 completed 收尾。
 - 代办：用户让你代办某条日程时，复用提出该日程的 conversationId 派发，prompt 带日程 id 与内容，要求完成后用 schedules.update:[{id, status:'done'}] 标记。
 - 修改/作废：用户要改内容、起止/提醒时间、优先级，或取消某条日程时，派发到所属会话让 Worker 用 schedules.update 改（取消用 status:'cancelled'）。
-- 提醒类需求先分清主体：到点要**由你/子会话去做事**（查新闻、巡检、汇总）→ 派发并要求 Worker 用 schedule_create；只是**提醒用户本人去做事**（"提醒我 10 点出门"）→ 不要建定时任务，派发轻量任务让 Worker 用 schedules.create 创建带 remindAt 的日程，看板即刻可见、手机端可按 remindAt 提醒。同一件事禁止既建日程又建定时任务。派发时在任务里写清已知时间结构：事项有起止时段（如会议 18:00–22:00）→ 要求填 startAt/endAt；只有结束期限 → 只填 endAt；提醒时刻 → remindAt。时间格式从简（10-27 18:00），年份和时区可省。
+- 提醒类需求先分清主体：到点要**由你/子会话去做事**（查新闻、巡检、汇总）→ 派发并要求 Worker 用 schedule_create；只是**提醒用户本人去做事**（"提醒我 10 点出门"）→ 不要建定时任务，派发轻量任务让 Worker 用 schedules.create 创建带 remindAt 的日程，看板即刻可见、手机端可按 remindAt 提醒。同一件事禁止既建日程又建定时任务。派发时在任务里写清已知时间结构：事项有起止时段（如会议 18:00–22:00）→ 要求填 startAt/endAt；只有结束期限 → 只填 endAt；提醒时刻 → remindAt；全天事项（生日/假期/跨天活动）→ 要求 allDay:true + 完整纯日期 startAt（如 '2026-11-04'，跨天 endAt 写尾日且包含当天）。时间格式从简（10-27 18:00），年份和时区可省。
 
 # 长期记忆
 - 记什么：用户画像与偏好、长期事实、项目关键决策、用户纠正过的教训。临时进度、任务产物路径不记。
@@ -69,7 +69,7 @@ task_update 是你与用户之间的唯一通道：普通聊天消息不会送�
 - 提什么：只提助理代替不了、需要用户本人推进的事（本人操作、线下事务、待用户决策）；助理自己能做的事不提，没有就不提
 - 怎么写：新的放 create，改的放 update（id 从 task_update 返回值或投递附言的清单里抄，禁止编造）
 - 结构化纪律：电话/邮箱进 contacts、网址进 links、地点进 location、文件进 attachments；remark 只兜底纯文字备注，最后填
-- 时间纪律：有明确时间窗就填 startAt/endAt（如会议 18:00–22:00 → startAt='10-27 18:00'、endAt='10-27 22:00'；只有结束期限就只填 endAt）；到点提醒填 remindAt；格式从简，月-日 时:分即可，年份和时区可省；时间信息不许只写进 remark
+- 时间纪律：有明确时间窗就填 startAt/endAt（如会议 18:00–22:00 → startAt='10-27 18:00'、endAt='10-27 22:00'；只有结束期限就只填 endAt）；到点提醒填 remindAt；格式从简，月-日 时:分即可，年份和时区可省。全天事项（生日/假期/跨天活动）用 allDay:true + startAt='2026-11-04'（完整纯日期，跨天 endAt 写尾日且包含当天，如 11-04 到 11-06 填 '2026-11-06'）；普通日程时间必须带时刻，纯日期会被拒绝。时间信息不许只写进 remark
 - 被派回代办完成后 update 标 done；需求变更不再适用标 cancelled，不留着误导用户
 
 # 定时任务
@@ -100,9 +100,12 @@ export function workerPrompt(task: TaskRecord): string {
 
 /** 日程时间窗 → 简短中文标签（投递附言/上报回执共用）：结束 X / X 起 / X → Y，日期粒度 M-D。 */
 function scheduleTimeLabel(schedule: { startAt?: string, endAt?: string }): string {
-  const fmt = (iso: string): string => {
-    const d = new Date(iso)
-    return Number.isNaN(d.getTime()) ? iso : `${d.getMonth() + 1}-${d.getDate()}`
+  const fmt = (raw: string): string => {
+    // 全天日程存纯日期：不经 Date.parse（避免时区平移），直接截取月-日
+    const dateOnly = raw.match(/^(\d{4})-(\d{2})-(\d{2})$/)
+    if (dateOnly) return `${Number(dateOnly[2])}-${Number(dateOnly[3])}`
+    const d = new Date(raw)
+    return Number.isNaN(d.getTime()) ? raw : `${d.getMonth() + 1}-${d.getDate()}`
   }
   if (schedule.startAt && schedule.endAt) return `${fmt(schedule.startAt)} → ${fmt(schedule.endAt)}`
   if (schedule.endAt) return `结束 ${fmt(schedule.endAt)}`

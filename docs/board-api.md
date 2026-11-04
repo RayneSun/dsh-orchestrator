@@ -1,6 +1,6 @@
-# dsh-orchestrator 任务看板数据接口（v0.3.15 日程升级版）
+# dsh-orchestrator 任务看板数据接口（v0.3.17 全天日程版）
 
-> 面向下游（移动端 App）开发者。本文档完整描述 DSH Orchestrator 插件在 DSH Web（默认 `http://127.0.0.1:3080`）中暴露的任务看板数据结构：全部字段、全部状态定义、同步机制与展示建议。基于 v0.3.15：用户待办升级为用户日程（独立表 + 双页签看板）。
+> 面向下游（移动端 App）开发者。本文档完整描述 DSH Orchestrator 插件在 DSH Web（默认 `http://127.0.0.1:3080`）中暴露的任务看板数据结构：全部字段、全部状态定义、同步机制与展示建议。基于 v0.3.17：用户日程独立表 + 双页签看板（v0.3.15）+ 全天日程纯日期语义与死字段清理（v0.3.17）。
 > 内部资料，请勿公开分发。
 
 ## 1. 接入方式
@@ -55,8 +55,7 @@
 | title | string | 子会话标题（默认=首个任务主题，复用派发可同步更新） |
 | workspaceName | string? | 子工作区目录名（英文 slug，位于主工作区内） |
 | workspaceDir | string? | 子工作区绝对路径（移动端一般不展示） |
-| outline.summary | string | 最近 dispatch 主题链，Host 用 `'｜'` 拼接，最多保留 5 个；仅用于路由/摘要，不再由 Worker 上报 |
-| outline.keyFacts / entities / tags / artifacts / openQuestions | string[] | 结构兼容保留，恒为空数组，可忽略 |
+| outline.summary | string | 最近 dispatch 主题链，Host 用 `'｜'` 拼接，最多保留 5 个；仅用于路由/摘要，不再由 Worker 上报。outline 仅剩此一个字段（v0.3.17 起大纲死字段 keyFacts/entities/tags/artifacts/openQuestions 删除） |
 | activeTaskId | string \| null | 当前进行中的任务 ID |
 | lastTaskId | string \| null | 最近一次任务 ID |
 | state | ConversationState | 会话聚合状态：`provisioning / running / idle / input_required / failed`。生命周期：活动任务上报 `input_required` 时同步为该值（`activeTaskId` 保留，轮次未结束）；作答后回 `running`；`completed / failed / interrupted` settle 回 `idle` |
@@ -116,18 +115,19 @@ QuestionAnswer = {
 
 ## 5. Schedule（用户日程）
 
-主会话 scope 的独立表（v2 存储，旧 `Conversation.todos` 启动时幂等迁移）。一次任务可创建多条；App 可按会话（归属回链）或按时间（日程页）两个维度展示。没有 startAt/endAt 的日程只在会话页出现，日程页跳过。
+主会话 scope 的独立表（v2 存储）。一次任务可创建多条；App 可按会话（归属回链）或按时间（日程页）两个维度展示。没有 startAt/endAt 的日程只在会话页出现，日程页跳过。
 
 | 字段 | 类型 | 说明 |
 |---|---|---|
-| id | string | `sch_<uuid>`；v1 存量迁移时分配全新 id（旧 `todo_` id 不保留，Worker 引用旧 id 会报不存在） |
+| id | string | `sch_<uuid>`；旧 `todo_` id 已废弃，Worker 引用会报不存在 |
 | parentSessionId | string | 主会话 ID（scope 归属） |
 | conversationId | string | 提出该日程的子会话 ID（归属回链；代办/修改派回此会话） |
 | conversationTitle | string? | 仅 snapshot 投影：来源子会话标题，日程页渲染「来自 xx」 |
 | title | string | 极简标题，≤30 字 |
-| startAt | string(ISO 8601)? | 时间窗开始；与 endAt 同时存在时不得晚于 endAt |
-| endAt | string(ISO 8601)? | 时间窗结束/死线 |
-| remindAt | string(ISO 8601)? | 用户提醒时间 |
+| allDay | boolean | 全天日程标记；缺省 false（旧记录免迁移） |
+| startAt | string? | allDay=true 时为完整纯日期 `YYYY-MM-DD`（必填，不落时区）；否则为 ISO 8601 带时区时间戳（可缺省） |
+| endAt | string? | allDay=true 时为完整纯日期，**尾日包含**（11-04 到 11-06 存 `2026-11-06`，单日可省略）；否则为 ISO 8601 时间戳/死线 |
+| remindAt | string(ISO 8601)? | 用户提醒时间；不受 allDay 影响，恒为绝对时刻（全天日程也可设提醒） |
 | priority | `'P0' \| 'P1' \| 'P2' \| 'P3'` | 四象限；默认 P3 |
 | links | `{ url, label? }[]` | http(s) 链接，≤10 |
 | attachments | `{ path, name? }[]` | 子工作区相对路径，≤10；展示/打开时拼 `<workspaceName>/<path>` |
@@ -138,7 +138,14 @@ QuestionAnswer = {
 | completedBy | `'user' \| 'worker'`? | done 的完成方；pending 无 |
 | createdAt / updatedAt | string(ISO 8601) | 创建/更新时间 |
 
-时间输入在 Worker 上报时走宽松解析（`10-29 09:30`、`2026-10-29`、完整 ISO 8601 均可），存储归一化为带本地时区的 ISO 8601。
+时间输入在 Worker 上报时按 allDay 分叉解析，存储后格式互斥：
+
+- **普通日程（allDay=false/缺省）**：startAt/endAt 必须带时刻（`10-29 09:30`、`2026-10-29T09:00`、完整 ISO 8601 均可），归一化为带本地时区的 ISO 8601。**纯日期输入一律拒绝**（含 `10-25` 月-日简写），不再猜测午夜——`2026-11-04` 与 `2026-11-04 00:00` 从此语义可分。
+- **全天日程（allDay=true）**：startAt 必填完整纯日期 `YYYY-MM-DD`（不省略年、不带时刻）；endAt 可选、尾日包含、≥ startAt。纯日期不落时区，任何设备时区读取均为同一日历日。
+- **原子切换**：task_update 的 `schedules.update` 显式修改 allDay 必须同时携带新格式的 startAt（切全天带纯日期、切回带时刻），只改 allDay 会被 schema 拒绝；未带 allDay 的时间 patch 与存量记录合并后由 Host 做整条一致性校验（allDay 与时间格式不互洽整条报错，不产生部分写入）。
+- **互斥**：allDay 与 startAt/endAt 格式一一绑定，不存在"全天 + 时刻"混合记录；remindAt 恒为绝对时刻。
+
+> 与 RFC 5545 / MS Graph 的差异：本契约 endAt 为**包含端**（尾日当天有效），迁移自他方日历数据时注意换算（iCal/Graph 的排除端需减一天）。
 
 ## 6. TaskStatus 与 Worker 上报协议
 
@@ -232,6 +239,9 @@ App 渲染建议：列表 + 勾（completed）/ 转（in_progress）/ 空（pend
   - `task.summary` 删除；`Conversation.outline.summary` 由 Host 自动维护。
   - `task_update` Worker 状态删除 `blocked`；`fail` 对象必填；`userTodos` 全状态开放。
   - 新增 `answerTaskQuestions` RPC；问题卡可三处作答。
+- **v0.3.16 → v0.3.17 破坏性变化**：
+  - `Conversation.outline` 仅剩 `summary`；`keyFacts / entities / tags / artifacts / openQuestions` 死字段删除（此前恒为空数组，无消费方）。
+  - `Conversation.todos` 彻底删除（v0.3.15 已移入顶层 `snapshot.schedules`，本版起旧记录中的残留数据直接丢弃，不再迁移）。
 - **v0.3.14 → v0.3.15 破坏性变化**：
   - `userTodos` 协议改名 `schedules`（无别名）；id 前缀统一 `sch_`（存量迁移分配全新 id，旧 `todo_` id 失效）。
   - `Conversation.todos` 删除；改为顶层 `snapshot.schedules: Schedule[]`（主会话 scope，含 `conversationId`/`conversationTitle`）。

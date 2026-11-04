@@ -63,6 +63,15 @@ describe('scheduleStatusSection 投递附言', () => {
     expect(text).not.toContain('todo_3')
     expect(text).not.toContain('todo_4')
   })
+  it('全天日程纯日期标签：不经 Date.parse，直接月-日展示（含跨天）', () => {
+    const text = scheduleStatusSection([
+      { ...base, id: 'sch_1', title: '十一假期', startAt: '2026-10-01', endAt: '2026-10-07', status: 'pending', priority: 'P3' as const, links: [], attachments: [], contacts: [] },
+      { ...base, id: 'sch_2', title: '生日', startAt: '2026-11-04', status: 'pending', priority: 'P3' as const, links: [], attachments: [], contacts: [] },
+    ])
+    expect(text).toContain('[sch_1] 十一假期（10-1 → 10-7）')
+    expect(text).toContain('[sch_2] 生日（11-4 起）')
+  })
+
   it('空清单或全无可提项时不产生片段', () => {
     expect(scheduleStatusSection([])).toBe('')
     expect(scheduleStatusSection([{ ...base, id: 'todo_1', title: 'x', status: 'cancelled', priority: 'P3' as const, links: [], attachments: [], contacts: [] }])).toBe('')

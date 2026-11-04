@@ -62,6 +62,7 @@ import {
   dispatchInputSchema,
   conversationIdInputSchema,
   taskUpdateInputSchema,
+  scheduleConsistencyError,
   type DispatchInput,
   type TaskUpdateInput,
 } from './types.ts'
@@ -329,10 +330,7 @@ export class OrchestratorService extends TypertRemoteService {
       .map(([, conv]) => conv)
       .filter(conv => conv.parentSessionId === parentSessionId)
       .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
-      .map(conv => {
-        const stripped: ConversationRecord = { ...conv, todos: [] }
-        return this.scheduleMarks.get(conv.childSessionId) ? { ...stripped, hasActiveSchedule: true } : stripped
-      })
+      .map(conv => this.scheduleMarks.get(conv.childSessionId) ? { ...conv, hasActiveSchedule: true } : conv)
     const ids = new Set(conversations.map(conv => conv.id))
     const titles = new Map(conversations.map(conv => [conv.id, conv.title]))
     const tasks = [...this.tasks().entries()]
@@ -397,41 +395,8 @@ export class OrchestratorService extends TypertRemoteService {
   private async putPair(conv: ConversationRecord, task?: TaskRecord): Promise<void> {
     // Write the task before the conversation that references it so a crash cannot leave activeTaskId dangling.
     if (task) await this.tasks().put(task.id, task)
-    // v2：todos 已迁移进 schedules 表，conversation 记录统一剥离该字段落盘。
-    await this.conversations().put(conv.id, { ...conv, todos: [] })
+    await this.conversations().put(conv.id, conv)
     this.emitChanged()
-  }
-
-  /** v1 → v2 迁移：conv.todos 搬进 schedules 表后清空（幂等；todos 已空则跳过）。 */
-  private async migrateTodosToSchedules(): Promise<void> {
-    for (const [, conv] of this.conversations().entries()) {
-      if (!conv.todos.length) continue
-      const now = timestamp()
-      for (const todo of conv.todos) {
-        const item: ScheduleRecord = {
-          id: createId('sch'),
-          parentSessionId: conv.parentSessionId,
-          conversationId: conv.id,
-          title: todo.title,
-          ...todo.startAt ? { startAt: todo.startAt } : {},
-          ...todo.endAt ? { endAt: todo.endAt } : {},
-          ...todo.remindAt ? { remindAt: todo.remindAt } : {},
-          priority: todo.priority,
-          links: todo.links,
-          attachments: todo.attachments,
-          contacts: todo.contacts,
-          ...todo.location ? { location: todo.location } : {},
-          ...todo.remark ? { remark: todo.remark } : {},
-          status: todo.status,
-          ...todo.completedBy ? { completedBy: todo.completedBy } : {},
-          createdAt: todo.createdAt || now,
-          updatedAt: todo.updatedAt || now,
-        }
-        await this.schedules().put(item.id, item)
-      }
-      await this.conversations().put(conv.id, { ...conv, todos: [] })
-      this.hostCtx.logger.info(`orchestrator: migrated ${conv.todos.length} todos of ${conv.id} into schedules`)
-    }
   }
 
   private async registerPresets(): Promise<void> {
@@ -720,6 +685,7 @@ export class OrchestratorService extends TypertRemoteService {
             title: schedule.title,
             status: schedule.status,
             priority: schedule.priority,
+            ...schedule.allDay ? { allDay: true } : {},
             ...schedule.startAt ? { startAt: schedule.startAt } : {},
             ...schedule.endAt ? { endAt: schedule.endAt } : {},
             ...schedule.remindAt ? { remindAt: schedule.remindAt } : {},
@@ -1056,12 +1022,13 @@ export class OrchestratorService extends TypertRemoteService {
     const now = timestamp()
     const existing = this.schedulesOf(conv.id)
     for (const entry of args.schedules?.create ?? []) {
-      const { priority, ...content } = entry
+      const { priority, allDay, ...content } = entry
       const item: ScheduleRecord = {
         id: createId('sch'),
         parentSessionId: conv.parentSessionId,
         conversationId: conv.id,
         priority,
+        allDay: allDay ?? false,
         links: [], attachments: [], contacts: [],
         ...content,
         status: 'pending',
@@ -1075,9 +1042,8 @@ export class OrchestratorService extends TypertRemoteService {
       if (!item) throw new Error(`schedule not found in this conversation: ${entry.id}`)
       const { id, status, ...patch } = entry
       const merged = { ...item, ...patch }
-      if (merged.startAt && merged.endAt && Date.parse(merged.startAt) > Date.parse(merged.endAt)) {
-        throw new Error(`schedule ${id}: startAt 不能晚于 endAt`)
-      }
+      const inconsistency = scheduleConsistencyError(merged)
+      if (inconsistency) throw new Error(`schedule ${id}: ${inconsistency}`)
       await this.schedules().put(id, {
         ...merged,
         ...status !== undefined
@@ -1385,7 +1351,6 @@ export class OrchestratorService extends TypertRemoteService {
   /** Recover provisioning records and tasks left live by a process restart. */
   private async recoverRuntimeState(): Promise<void> {
     await this.serialize(async () => {
-      await this.migrateTodosToSchedules()
       const now = timestamp()
       for (const [, conv] of this.conversations().entries()) {
         // 存量会话补建共享记忆链接（workspaceDir 是主工作区的直接子目录，dirname 即主工作区）。
@@ -1517,9 +1482,10 @@ export const TASK_UPDATE_TOOL_PARAMETERS = {
           additionalProperties: false,
           properties: {
             title: { type: 'string', required: true, description: '日程标题（极简，≤30 字）' },
-            startAt: { type: 'string', description: '开始时间，如 10-28 09:00（可带年份 2026-10-28 09:00；事项可开始办理的时间窗起点，无明确起点不填）' },
-            endAt: { type: 'string', description: '结束时间，如 10-28 22:00（事项应完成的时刻）' },
-            remindAt: { type: 'string', description: '提醒时间，如 10-28 17:30（到点提醒用户，与时间窗分开）' },
+            allDay: { type: 'boolean', description: '全天日程：true 时 startAt 必填完整纯日期（如 2026-11-04），endAt 可选且尾日包含（11-04 到 11-06 填 2026-11-06），均不带时刻' },
+            startAt: { type: 'string', description: '开始时间；普通日程如 10-28 09:00（可带年份，无明确起点不填）；全天日程（allDay:true）用完整纯日期 2026-11-04。纯日期必须配 allDay:true，否则拒绝' },
+            endAt: { type: 'string', description: '结束时间；普通日程如 10-28 22:00（事项应完成的时刻）；全天日程用完整纯日期，尾日包含当天' },
+            remindAt: { type: 'string', description: '提醒时间，如 10-28 17:30（到点提醒用户，与时间窗分开；全天日程也可设置）' },
             priority: { type: 'string', enum: [...todoPriorities], description: 'P0 紧急且重要 / P1 重要不紧急 / P2 紧急不重要 / P3 有空再做（默认 P3）' },
             links: {
               type: 'array',
@@ -1568,8 +1534,9 @@ export const TASK_UPDATE_TOOL_PARAMETERS = {
             id: { type: 'string', required: true, description: '日程 id（从投递附言/本工具返回值的清单里抄，禁止编造）' },
             status: { type: 'string', enum: ['pending', 'done', 'cancelled'], description: '代办完成标 done；不再适用标 cancelled' },
             title: { type: 'string', description: '改标题（≤30 字）' },
-            startAt: { type: 'string', description: '开始时间，如 10-28 09:00（可带年份）' },
-            endAt: { type: 'string', description: '结束时间，如 10-28 22:00' },
+            allDay: { type: 'boolean', description: '改全天状态：必须同时给新格式的 startAt（普通日程带时刻 / 全天日程纯日期），禁止只改 allDay' },
+            startAt: { type: 'string', description: '开始时间；普通日程如 10-28 09:00（可带年份）；全天日程用完整纯日期 2026-11-04' },
+            endAt: { type: 'string', description: '结束时间；普通日程如 10-28 22:00；全天日程用完整纯日期，尾日包含当天' },
             remindAt: { type: 'string', description: '提醒时间，如 10-28 17:30' },
             priority: { type: 'string', enum: [...todoPriorities], description: 'P0~P3' },
             links: {

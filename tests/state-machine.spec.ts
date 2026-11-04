@@ -75,15 +75,14 @@ describe('任务状态机', () => {
     expect(() => activateConversation(conv, 't2')).toThrow(/already runs task t1/)
   })
 
-  it('路由卡摘要保留最近主题链并保留其余 outline 字段', () => {
+  it('路由卡摘要保留最近主题链（去重、保序、最多 5 个）', () => {
     const { conv } = pair()
-    const withFacts = { ...conv, outline: { ...conv.outline, keyFacts: ['旧事实'] } }
-    let next = appendOutlineSubject(withFacts, '查天气')
+    let next = appendOutlineSubject(conv, '查天气')
     next = appendOutlineSubject(next, '查机票')
     next = appendOutlineSubject(next, '查天气')
-    expect(next.outline.summary).toBe('查机票｜查天气')
-    expect(next.outline.keyFacts).toEqual(['旧事实'])
-    expect(next.revision).toBe(conv.revision + 3)
+    next = appendOutlineSubject(next, '查酒店')
+    expect(next.outline.summary).toBe('查机票｜查天气｜查酒店')
+    expect(next.revision).toBe(conv.revision + 4)
   })
 })
 

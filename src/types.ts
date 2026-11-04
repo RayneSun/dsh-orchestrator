@@ -39,7 +39,6 @@ export const taskUpdateFieldAllowList: Record<(typeof taskUpdateStatuses)[number
   failed: ['header', 'progressNote', 'fail', 'schedules'],
 }
 
-const trimmedList = z.array(trimmed).max(50)
 const now = () => new Date().toISOString()
 
 const pad2 = (n: number) => String(n).padStart(2, '0')
@@ -91,13 +90,6 @@ const todoTimeSchema = z.string().trim().transform((value, ctx) => {
   return normalized
 })
 
-/** 时间窗顺序校验：startAt 不得晚于 endAt（两点都存在时）。 */
-const timeWindowRefinement = (value: { startAt?: string, endAt?: string }, ctx: z.RefinementCtx) => {
-  if (value.startAt && value.endAt && Date.parse(value.startAt) > Date.parse(value.endAt)) {
-    ctx.addIssue({ code: 'custom', path: ['startAt'], message: 'startAt 不能晚于 endAt' })
-  }
-}
-
 /** 相对路径：拒绝绝对路径、盘符与 .. 逃逸（待办附件与 report.artifacts 共用）。 */
 const relativePathSchema = z.string().trim().min(1).max(500).refine(
   (value) => {
@@ -137,11 +129,107 @@ const todoLocationSchema = z.object({
   address: z.string().trim().max(300).optional(),
 }).strict()
 
-/** 待办内容字段（new 与 update 共用；update 全可选）。 */
-const todoContentFields = {
-  startAt: todoTimeSchema.optional(),
-  endAt: todoTimeSchema.optional(),
+/** 纯日期（全天日程）：完整 YYYY-MM-DD、真实存在、不落时区。 */
+export function normalizeDateOnly(raw: string): string | undefined {
+  const match = raw.trim().match(/^(\d{4})-(\d{2})-(\d{2})$/)
+  if (!match) return undefined
+  const [, y, m, d] = match
+  const date = new Date(Number(y), Number(m) - 1, Number(d))
+  return date.getFullYear() === Number(y) && date.getMonth() === Number(m) - 1 && date.getDate() === Number(d)
+    ? `${y}-${m}-${d}`
+    : undefined
+}
+
+export const isDateOnly = (value: string): boolean => /^\d{4}-\d{2}-\d{2}$/.test(value.trim())
+
+/** 日程时间原始输入：startAt/endAt 保持 raw，按 allDay 分叉解析（resolveScheduleTimes）。 */
+const scheduleTimeFields = {
+  allDay: z.boolean().optional(),
+  startAt: z.string().max(40).optional(),
+  endAt: z.string().max(40).optional(),
   remindAt: todoTimeSchema.optional(),
+}
+
+/**
+ * 日程时间字段按 allDay 分叉解析，返回可直接并入记录的规范化字段：
+ * - allDay=true：startAt 必填纯日期 YYYY-MM-DD（不省略年、不带时刻）；endAt 可选、尾日包含、≥ startAt。
+ * - allDay=false：startAt/endAt 可选但必须带时刻（纯日期拒绝，提示改用 allDay），走宽松简写归一化。
+ * - patch 模式（update 条目）：显式改 allDay 必须同时给 startAt（原子切换）；未声明 allDay 时
+ *   startAt/endAt 两种形态都先放行，由 service 合并整条记录后用 scheduleConsistencyError 收口。
+ * 输出只包含 patch 实际带来的字段，避免合并时把缺省值覆盖到旧记录上。
+ */
+export function resolveScheduleTimes(
+  value: { allDay?: boolean, startAt?: string, endAt?: string },
+  ctx: z.RefinementCtx,
+  patchMode = false,
+): { allDay?: boolean, startAt?: string, endAt?: string } | undefined {
+  const issue = (field: string, message: string): undefined => {
+    ctx.addIssue({ code: 'custom', path: [field], message })
+    return undefined
+  }
+  const invalidTime = (field: 'startAt' | 'endAt'): undefined =>
+    issue(field, `无效时间，合法格式如 "10-28 09:00" 或 "2026-10-28T09:00"；全天日程用 YYYY-MM-DD 纯日期`)
+  if (patchMode && value.allDay !== undefined && value.startAt === undefined) {
+    return issue('startAt', '切换全天状态必须同时提供新格式的 startAt（原子切换，禁止只改 allDay）')
+  }
+  const normalizeTimed = (raw: string): string | undefined => {
+    // 普通日程必须带时刻（"2026-11-04"、"10-25" 等纯日期一律拒绝，强制模型用 allDay 表态）
+    if (isDateOnly(raw) || !/[T ]\d{1,2}:\d{2}/.test(raw)) return undefined
+    return normalizeTimePoint(raw)
+  }
+  if (value.allDay ?? false) {
+    if (!value.startAt) return issue('startAt', '全天日程必须提供 startAt（YYYY-MM-DD 纯日期）')
+    const start = normalizeDateOnly(value.startAt)
+    if (!start) return issue('startAt', '全天日程 startAt 必须是完整 YYYY-MM-DD 纯日期（不省略年、不带时刻）')
+    let end: string | undefined
+    if (value.endAt !== undefined) {
+      end = normalizeDateOnly(value.endAt)
+      if (!end) return issue('endAt', '全天日程 endAt 必须是完整 YYYY-MM-DD 纯日期（尾日包含当天）')
+      if (end < start) return issue('endAt', 'endAt（尾日包含）不能早于 startAt')
+    }
+    return { allDay: true, startAt: start, ...end !== undefined ? { endAt: end } : {} }
+  }
+  const start = value.startAt !== undefined ? normalizeTimed(value.startAt) : undefined
+  if (value.startAt !== undefined && !start) {
+    return issue('startAt', '普通日程时间必须带时刻（如 "10-28 09:00"）；纯日期属于全天日程，请设置 allDay: true')
+  }
+  const end = value.endAt !== undefined ? normalizeTimed(value.endAt) : undefined
+  if (value.endAt !== undefined && !end) {
+    return issue('endAt', '普通日程时间必须带时刻（如 "10-28 22:00"）；纯日期属于全天日程，请设置 allDay: true')
+  }
+  if (start && end && Date.parse(start) > Date.parse(end)) {
+    return issue('startAt', 'startAt 不能晚于 endAt')
+  }
+  if (patchMode) {
+    return {
+      ...(value.allDay !== undefined ? { allDay: false } : {}),
+      ...start !== undefined ? { startAt: start } : {},
+      ...end !== undefined ? { endAt: end } : {},
+    }
+  }
+  return { allDay: false, ...start !== undefined ? { startAt: start } : {}, ...end !== undefined ? { endAt: end } : {} }
+}
+
+/** 持久化日程整体一致性校验（service 合并 update patch 后调用）：allDay 与 startAt/endAt 格式必须互洽。 */
+export function scheduleConsistencyError(record: { allDay?: boolean, startAt?: string, endAt?: string }): string | undefined {
+  if (record.allDay) {
+    if (!record.startAt || !isDateOnly(record.startAt)) {
+      return '日程为全天（allDay），startAt 必须是 YYYY-MM-DD 纯日期；切换时间格式需同时更新 allDay 与 startAt'
+    }
+    if (record.endAt !== undefined) {
+      if (!isDateOnly(record.endAt)) return '全天日程 endAt 必须是 YYYY-MM-DD 纯日期'
+      if (record.endAt < record.startAt) return 'endAt（尾日包含）不能早于 startAt'
+    }
+    return undefined
+  }
+  if (record.startAt && isDateOnly(record.startAt)) return 'startAt 为纯日期需 allDay: true'
+  if (record.endAt && isDateOnly(record.endAt)) return 'endAt 为纯日期需 allDay: true'
+  if (record.startAt && record.endAt && Date.parse(record.startAt) > Date.parse(record.endAt)) return 'startAt 不能晚于 endAt'
+  return undefined
+}
+
+/** 日程结构化内容字段（create/update 共用；时间字段走 scheduleTimeFields 分叉解析）。 */
+const todoContentFields = {
   links: z.array(todoLinkSchema).max(10).optional(),
   attachments: z.array(todoAttachmentSchema).max(10).optional(),
   contacts: z.array(todoContactSchema).max(5).optional(),
@@ -153,48 +241,29 @@ const todoContentFields = {
 /** task_update 的 schedules.create 元素：新建日程（title 静态必填，结构上接触不到 id/status）。 */
 export const todoCreateSchema = z.object({
   title: trimmed.max(30),
+  ...scheduleTimeFields,
   ...todoContentFields,
   priority: todoPrioritySchema.default('P3'),
-}).strict().superRefine(timeWindowRefinement)
+}).strict().transform((value, ctx) => {
+  const times = resolveScheduleTimes(value, ctx)
+  if (!times) return z.NEVER
+  return { ...value, ...times }
+})
 
 /** task_update 的 schedules.update 元素：更新已有日程（id 静态必填，抄自可见清单，禁止编造）。 */
 export const todoUpdateEntrySchema = z.object({
   id: trimmed,
   status: z.enum(['pending', 'done', 'cancelled']).optional(),
   title: trimmed.max(30).optional(),
+  ...scheduleTimeFields,
   ...todoContentFields,
   priority: todoPrioritySchema.optional(),
-}).strict().superRefine(timeWindowRefinement)
-
-/** 持久化的用户待办：属于会话级清单，用户与子会话双向画勾。 */
-const userTodoObjectSchema = z.object({
-  id: trimmed,
-  title: trimmed.max(30),
-  startAt: z.string().optional(),
-  endAt: z.string().optional(),
-  remindAt: z.string().optional(),
-  priority: todoPrioritySchema.default('P3'),
-  links: z.array(todoLinkSchema).default([]),
-  attachments: z.array(todoAttachmentSchema).default([]),
-  contacts: z.array(todoContactSchema).default([]),
-  location: todoLocationSchema.optional(),
-  remark: z.string().trim().max(2_000).optional(),
-  status: z.enum(['pending', 'done', 'cancelled']).default('pending'),
-  completedBy: z.enum(['user', 'worker']).optional(),
-  createdAt: z.string(),
-  updatedAt: z.string(),
-}).strict()
-
-/** 旧字段迁移：dueDate（YYYY-MM-DD）→ endAt（当日 23:59 本地，转 ISO 8601）。 */
-export const userTodoSchema = z.preprocess((value) => {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return value
-  const record = value as Record<string, unknown>
-  if (typeof record.dueDate !== 'string') return value
-  const { dueDate, ...rest } = record
-  if (rest.endAt !== undefined) return rest
-  const endOfDay = new Date(`${dueDate}T23:59:59`)
-  return { ...rest, endAt: Number.isNaN(endOfDay.getTime()) ? dueDate : endOfDay.toISOString() }
-}, userTodoObjectSchema)
+}).strict().transform((value, ctx) => {
+  const times = resolveScheduleTimes(value, ctx, true)
+  if (!times) return z.NEVER
+  const { allDay: _allDay, startAt: _startAt, endAt: _endAt, ...rest } = value
+  return { ...rest, ...times }
+})
 
 /** 持久化的用户日程（v2 独立表）：时间强关联，看板"日程"页按日组织；归属子会话仅作回链。 */
 export const scheduleObjectSchema = z.object({
@@ -202,6 +271,8 @@ export const scheduleObjectSchema = z.object({
   parentSessionId: trimmed,
   conversationId: trimmed,
   title: trimmed.max(30),
+  /** 全天日程：true 时 startAt/endAt 为 YYYY-MM-DD 纯日期（endAt 尾日包含）；缺省按有时刻语义。 */
+  allDay: z.boolean().default(false),
   startAt: z.string().optional(),
   endAt: z.string().optional(),
   remindAt: z.string().optional(),
@@ -224,13 +295,9 @@ export const progressStepSchema = z.object({
 }).strict()
 export type ProgressStep = z.infer<typeof progressStepSchema>
 
+/** 会话路由卡摘要：最近 dispatch 主题链（Host 维护，最多 5 个）。旧大纲死字段由 migrateRecord 剥离。 */
 export const outlineSchema = z.object({
   summary: z.string().default(''),
-  keyFacts: trimmedList.default([]),
-  entities: trimmedList.default([]),
-  tags: trimmedList.default([]),
-  artifacts: trimmedList.default([]),
-  openQuestions: trimmedList.default([]),
 }).strict()
 
 export const deliverySchema = z.discriminatedUnion('state', [
@@ -296,8 +363,6 @@ const baseConversationSchema = z.object({
   workspaceName: z.string().trim().min(1).max(100).optional(),
   workspaceDir: z.string().trim().min(1).optional(),
   outline: outlineSchema,
-  /** 已废弃（v2 迁移进 schedules 表）：仅保留读取旧记录，新写入不再落此字段。 */
-  todos: z.array(userTodoSchema).default([]),
   activeTaskId: z.string().nullable().default(null),
   lastTaskId: z.string().nullable().default(null),
   state: z.enum(conversationStates).default('provisioning'),
@@ -345,6 +410,7 @@ const baseTaskSchema = z.object({
  * - 0.2.x：blocked(+scene/blockedQuestion)→input_required，丢弃废弃 scene；0.3.1 的 blocked 无 scene，必须保留。
  * - ≤0.3.10：userAnswer/resultSummary → report.result（内容保留，旧任务的结果在看板和 roster 仍可读）；
  *   outlinePatch 从未写入过，直接剥离；cancelled 状态从未产生过，防御性并入 interrupted。
+ * - v2 起 conv.todos 与大纲死字段（keyFacts/entities/tags/artifacts/openQuestions）直接删除，不做数据搬迁。
  */
 function migrateRecord(raw: unknown): unknown {
   if (!raw || typeof raw !== 'object') return raw
@@ -397,18 +463,13 @@ function migrateRecord(raw: unknown): unknown {
     }
     delete record.question
   }
-  // 0.3.12 的待办带 completedAt（只写不读的死字段），0.3.13 起剥离。
-  if (Array.isArray(record.todos)) {
-    record.todos = record.todos.map(todo => {
-      if (!todo || typeof todo !== 'object') return todo
-      const { completedAt, ...rest } = todo as Record<string, unknown>
-      // 0.3.12 的 detail → 0.3.13 的 remark
-      if (rest.remark === undefined && typeof rest.detail === 'string') {
-        rest.remark = rest.detail
-      }
-      delete rest.detail
-      return rest
-    })
+  // v2 起待办/日程独立成表，conv.todos 老字段连同数据一并废弃（用户拍板：旧数据直接删）。
+  delete record.todos
+  // 大纲只剩 summary（路由卡主题链）；keyFacts/entities/tags/artifacts/openQuestions 从未写入，剥离。
+  if (record.outline && typeof record.outline === 'object' && !Array.isArray(record.outline)) {
+    const outline = { ...(record.outline as Record<string, unknown>) }
+    for (const key of ['keyFacts', 'entities', 'tags', 'artifacts', 'openQuestions']) delete outline[key]
+    record.outline = outline
   }
   return record
 }
@@ -442,7 +503,7 @@ export function timestamp(): string {
 }
 
 function emptyOutline(): Outline {
-  return { summary: '', keyFacts: [], entities: [], tags: [], artifacts: [], openQuestions: [] }
+  return { summary: '' }
 }
 
 export function createConversation(input: {
@@ -457,7 +518,6 @@ export function createConversation(input: {
   return {
     ...input,
     outline: emptyOutline(),
-    todos: [],
     activeTaskId: null,
     lastTaskId: null,
     state: 'provisioning',
