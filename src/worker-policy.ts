@@ -14,7 +14,10 @@ const orchestratorPatterns = ['orchestrator']
 /** 直接向用户提问的工具：Worker 只能经 task_update(input_required, questions) 由问题卡转达。 */
 const questionPatterns = ['ask_user', 'ask_user_question', 'ask-user']
 
-export const workerForbiddenPatterns = [...delegationPatterns, ...orchestratorPatterns]
+/** dsh-genui 卡片通道：card 走 task_update.report.card，禁止直接渲染/验证围栏。 */
+const genuiPatterns = ['render_ui', 'validate_dsh_ui']
+
+export const workerForbiddenPatterns = [...delegationPatterns, ...orchestratorPatterns, ...genuiPatterns]
 export const workerQuestionPatterns = questionPatterns
 
 /** 同时识别模型看到的 write 和内部的 tool:write 名称。 */

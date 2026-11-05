@@ -28,6 +28,9 @@ export const LEAD_TOOL_DENY = [
   'qqmail_delete',
   'qqmail_config',
   'qqmail_status',
+  // dsh-genui：卡片走 task_update 的 report.card，Lead/Worker 不直接渲染或验证围栏
+  'render_ui',
+  'validate_dsh_ui',
   // 桌面操控（dsh-computer-use）
   'click',
   'drag',
@@ -96,4 +99,8 @@ export function unrecognizedGlobalTools(registeredNames: readonly string[]): str
 export const LEAD_SUPPRESSED_SECTIONS = [
   'meow-memory:guide',
   'plugin:dsh-qqmail',
+  'genui:fence',
+  'harness:source',
+  'app:web-surface',
+  'ui:deliverable-file-references',
 ] as const

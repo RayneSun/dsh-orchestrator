@@ -17,6 +17,7 @@ import { deliveryNotice, questionListText, revisionPrompt, rosterSummarySegment,
 import { type ScheduleServiceLike, type SessionActivityGroup } from './schedule-marks.ts'
 import { toJson } from './json.ts'
 import { isWorkerToolForbidden } from './worker-policy.ts'
+import { GENUI_CARD_SKILL_CONTENT, GENUI_CARD_SKILL_DESCRIPTION } from './genui-card-skill.ts'
 import { LEAD_SUPPRESSED_SECTIONS, leadToolDenyList, unrecognizedGlobalTools } from './lead-policy.ts'
 import { buildLeadMemoryTools, disableLeadMemoryInjection } from './lead-memory.ts'
 import { normalizeProgressSteps } from './progress.ts'
@@ -61,6 +62,7 @@ import {
   todoPriorities,
   dispatchInputSchema,
   conversationIdInputSchema,
+  cardValidationError,
   taskUpdateInputSchema,
   scheduleConsistencyError,
   type DispatchInput,
@@ -103,7 +105,7 @@ interface AgentDefaultModelLike {
   currentSelection(): ModelSelectionLike
 }
 /** Worker 子会话用空 section 遮蔽的全局系统提示段（同名 scoped section shadow 全局）。 */
-const WORKER_SUPPRESSED_SECTIONS = ['harness:source', 'app:web-surface', 'ui:deliverable-file-references'] as const
+const WORKER_SUPPRESSED_SECTIONS = ['harness:source', 'app:web-surface', 'ui:deliverable-file-references', 'genui:fence'] as const
 const RECOVERY_INTERVAL_MS = 15_000
 const REVISION_GUARD_MS = 120_000
 const TODO_FLUSH_DELAY_MS = 350
@@ -461,6 +463,8 @@ export class OrchestratorService extends TypertRemoteService {
       this.keep(agent, scoped.systemPrompt.section({ name: sectionName, order: 0, text: '', interpolate: false }))
     }
     this.applyLeadToolDenylist(agent, scoped)
+    // Lead 侧覆盖 genui skill：Lead 不生成卡片，即使 invoke 也读到 report.card 通道而非围栏教学。
+    this.registerGenuiCardSkill(agent, scoped)
     // 记忆只读层：关自动注入/写回/整理，再挂影子 search/read（meow 缺失时自动跳过）。
     const header = agent.session.header as { id?: unknown; cwd?: unknown }
     const workspace = typeof header.cwd === 'string' && header.cwd.length > 0 ? header.cwd : null
@@ -477,7 +481,28 @@ export class OrchestratorService extends TypertRemoteService {
     for (const tool of this.leadTools(agent)) this.keep(agent, scoped.tools.register(tool as any))
   }
 
-  /** Lead 工具黑名单：DSH 自带工具全保留，只屏蔽第三方执行类工具（未注册的自动跳过）。 */
+  /** 注册 runtime 版 genui skill，覆盖 dsh-genui 原版的正文围栏教学。 */
+  private registerGenuiCardSkill(agent: Agent, scoped: Agent['ctx']): void {
+    try {
+      const skills = scoped.get?.('skills') as {
+        register(skill: { name: string, description: string, invocation: { modelInvocable: boolean, userInvocable: boolean }, source: string, provider: string, content: string }): () => void
+      } | undefined
+      if (!skills) return
+      // runtime skill 的内置 rank 低于 provider skill（250 < 600），同名时稳定胜出。
+      const skill = {
+        name: 'genui',
+        description: GENUI_CARD_SKILL_DESCRIPTION,
+        invocation: { modelInvocable: true, userInvocable: true } as const,
+        source: 'runtime' as const,
+        provider: 'dsh-orchestrator',
+        content: GENUI_CARD_SKILL_CONTENT,
+      }
+      this.keep(agent, skills.register(skill))
+    } catch (error) {
+      this.hostCtx.logger.warn(`orchestrator: genui card skill registration failed: ${String(error)}`)
+    }
+  }
+
   private applyLeadToolDenylist(agent: Agent, scoped: Agent['ctx']): void {
     try {
       // deny 只作用于全局层：scope 内注册的 orchestrator_* 与影子记忆工具不受影响。
@@ -525,13 +550,23 @@ export class OrchestratorService extends TypertRemoteService {
     const scoped = agent.ctx
     // 不做工具白名单裁剪：宿主与用户安装的其他工具（浏览器、MCP、技能等）对 Worker 全部可见；
     // 通用行为约束和 task_update 协议已固化在 WORKER_PRESET 的 persona 中。
-    this.keep(agent, scoped.tools.guard(exec => isWorkerToolForbidden(exec.name)))
+    // restrict 从工具清单里直接移除（模型看不到），比 guard（可见但调用报错）更干净。
+    try {
+      const globalNames = [...new Set(scoped.tools.schemas().map(schema => schema.name))]
+      const deny = globalNames.filter(name => isWorkerToolForbidden(name) !== undefined)
+      if (deny.length > 0) this.keep(agent, scoped.tools.restrict({ deny }))
+    } catch (error) {
+      this.hostCtx.logger.warn(`orchestrator: worker tool restrict failed, fallback to guard: ${String(error)}`)
+      this.keep(agent, scoped.tools.guard(exec => isWorkerToolForbidden(exec.name)))
+    }
     // 遮蔽与 Worker 任务无关的全局系统提示段（DSH 自举开发说明、Web GUI/HMR 说明、
     // 面向终端用户的文件卡片/Markdown 链接指引），每个子会话可省约 2.2k 字符；
     // scoped 同名 section 只影响本子会话，主会话仍保留。
     for (const sectionName of WORKER_SUPPRESSED_SECTIONS) {
       this.keep(agent, scoped.systemPrompt.section({ name: sectionName, order: 0, text: '', interpolate: false }))
     }
+    // Runtime skill 覆盖 dsh-genui 原版 skill（runtime rank 250 < provider rank 600）；通道改为 task_update.report.card。
+    this.registerGenuiCardSkill(agent, scoped)
     this.keep(agent, scoped.on('session/event', (session, event) => {
       if (String(session.id) !== String(agent.session.id)) return
       const ev = event as unknown as { type?: unknown; data?: { todos?: unknown; reason?: unknown; source?: { kind?: unknown } } }
@@ -1068,6 +1103,12 @@ export class OrchestratorService extends TypertRemoteService {
       throw new Error(`invalid task_update arguments: ${detail}`)
     }
     let args: TaskUpdateInput = parsed.data
+    // report.card 校验（Host 侧）：JSON object、≤16KB、禁三反引号；非 completed 传入报错提示。
+    if (args.report?.card !== undefined) {
+      if (args.status !== 'completed') throw new Error(`invalid task_update arguments: report.card: only allowed on completed task_update (got ${args.status})`)
+      const cardError = cardValidationError(args.report.card)
+      if (cardError) throw new Error(`invalid task_update arguments: report.${cardError}`)
+    }
     // input_required：Host 补齐问题 id（q1..qn，缺省才补），返回值回显给 Worker 备用。
     let questionEcho: Array<{ id: string, question: string }> | undefined
     if (args.status === 'input_required' && args.questions) {
@@ -1430,10 +1471,11 @@ export const TASK_UPDATE_TOOL_PARAMETERS = {
     type: 'object',
     additionalProperties: false,
     properties: {
-      result: { type: 'string', required: true, description: '完整结果，Lead 转述给用户的权威答案' },
+      result: { type: 'string', required: true, description: '结论；card 已放明细时只写结论，不重复' },
       artifacts: { type: 'array', items: { type: 'string' }, description: '用户会要看的产物文件，子工作区相对路径（禁止绝对路径和 ..）' },
+      card: { type: 'object', additionalProperties: true, description: 'dsh-ui 展示卡片 JSON；组件规范用 genui skill，放完整明细' },
     },
-    description: 'completed 时必填：最终结果与产物',
+    description: 'completed 时必填：最终结果、产物与可选展示卡片',
   },
   questions: {
     type: 'array',

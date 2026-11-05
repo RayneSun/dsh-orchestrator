@@ -1,6 +1,6 @@
 # dsh-orchestrator 任务看板数据接口（v0.3.17 全天日程版）
 
-> 面向下游（移动端 App）开发者。本文档完整描述 DSH Orchestrator 插件在 DSH Web（默认 `http://127.0.0.1:3080`）中暴露的任务看板数据结构：全部字段、全部状态定义、同步机制与展示建议。基于 v0.3.17：用户日程独立表 + 双页签看板（v0.3.15）+ 全天日程纯日期语义与死字段清理（v0.3.17）。
+> 面向下游（移动端 App）开发者。本文档完整描述 DSH Orchestrator 插件在 DSH Web（默认 `http://127.0.0.1:3080`）中暴露的任务看板数据结构：全部字段、全部状态定义、同步机制与展示建议。基于 v0.3.17：用户日程独立表 + 双页签看板（v0.3.15）+ 全天日程纯日期语义与死字段清理（v0.3.17）+ completed `report.card` dsh-ui 卡片（v0.3.17）。
 > 内部资料，请勿公开分发。
 
 ## 1. 接入方式
@@ -83,7 +83,7 @@ Task 是子会话内的一次任务执行记录（一次 dispatch / 一次定时
 | answers | QuestionAnswer[]? | 问题卡作答留痕；Host 重开任务前写入 |
 | fail | TaskFail? | `failed` 时必填：`{ error, reasonCode? }`，不再有顶层 error/reasonCode/remediation |
 | cancelledReason | string? | interrupted 时的中断归类（如 parent、手动停止） |
-| report | TaskReport? | completed 时必填：`{ result, artifacts? }` |
+| report | TaskReport? | completed 时必填：`{ result, artifacts?, card? }` |
 | progressSteps | ProgressStep[] | 多步骤进度清单（来自 Worker 的 todo_write），见 §8 |
 | silent | boolean | 会话/任务是否静默；true 时终态不向主会话投递 |
 | scheduled | boolean? | 定时触发产生的上报任务标记 |
@@ -169,7 +169,7 @@ task_update（input_required 为阻塞调用，返回值即用户答案 { answer
 ├── progressNote?: string              全状态可选，一句话进展
 ├── schedules?: { create?: ScheduleNew[], update?: ScheduleUpdate[] }   全状态可选，顶层字段
 ├── questions?: QuestionItem[]         input_required ★ 必填
-├── report?: { result ★, artifacts? }  completed ★ 必填
+├── report?: { result ★, artifacts?, card? }  completed ★ 必填；card 为 dsh-ui JSON
 └── fail?: { error ★, reasonCode? }    failed ★ 必填
 ```
 
@@ -220,7 +220,7 @@ App 渲染建议：列表 + 勾（completed）/ 转（in_progress）/ 空（pend
 3. **问题卡**：位于日程框上方，warn 色框；单选切换、多选叠加、custom 输入、提交后卡片消失。
 4. **日程框**：位于工作区行上方；折叠/展开恒显；框头 `日程 · N 项待处理`（0 项为“全部完成”）；done/cancelled 灰显划线；优先级胶囊 P0/P1/P2/P3，颜色红/橙/黄/绿；时间窗/提醒渲染为胶囊。
 5. **任务框**：圈住多轮；默认折叠只显示最新一轮，框头 `N 轮 · 显示最新`，可展开全部。
-6. **任务行**：状态徽标 + subject；下一行 `header: progressNote`（running 带 shimmer）；失败可展开错误；completed/input_required 可展开结果/作答；脚注创建时间与实时耗时。
+6. **任务行**：状态徽标 + subject（有卡片时附卡片徽标）；下一行 `header: progressNote`（running 带 shimmer）；失败可展开错误；completed/input_required 可展开结果/作答；completed 的卡片可展开原始 JSON 预览；脚注创建时间与实时耗时。
 
 **日程页（日历页）**：
 
@@ -240,6 +240,9 @@ App 渲染建议：列表 + 勾（completed）/ 转（in_progress）/ 空（pend
   - `task_update` Worker 状态删除 `blocked`；`fail` 对象必填；`userTodos` 全状态开放。
   - 新增 `answerTaskQuestions` RPC；问题卡可三处作答。
 - **v0.3.16 → v0.3.17 破坏性变化**：
+- **v0.3.16 → v0.3.17 新增字段**：
+  - `TaskReport.card?: Record<string, unknown>`：dsh-ui 展示卡片 JSON；仅 `status=completed` 时存在。App 可先渲染原生控件，无法识别时降级为 JSON 预览或忽略。
+  - 终态投递给 Lead 的文本会包含 Worker `result` 和序列化后的 `dsh-ui` 围栏；App 若解析主会话文本，需保留围栏原文以供 dsh-genui 客户端渲染。
   - `Conversation.outline` 仅剩 `summary`；`keyFacts / entities / tags / artifacts / openQuestions` 死字段删除（此前恒为空数组，无消费方）。
   - `Conversation.todos` 彻底删除（v0.3.15 已移入顶层 `snapshot.schedules`，本版起旧记录中的残留数据直接丢弃，不再迁移）。
 - **v0.3.14 → v0.3.15 破坏性变化**：

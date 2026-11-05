@@ -8,7 +8,7 @@ describe('Lead 工具黑名单与提示段抑制', () => {
       'memory_project', 'memory_remember', 'memory_update', 'perform_secondary_action', 'press_key',
       'qqmail_attachment', 'qqmail_config', 'qqmail_delete', 'qqmail_folders', 'qqmail_list', 'qqmail_mark',
       'qqmail_move', 'qqmail_read', 'qqmail_reply', 'qqmail_search', 'qqmail_send', 'qqmail_status',
-      'scroll', 'select_text', 'set_value', 'type_text',
+      'render_ui', 'scroll', 'select_text', 'set_value', 'type_text', 'validate_dsh_ui',
     ].sort())
   })
 

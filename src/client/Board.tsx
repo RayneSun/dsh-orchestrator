@@ -31,10 +31,14 @@ function FileIcon(): React.ReactElement {
   return <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden><path d="M14 2H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V8l-6-6zM6 20V4h7v5h5v11H6z" /></svg>
 }
 
-function TagChip(props: { kind: 'silent' | 'scheduled'; title: string }): React.ReactElement {
+function TagChip(props: { kind: 'silent' | 'scheduled' | 'card'; title: string }): React.ReactElement {
   return <span className={`dsho-tag dsho-tag-${props.kind}`} title={props.title} aria-label={props.title}>
-    {props.kind === 'silent' ? <SilentIcon /> : <ScheduleIcon />}
+    {props.kind === 'silent' ? <SilentIcon /> : props.kind === 'scheduled' ? <ScheduleIcon /> : <CardIcon />}
   </span>
+}
+
+function CardIcon(): React.ReactElement {
+  return <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.3"><rect x="2.5" y="3.5" width="11" height="9" rx="2"/><path d="M5 6.5h6M5 9h4"/></svg>
 }
 
 function time(value?: string): string {
@@ -331,12 +335,24 @@ function AskCard({ task, onSubmit }: {
   </div>
 }
 
-/** 任务行头：状态 badge + 静默/定时标识 + 主题；interrupted 的简化行与普通行共用。 */
+/** dsh-ui card JSON 折叠预览：默认收起，点击展开看原始 JSON。 */
+function CardPreview({ card }: { card: Record<string, unknown> }): React.ReactElement {
+  const [open, setOpen] = useState(false)
+  return <div className="dsho-detailSec">
+    <button type="button" className="dsho-expander" onClick={() => setOpen(v => !v)}>
+      {open ? '收起卡片 JSON' : '查看卡片 JSON'}
+    </button>
+    {open && <pre className="dsho-cardJson">{JSON.stringify(card, null, 2)}</pre>}
+  </div>
+}
+
+/** 任务行头：状态 badge + 静默/定时/卡片标识 + 主题。 */
 function TaskHead({ task }: { task: TaskRecord }): React.ReactElement {
   return <div className="dsho-taskHead">
     <span className={`dsho-badge dsho-badge-${task.status}`}>{taskStatusLabels[task.status] ?? task.status}</span>
     {task.silent && <TagChip kind="silent" title="静默：终态不通知主会话" />}
     {task.scheduled && <TagChip kind="scheduled" title="定时触发：由定时任务自动执行" />}
+    {task.report?.card && <TagChip kind="card" title="含 dsh-ui 展示卡片" />}
     <span className="dsho-taskSubject" title={task.subject}>{task.subject}</span>
   </div>
 }
@@ -380,6 +396,7 @@ function TaskLine({ task, conv, nowMs, onOpenArtifact }: TaskLineProps): React.R
       onClick={() => onOpenArtifact(conv, artifact)}
     ><FileIcon />{artifact}</button>)}</div>
   </div>)
+  if (task.report?.card) detailSections.push(<CardPreview key="card" card={task.report.card} />)
   if (task.delivery?.state === 'pending') detailSections.push(<div key="dp" className="dsho-detailSec dsho-subtle">
     {task.delivery.attempts === 0 ? '正在把结果同步回主会话…' : `同步未成功（已重试 ${task.delivery.attempts} 次，将自动继续）${task.delivery.lastError ? ` · ${task.delivery.lastError}` : ''}`}
   </div>)

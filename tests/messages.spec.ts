@@ -79,11 +79,13 @@ describe('scheduleStatusSection 投递附言', () => {
 })
 
 describe('prompt 编排约定', () => {
-  it('Lead prompt 约定一事一会、定时任务编排与 subject 改名', () => {
-    expect(LEAD_PROMPT).toContain('schedule_create 绑定它自己的会话')
-    expect(LEAD_PROMPT).toContain('subject 写成新主题')
+  it('Lead prompt 约定一事一会、subject 精简与 Worker 能力清单', () => {
     expect(LEAD_PROMPT).toContain('一事一会')
-    expect(LEAD_PROMPT).toContain('复用它的 conversationId')
+    expect(LEAD_PROMPT).toContain('复用 conversationId')
+    expect(LEAD_PROMPT).toContain('Worker 能做什么')
+    expect(LEAD_PROMPT).toContain('dsh-ui 卡片能力')
+    expect(LEAD_PROMPT).toContain('用户日程管理')
+    expect(LEAD_PROMPT).toContain('原样转发给用户，一字不改')
   })
 
   it('Worker prompt 约定 progressNote 拟人化幽默风格', () => {

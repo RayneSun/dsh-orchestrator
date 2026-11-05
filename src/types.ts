@@ -313,10 +313,11 @@ export const deliverySchema = z.discriminatedUnion('state', [
   }).strict(),
 ])
 
-/** completed 上报：result 给主会话转述；artifacts 是用户会要看的产物文件（相对路径）。 */
+/** completed 上报：result 给主会话转述；artifacts 是产物文件；card 是 dsh-ui 展示卡片（仅 completed）。 */
 export const reportSchema = z.object({
   result: trimmed.max(50_000),
   artifacts: z.array(relativePathSchema).max(20).optional(),
+  card: z.record(z.string(), z.unknown()).optional(),
 }).strict()
 export type TaskReport = z.infer<typeof reportSchema>
 
@@ -372,6 +373,15 @@ const baseConversationSchema = z.object({
   /** 仅快照投影使用：子会话绑定了活动定时任务（不落库，由宿主核对 schedule 后填入）。 */
   hasActiveSchedule: z.boolean().optional(),
 }).strict()
+
+/** report.card 校验：JSON object、序列化 ≤16KB、禁三反引号（防围栏嵌套）。 */
+export function cardValidationError(card: unknown): string | undefined {
+  if (card === null || typeof card !== 'object' || Array.isArray(card)) return `card: expected object, received ${Array.isArray(card) ? 'array' : typeof card}`
+  const json = JSON.stringify(card)
+  if (json.length > 16384) return `card: serialized length ${json.length} exceeds 16384`
+  if (json.includes('\`\`\`')) return 'card: content contains fence marker (\`\`\`)'
+  return undefined
+}
 
 const baseTaskSchema = z.object({
   id: trimmed,
@@ -429,6 +439,14 @@ function migrateRecord(raw: unknown): unknown {
   if (record.report === undefined) {
     const legacyResult = record.userAnswer ?? record.resultSummary
     if (typeof legacyResult === 'string' && legacyResult.trim()) record.report = { result: legacyResult }
+  }
+  // 0.3.17 开发期顶层 card → report.card；当前 report 已存在时原样搬迁。
+  if (isTask && record.card !== undefined) {
+    const report = record.report
+    if (report && typeof report === 'object' && !Array.isArray(report) && 'card' in report === false) {
+      record.report = { ...report, card: record.card }
+    }
+    delete record.card
   }
   delete record.userAnswer
   delete record.resultSummary

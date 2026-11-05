@@ -269,3 +269,26 @@ describe('改单中断与 Worker 提问', () => {
     expect(conv.state).toBe('idle')
   })
 })
+
+describe('card 字段', () => {
+  const base = () => createTask({ id: 't1', parentSessionId: 'p1', conversationId: 'c1', predecessorTaskId: null, subject: '查距离', prompt: 'p' })
+
+  it('completed 时 report.card 随 transitionTask 持久化', () => {
+    const card = { title: '对比', items: [{ type: 'table', columns: ['a'], rows: [['1']] }] }
+    const task = transitionTask({ ...base(), status: 'running' }, { status: 'completed', report: { result: 'ok', card } })
+    expect(task.report?.card).toEqual(card)
+  })
+
+  it('非 completed 时 report（含 card）被 allowlist 拒绝', () => {
+    expect(() => transitionTask({ ...base(), status: 'queued' }, { status: 'running', report: { result: 'x', card: { title: 'x' } } })).toThrow(StateError)
+  })
+
+  it('cardValidationError：非 object / 超 16KB / 含三反引号', async () => {
+    const { cardValidationError } = await import('../src/types.ts')
+    expect(cardValidationError('string')).toContain('expected object')
+    expect(cardValidationError([1])).toContain('expected object')
+    expect(cardValidationError({ big: 'x'.repeat(16385) })).toContain('exceeds 16384')
+    expect(cardValidationError({ ok: true })).toBeUndefined()
+    expect(cardValidationError({ fence: '```dsh-ui' })).toContain('fence marker')
+  })
+})

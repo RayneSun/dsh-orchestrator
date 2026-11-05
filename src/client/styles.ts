@@ -52,6 +52,7 @@ export const CSS = `
 .dsho-tag svg{width:13px;height:13px;display:block}
 .dsho-tag-silent{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-tertiary)}
 .dsho-tag-scheduled{background:color-mix(in srgb,var(--dsho-brand) 13%,transparent);color:var(--dsho-brand-ink)}
+.dsho-tag-card{background:color-mix(in srgb,#6941c6 13%,transparent);color:#6941c6}
 .dsho-note{display:flex;gap:6px;align-items:baseline}
 .dsho-noteTitle{flex:none;font-weight:600;font-size:11px;line-height:16px;padding:0 6px;border:.5px solid var(--dsho-line);border-radius:6px;background:var(--dsw-alias-bg-layer-3);color:var(--dsw-alias-label-primary);white-space:nowrap}
 .dsho-noteSep{flex:none;color:var(--dsw-alias-label-tertiary)}

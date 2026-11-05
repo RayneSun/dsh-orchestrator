@@ -79,7 +79,6 @@ export function buildPresetDefinitions(): PresetDefinition[] {
         { id: 'tool-fs-search', name: '@deepseek-ai/dsh-tool-fs-search', config: { sampleOverCapGlobResults: false } },
         { id: 'tool-fs', name: '@deepseek-ai/dsh-tool-fs' },
         { id: 'tool-todo', name: '@deepseek-ai/dsh-tool-todo', config: { allowParallelInProgress: false } },
-        { id: 'tool-goal', name: '@deepseek-ai/dsh-tool-goal' },
         { id: 'tool-ask-user', name: '@deepseek-ai/dsh-tool-ask-user' },
         compaction,
       ],

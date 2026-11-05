@@ -1,7 +1,7 @@
 # 向主会话（Lead）投递消息的方式调研
 
 > 调研基线：DSH 0.2.1-rc.2（2026-10-28）。结论来自 `@deepseek-ai/dsh-agent` 与 `@deepseek-ai/dsh-session` 的类型定义与 README 实读。
-> **当前版本：普通终态维持 followup；input_required 已改为优先走平台原生问题卡（`userQuestions.ask`），答案 resolve 回 Host 后直接注入 Worker。看板/子会话问题卡共用 `answerTaskQuestions`。Lead 备忘使用 `session.append` 不唤醒。**
+> **当前版本：普通终态维持 followup；completed 文本由 `report.result`、制品清单、用户日程附言和可选 `report.card` 的 dsh-ui 围栏组成，要求 Lead 原样转发。`input_required` 只在看板/子会话渲染同源问题卡（投递默认关），阻塞 task_update 的返回值即用户答案。看板/子会话共用 `answerTaskQuestions`。Lead 备忘使用 `session.append` 不唤醒。**
 
 ## 背景
 
@@ -20,7 +20,7 @@ Worker 终态（input_required / completed / failed / interrupted）需要把结
 ## 当前 input_required 链路
 
 1. Worker 上报 `input_required + questions`；任务持久化为待你操作。
-2. 看板与子会话工具行立即渲染问题卡；默认向主会话投递原生问题卡（设置项 `deliverOnInputRequired` 默认 true）。
+2. 看板与子会话工具行立即渲染同源问题卡；主会话投递默认关闭（当前协议已删除 `deliverOnInputRequired` 配置）。
 3. 用户在看板/子会话作答 → `orchestrator/answerTaskQuestions`；Host 串行幂等校验 → 任务恢复 running → 结构化答案 followup 回同一 Worker。
 4. 如果投递开启，Host 调 `ctx.userQuestions.ask({ questions, agent })` 在主会话渲染原生问题卡；答案 resolve 后走同一作答路由。平台服务缺失时降级为普通 followup 文本。
 5. 看板作答成功后给 Lead 写 `session.append` 不唤醒备忘，避免 Lead 下一轮重复转派。
