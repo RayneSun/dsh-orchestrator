@@ -1,6 +1,6 @@
 # AGENTS.md — dsh-orchestrator 开发指引
 
-面向接管本仓库的 AI 编码助手。读完本文件再动手。当前仓库版本 0.3.18，作为本地里程碑保存，尚未推送或发包；文档入口见 [docs/README.md](docs/README.md)。
+面向接管本仓库的 AI 编码助手。读完本文件再动手。当前仓库版本 0.3.18，已正式发版；文档入口见 [docs/README.md](docs/README.md)。
 
 ## 项目是什么
 
