@@ -1,10 +1,37 @@
 import { describe, expect, it } from 'vitest'
 import { parameterSchemaSpecToJsonSchema } from '@deepseek-ai/dsh-tools'
+import { z } from 'zod'
 import { DISPATCH_TOOL_PARAMETERS, TASK_UPDATE_TOOL_PARAMETERS } from '../src/service.ts'
+import { dispatchInputSchema, taskUpdateInputSchema } from '../src/types.ts'
+
+interface ContractSchema {
+  type?: unknown
+  enum?: unknown[]
+  required?: string[]
+  properties?: Record<string, ContractSchema>
+  items?: ContractSchema
+}
+
+function fieldContracts(schema: ContractSchema, prefix = ''): unknown[] {
+  return Object.entries(schema.properties ?? {}).sort(([first], [second]) => first.localeCompare(second)).flatMap(([name, field]) => [
+    { path: `${prefix}${name}`, type: field.type, enum: field.enum, required: schema.required?.includes(name) ?? false },
+    ...fieldContracts(field, `${prefix}${name}.`),
+    ...fieldContracts(field.items ?? {}, `${prefix}${name}[].`),
+  ])
+}
 
 // 回归：v0.3.9 曾因参数描述里带 DSL 不支持的关键字（pattern），
 // defineTool 编译期抛错导致 orchestrator_dispatch 注册失败、从工具列表消失。
 describe('工具参数描述可被 dsh-tools DSL 编译', () => {
+  it.each([
+    ['dispatch', dispatchInputSchema, DISPATCH_TOOL_PARAMETERS],
+    ['task_update', taskUpdateInputSchema, TASK_UPDATE_TOOL_PARAMETERS],
+  ] as const)('%s 的全部嵌套字段、类型、枚举和静态必填约束与 Host 一致', (_name, input, parameters) => {
+    const host = z.toJSONSchema(input, { io: 'input', unrepresentable: 'any' })
+    const visible = parameterSchemaSpecToJsonSchema(parameters)
+    expect(fieldContracts(visible as ContractSchema)).toEqual(fieldContracts(host as ContractSchema))
+  })
+
   it('orchestrator_dispatch 参数能通过 DSL 编译', () => {
     expect(() => parameterSchemaSpecToJsonSchema(DISPATCH_TOOL_PARAMETERS)).not.toThrow()
   })

@@ -4,7 +4,7 @@ import { conversationSchema, scheduleObjectSchema, taskSchema } from './types.ts
 export const orchestratorDomain = defineDomain({
   name: 'orchestrator',
   version: 2,
-  // v1 记录（conversations/tasks，todos 还挂在 conversation 上）保持可读，启动时迁移进 schedules。
+  // v1 conversations/tasks 保持可读；旧 conv.todos 在 migrateRecord 中丢弃，不迁移进 schedules。
   compatibleVersions: [1],
   // per-record 布局：旧 v1 单文件（storages/orchestrator.json）经 bootstrapLegacyUnit 拷入
   // per-record 树并盖 v2 版戳；single 布局的 openUnit 只接受精确版本匹配，会直接拒开。

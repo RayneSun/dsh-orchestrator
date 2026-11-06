@@ -63,7 +63,7 @@ export function glmVisionConfigured() {
  * @param {object} exec - 工具执行上下文
  * @returns {{provider?:string, model?:string}}
  */
-export function currentRoute(exec) {
+function currentRoute(exec) {
   const routed = exec?.agent?.session?.requestHeader?.()?.config
   return {
     provider: routed?.provider ?? exec?.agent?.options?.provider,
@@ -96,7 +96,7 @@ export async function routeImageCapable(ctx, exec) {
  * @param {string} model
  * @returns {Promise<boolean>}
  */
-export async function modelImageCapable(ctx, provider, model) {
+async function modelImageCapable(ctx, provider, model) {
   try {
     const llm = ctx?.get?.('llm')
     if (!llm || !provider || !model) return false
@@ -210,7 +210,7 @@ export async function glmVisionDescribe({ imageBase64, mimeType = 'image/png', q
         continue
       }
       // 限流/访问量过大 → 换下一个模型
-      if (res.status === 429 || res.status === 1305) {
+      if (res.status === 429) {
         lastErr = new Error(`GLM 视觉模型 ${model} 限流 (${res.status})`)
         await sleep(1500 * (attempt + 1))
         continue
@@ -232,7 +232,3 @@ export async function glmVisionDescribe({ imageBase64, mimeType = 'image/png', q
   }
   throw lastErr || new Error('GLM 视觉调用失败（全部候选模型均不可用）')
 }
-
-/** 兼容旧引用：visionConfigured / visionDescribe 仍可用（指向 GLM 兜底）。 */
-export const visionConfigured = glmVisionConfigured
-export const visionDescribe = glmVisionDescribe

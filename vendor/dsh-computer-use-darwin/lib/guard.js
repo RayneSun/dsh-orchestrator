@@ -49,9 +49,6 @@ export async function guard(ctx, cfg, toolName, args, exec) {
 
   // 1. 区域限制：allowedApps 非空时，操作类工具的快照窗口应用必须在白名单内
   if (OPERATION_TOOLS.has(toolName) && cfg.allowedApps && cfg.allowedApps.length > 0) {
-    if (!snap) {
-      return { ok: false, reason: '区域限制：先调用 screen_observe 建立快照才能操作。' }
-    }
     if (!cfg.allowedApps.includes(snap.appName)) {
       return {
         ok: false,

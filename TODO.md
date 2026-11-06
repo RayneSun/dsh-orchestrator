@@ -1,5 +1,20 @@
 # TODO
 
+## 当前状态（0.3.18，2026-11-06）
+
+本轮 A–D、B1–B5 和两页优先级展示已完成，保存为本地提交与 `v0.3.18` 标签；尚未推送或发包。当前实现与验证边界见 [0.3.18 里程碑](docs/milestones/0.3.18.md)，接口以 [board-api.md](docs/board-api.md) 为准。
+
+后续机会（本轮未实施）：
+
+- 日程跨记录事务与崩溃恢复：目前仅保证校验失败零写入，I/O 失败仍可能部分落盘。
+- 真实 macOS 驱动的多 Worker 并发验收，以及真实模型任务的停止、改单、重启回归。
+- 自进化技能库：以下保留的是历史提案，当前源码没有 `src/skills.ts`，需重新评估再实施。
+- 旧数据迁移与大服务进一步拆分：缺少淘汰旧记录的证据，保留迁移；后续按职责评估拆分。
+
+## 历史方案与验收记录
+
+以下内容保留原始决策和当时验收结果，其中的“未 commit”、版本号、测试数、stash 提示和旧字段不代表当前状态，也不是待执行命令。v0.3.14 的三处问题卡方案最终收敛为看板与 Worker 原生卡两处；旧 `userTodos` / `setTodoStatus` 已被 `schedules` / `setScheduleStatus` 替代。
+
 ## 自进化技能库（方案已确认方向，待实施）
 
 参考 dsh-ciri 的 SkillProvider 模式（`/Users/lixuchuan/Documents/deepseek-harness/development/dsh-ciri`，只读参考、不改动它）。

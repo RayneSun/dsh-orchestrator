@@ -1,14 +1,10 @@
 import { z } from 'zod'
-import { conversationSchema, scheduleObjectSchema, taskSchema } from './types.ts'
+import type { Snapshot } from './types.ts'
+import { snapshotResultSchema } from './types.ts'
+export { snapshotResultSchema } from './types.ts'
 
 export const snapshotRequestSchema = z.object({
   parentSessionId: z.string().min(1),
-}).strict()
-
-export const snapshotResultSchema = z.object({
-  conversations: z.array(conversationSchema),
-  tasks: z.array(taskSchema),
-  schedules: z.array(scheduleObjectSchema.extend({ conversationTitle: z.string() })),
 }).strict()
 
 export const setScheduleStatusRequestSchema = z.object({
@@ -34,6 +30,17 @@ export const answerQuestionsResultSchema = z.object({
   taskId: z.string().optional(),
   error: z.string().optional(),
 }).strict()
+
+export type SnapshotRequest = z.input<typeof snapshotRequestSchema>
+export type SetScheduleStatusRequest = z.input<typeof setScheduleStatusRequestSchema>
+export type AnswerQuestionsRequest = z.input<typeof answerQuestionsRequestSchema>
+export type AnswerQuestionsResult = z.infer<typeof answerQuestionsResultSchema>
+
+export interface OrchestratorClient {
+  snapshot(request: SnapshotRequest): Promise<Snapshot>
+  setScheduleStatus(request: SetScheduleStatusRequest): Promise<z.infer<typeof setScheduleStatusResultSchema>>
+  answerTaskQuestions(request: AnswerQuestionsRequest): Promise<AnswerQuestionsResult>
+}
 
 const PACKAGE = '@may/dsh-orchestrator'
 

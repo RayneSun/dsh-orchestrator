@@ -149,7 +149,7 @@ async function commitScreenshot(ctx, target, state, cfg) {
     const jpeg = buf(zv?.screenshot_png_b64)
     if (jpeg.byteLength === 0) throw new Error('zoom 降级截图失败：引擎返回空图片。')
     data = jpeg
-    mediaType = (zv?.mime_type === 'image/jpeg') ? 'image/jpeg' : 'image/jpeg'
+    mediaType = 'image/jpeg'
     width = zv?.width || width
     height = zv?.height || height
     name = `screen-${target.pid}-compact.jpg`

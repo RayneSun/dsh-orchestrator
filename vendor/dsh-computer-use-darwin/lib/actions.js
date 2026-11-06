@@ -6,48 +6,8 @@
  *  - x/y 坐标模式 → 使用快照窗口的 window-local 像素坐标
  */
 import { cuaCall, normalizeMcp, withSession } from './cua.js'
-import { getSnapshot } from './snapshot.js'
 import { resolveToken, resolveWindow } from './snapshot.js'
-import { humanClick, resolveClickTarget, screenPointOf, windowLocalOf } from './human.js'
-
-/**
- * 构造一次"基于编号或坐标"的引擎调用参数。
- * 坐标语义：screen_observe 输出的元素坐标是屏幕 pt（cua-driver 0.19.3 的
- * frame 即屏幕坐标），引擎 click/scroll/drag 需要 window-local，故换算。
- * @returns {object} 传给 cua-driver 的参数字段
- */
-function targetArgs(args, cfg, extra = {}) {
-  const out = {}
-  const snap = getSnapshot()
-  if (args.element !== undefined && args.element !== null) {
-    const { pid, token } = resolveToken(Number(args.element), cfg.ttlMs)
-    out.pid = pid
-    out.element_token = token
-  } else if (args.x !== undefined || args.y !== undefined) {
-    if (args.x === undefined || args.y === undefined) {
-      throw new Error('坐标模式必须同时提供 x 和 y。')
-    }
-    const { pid, windowId } = resolveWindow(cfg.ttlMs)
-    const local = windowLocalOf(Number(args.x), Number(args.y), snap)
-    out.pid = pid
-    out.window_id = windowId // 坐标点击需 window_id 定位目标窗口（避免多窗口歧义）
-    out.x = local.x
-    out.y = local.y
-  } else {
-    throw new Error('必须提供 element（观察编号）或 x/y 坐标。')
-  }
-  return withSession({ ...out, ...extra })
-}
-
-/** 通用动作执行：调用引擎并返回统一结果。 */
-async function runAction(label, tool, args, cfg, extra = {}) {
-  const payload = targetArgs(args, cfg, extra)
-  const value = normalizeMcp(await cuaCall(tool, payload))
-  const refusal = engineRefusal(value)
-  if (refusal) return { ok: false, result: `${label} 被引擎拒绝：${refusal}` }
-  const detail = typeof value === 'string' ? value : JSON.stringify(value)
-  return { ok: true, result: `${label} 完成：${detail}` }
-}
+import { humanClick, resolveClickTarget } from './human.js'
 
 /**
  * 引擎侧拒绝检测：cua-driver 常以 200 + 结构化错误返回（如
@@ -73,19 +33,17 @@ function engineRefusal(value) {
  */
 async function humanAction(label, args, cfg, extra = {}) {
   let target
-  const snap = getSnapshot()
   if (args.element !== undefined && args.element !== null) {
     target = resolveClickTarget(Number(args.element), cfg.ttlMs)
   } else if (args.x !== undefined && args.y !== undefined) {
     const { pid, windowId } = resolveWindow(cfg.ttlMs)
     const sx = Number(args.x)
     const sy = Number(args.y)
-    const local = windowLocalOf(sx, sy, snap)
     target = {
       pid,
       windowId,
-      x: local.x,
-      y: local.y,
+      x: sx,
+      y: sy,
       sx,
       sy,
     }
@@ -135,11 +93,6 @@ export async function typeText(args, cfg, { call = cuaCall, resolve = resolveWin
   if (refusal) return { ok: false, result: `输入被引擎拒绝：${refusal}` }
   const detail = typeof value === 'string' ? value : JSON.stringify(value)
   return { ok: true, result: `输入完成：${detail}` }
-}
-
-/** computer_key —— 按键 / 快捷键（如 return、cmd+c） */
-export async function key(args, cfg) {
-  return dispatchKey(args, cfg)
 }
 
 /**

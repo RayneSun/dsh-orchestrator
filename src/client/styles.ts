@@ -1,5 +1,5 @@
-export const STYLE_ID = 'may-dsh-orchestrator-style'
-export const CSS = `
+const STYLE_ID = 'may-dsh-orchestrator-style'
+const CSS = `
 .dsho-headerButton{font:inherit;font-size:12.5px;font-weight:500;color:var(--dsw-alias-label-secondary);border:.5px solid var(--dsw-alias-border-l4);background:var(--dsw-alias-bg-layer-3);border-radius:7px;padding:3px 10px;cursor:pointer}
 .dsho-headerButton:hover{border-color:var(--dsw-alias-label-dimmed);background:var(--dsw-alias-interactive-bg-hover)}
 .dsho-board{box-sizing:border-box;height:100%;overflow:auto;padding:14px;color:var(--dsw-alias-label-primary,light-dark(#1f2329,#e8eaed));background:var(--dsw-alias-bg-layer-1,light-dark(#f7f8fa,#181818));--dsho-brand:light-dark(#1a73e8,#7ab8ff);--dsho-brand-ink:light-dark(#1557b0,#9cc4ff);--dsho-pos:light-dark(#188038,#4caf7d);--dsho-pos-ink:light-dark(#146c2f,#7ecfa2);--dsho-err:light-dark(#d93025,#ff6b61);--dsho-err-ink:light-dark(#b3261e,#ff8a80);--dsho-warn:light-dark(#a35200,#e8a04c);--dsho-line:var(--dsw-alias-border-l4,light-dark(#e4e7eb,rgb(255 255 255 / 10%)))}
@@ -27,7 +27,6 @@ export const CSS = `
 .dsho-badge-queued,.dsho-badge-provisioning{background:color-mix(in srgb,var(--dsho-brand) 13%,transparent);color:var(--dsho-brand-ink)}
 .dsho-badge-running{background:color-mix(in srgb,var(--dsho-pos) 14%,transparent);color:var(--dsho-pos-ink);padding-left:7px}
 .dsho-badge-running::before{content:'';width:6px;height:6px;border-radius:50%;background:currentColor;animation:dsho-pulse 1.5s ease-in-out infinite}
-@keyframes dsho-pulse{0%,100%{opacity:1}50%{opacity:.3}}
 @media (prefers-reduced-motion:reduce){.dsho-badge-running::before{animation:none}}
 .dsho-badge-completed{background:var(--dsho-pos);color:#fff}
 .dsho-badge-idle{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-secondary)}
@@ -46,8 +45,6 @@ export const CSS = `
 .dsho-taskSubject{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--dsw-alias-label-primary)}
 .dsho-note{margin:0;color:var(--dsw-alias-label-secondary);font-size:12px;line-height:1.5}
 .dsho-subtle{margin:0;color:var(--dsw-alias-label-tertiary);font-size:11px;line-height:1.5}
-.dsho-answer{margin:0;color:var(--dsw-alias-label-primary);font-size:12px;line-height:1.55;display:-webkit-box;-webkit-line-clamp:5;-webkit-box-orient:vertical;overflow:hidden}
-.dsho-times{color:var(--dsw-alias-label-tertiary);font-size:10px}
 .dsho-tag{flex:none;display:inline-flex;align-items:center;justify-content:center;width:18px;height:18px;border-radius:6px}
 .dsho-tag svg{width:13px;height:13px;display:block}
 .dsho-tag-silent{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-tertiary)}
@@ -100,13 +97,6 @@ export const CSS = `
 .dsho-askSubmit:hover{filter:brightness(1.08)}
 .dsho-askSubmit:disabled{opacity:.6;cursor:default}
 .dsho-detail-err{background:color-mix(in srgb,var(--dsho-err) 5%,transparent)}
-/* 子会话 task_update 摘要行（非 input_required 调用的极简渲染） */
-.dsho-wRow{display:flex;align-items:center;gap:7px;padding:4px 8px;font-size:12px;color:var(--dsw-alias-label-secondary);min-width:0}
-.dsho-wRowTitle{flex:none;font-weight:600;color:var(--dsw-alias-label-primary)}
-.dsho-wRowStatus{flex:none;font-size:10.5px;border:.5px solid var(--dsho-line);border-radius:999px;padding:0 7px}
-.dsho-wRowHeader{flex:none;font-weight:600;font-size:11px;padding:0 6px;border:.5px solid var(--dsho-line);border-radius:6px;background:var(--dsw-alias-bg-layer-3)}
-.dsho-wRowNote{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.dsho-wRow-done{color:var(--dsho-pos-ink);font-weight:600}
 .dsho-dur{font-variant-numeric:tabular-nums;color:var(--dsw-alias-label-secondary)}
 .dsho-dur-live{color:var(--dsho-pos-ink);font-weight:600}
 .dsho-toast{position:sticky;bottom:12px;left:0;right:0;margin:8px auto 0;width:fit-content;max-width:90%;background:#1f2329;color:#fff;font-size:12px;padding:6px 14px;border-radius:999px;box-shadow:0 4px 14px rgb(0 0 0 / 18%);z-index:5;animation:dsho-toast-in .18s ease}
@@ -138,7 +128,6 @@ export const CSS = `
 .dsho-todoTime-soon{color:var(--dsho-warn);border-color:color-mix(in srgb,var(--dsho-warn) 35%,transparent);background:color-mix(in srgb,var(--dsho-warn) 6%,transparent)}
 .dsho-todoTime-over{color:var(--dsho-err);border-color:color-mix(in srgb,var(--dsho-err) 35%,transparent);background:color-mix(in srgb,var(--dsho-err) 6%,transparent)}
 .dsho-todoTime-active{color:var(--dsho-brand-ink,var(--dsho-brand));border-color:color-mix(in srgb,var(--dsho-brand) 35%,transparent);background:color-mix(in srgb,var(--dsho-brand) 6%,transparent)}
-.dsho-todoTime-active .dsho-dot{width:5px;height:5px;border-radius:50%;background:currentColor;margin-right:4px;animation:dsho-pulse 1.6s ease-in-out infinite}
 @keyframes dsho-pulse{0%,100%{opacity:.35}50%{opacity:1}}
 .dsho-todoPriority{flex:none;font-size:10px;font-weight:600;border-radius:999px;padding:0 7px;line-height:15px;border:.5px solid transparent}
 .dsho-todoPriority-P0{color:#d5483f;border-color:color-mix(in srgb,#d5483f 35%,transparent);background:color-mix(in srgb,#d5483f 8%,transparent)}
@@ -148,8 +137,6 @@ export const CSS = `
 .dsho-todo-done .dsho-todoTime{opacity:.55;text-decoration:line-through}
 .dsho-todoDetail{display:none;padding:4px 0 2px}
 .dsho-todo-open .dsho-todoDetail{display:block}
-.dsho-todoMeta{display:flex;flex-wrap:wrap;gap:4px;margin-top:4px}
-.dsho-todoRemind{font-size:10px;color:var(--dsho-brand-ink,var(--dsho-brand));background:color-mix(in srgb,var(--dsho-brand) 7%,transparent);border:.5px solid color-mix(in srgb,var(--dsho-brand) 30%,transparent);border-radius:999px;padding:0 7px;line-height:15px}
 .dsho-dRow{display:flex;gap:6px;align-items:flex-start;margin-top:4px;font-size:11px;color:var(--dsw-alias-label-secondary);line-height:1.6}
 .dsho-dRow:first-child{margin-top:0}
 .dsho-dIcon{flex:none;width:16px;text-align:center;font-size:11px;margin-top:1px;filter:grayscale(.35);opacity:.85}
@@ -188,7 +175,6 @@ export const CSS = `
 .dsho-dow{text-align:center;font-size:10px;color:var(--dsw-alias-label-tertiary);padding:3px 0}
 .dsho-day{position:relative;aspect-ratio:1;border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:12px;color:var(--dsw-alias-label-primary);cursor:pointer;border:1.5px solid transparent}
 .dsho-day:hover{background:var(--dsw-alias-interactive-bg-hover)}
-.dsho-day.dim{color:color-mix(in srgb,var(--dsw-alias-label-tertiary) 55%,transparent)}
 .dsho-day.today{border-color:color-mix(in srgb,var(--dsho-brand) 55%,transparent);font-weight:650}
 .dsho-day.sel{background:color-mix(in srgb,var(--dsho-brand) 8%,transparent);border-color:color-mix(in srgb,var(--dsho-brand) 35%,transparent)}
 .dsho-dayDots{display:flex;gap:2px;position:absolute;bottom:3px}

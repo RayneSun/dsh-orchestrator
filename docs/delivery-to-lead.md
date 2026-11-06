@@ -1,11 +1,11 @@
 # 向主会话（Lead）投递消息的方式调研
 
 > 调研基线：DSH 0.2.1-rc.2（2026-10-28）。结论来自 `@deepseek-ai/dsh-agent` 与 `@deepseek-ai/dsh-session` 的类型定义与 README 实读。
-> **当前版本：普通终态维持 followup；completed 文本由 `report.result`、制品清单、用户日程附言和可选 `report.card` 的 dsh-ui 围栏组成，要求 Lead 原样转发。`input_required` 只在看板/子会话渲染同源问题卡（投递默认关），阻塞 task_update 的返回值即用户答案。看板/子会话共用 `answerTaskQuestions`。Lead 备忘使用 `session.append` 不唤醒。**
+> **当前实现（v0.3.18）：completed / failed / interrupted 经 followup 投递；completed 文本由 `report.result`、制品清单、用户日程附言和可选 `report.card` 的 dsh-ui 围栏组成，要求 Lead 原样转发。`input_required` 由看板和 Worker 原生问题卡承载，不投递 Lead；任一入口通过 `answerTaskQuestions` 作答后，阻塞的 task_update 在同轮返回用户答案。**
 
 ## 背景
 
-Worker 终态（input_required / completed / failed / interrupted）需要把结果送到 Lead 主会话。`deliverPendingTask`（src/service.ts）的默认路径是 `agent.followup(message)`：消息入 inbox 并**唤醒驱动器**，Lead 开一轮推理来转述/处理。`input_required` 如果继续 followup 会为“只需要用户看见”的通知烧一次模型调用；v0.3.14 起改为 `deliverInputRequired`。
+Worker 的 completed / failed / interrupted 通过持久 outbox 投递到 Lead 主会话，受 silent 和状态投递开关约束。`deliverPendingTask`（src/service.ts）调用 `agent.followup(message)`：消息入 inbox 并**唤醒驱动器**，Lead 开一轮推理来转述/处理。input_required 直接等待用户作答，不经过 Lead。
 
 ## 三种机制
 
@@ -20,19 +20,19 @@ Worker 终态（input_required / completed / failed / interrupted）需要把结
 ## 当前 input_required 链路
 
 1. Worker 上报 `input_required + questions`；任务持久化为待你操作。
-2. 看板与子会话工具行立即渲染同源问题卡；主会话投递默认关闭（当前协议已删除 `deliverOnInputRequired` 配置）。
-3. 用户在看板/子会话作答 → `orchestrator/answerTaskQuestions`；Host 串行幂等校验 → 任务恢复 running → 结构化答案 followup 回同一 Worker。
-4. 如果投递开启，Host 调 `ctx.userQuestions.ask({ questions, agent })` 在主会话渲染原生问题卡；答案 resolve 后走同一作答路由。平台服务缺失时降级为普通 followup 文本。
-5. 看板作答成功后给 Lead 写 `session.append` 不唤醒备忘，避免 Lead 下一轮重复转派。
+2. 看板渲染问题卡；Host 在 Worker Agent 上调用 `userQuestions.ask` 渲染原生问题卡。inputRequired 固定为 false，无 `deliverOnInputRequired` 配置。
+3. 用户在任一入口作答 → `orchestrator/answerTaskQuestions`；Host 串行幂等校验 → 任务恢复 running → resolve 等待中的 task_update；Worker 在同轮直接收到结构化答案。
+4. 任一入口成功作答后清理另一侧原生卡及取消监听。工具取消、手动停止、改单、服务卸载均清理等待；已取消原生卡晚到的答案被丢弃，不会进入后续提问。重启时遗留 input_required 转为现有 interrupted 状态，工作流回 idle，不投递 Lead。
+5. 原生问题服务不可用时仍可从看板作答；原生卡异常记录告警。作答不追加 Lead 备忘，不派发新的 Worker 轮次。
 
-## `session.append` 细节（Lead 备忘用）
+## `session.append` API 对比
 
 - API：`session.append('user/message', createUserMessage({...}))`，属于公开 event-sourced API。
 - 当场不触发推理，但下次 Lead 因任何原因开轮时自动进入请求前缀。
 - source 用 `{ kind: 'orchestrator', form: 'notice', summary }`，聊天渲染为用户气泡。
-- 调用需带 surface intent 参数；append 后 `hostCtx.sessions.flush(session)` 确认持久化。
+- 调用需带 surface intent 参数；append 后 `hostCtx.sessions.flush(session)` 确认持久化。当前编排插件未使用该投递方式。
 
 ## 风险
 
-- 程序化 `userQuestions.ask` 不进 userQuestions 投影：主聊天原生卡刷新/重启后不可恢复；看板与子会话卡不受影响。
-- `session.append` 比 followup 更底层，绕过 agent inbox/turn 语义；升级 DSH 后需回归“落日志但不唤醒”。
+- 程序化 `userQuestions.ask` 不进 userQuestions 投影：Worker 原生卡刷新后不可恢复，看板仍可作答；Host 重启会将遗留等待任务中断。
+- 若未来采用 `session.append`，需单独回归“落日志但不唤醒”；当前插件使用 followup，升级 DSH 时应回归实际投递与同轮作答链路。

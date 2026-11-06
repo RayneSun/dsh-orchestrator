@@ -182,23 +182,8 @@ export function deliveryNotice(
 
 任务被手动中断（不是失败），子会话和已有进展都已保留。请简短告知用户任务已被中断，并询问是继续原任务还是调整需求；拿到答复后用 orchestrator_dispatch 复用同一 conversationId 派发，不要新建工作流。`
   }
-  if (task.status === 'input_required') {
-    // 正常路径问题卡已直达用户；这段文本只是 user-questions 服务不可用时的兜底。
-    return `${base}\n\n需要用户操作或补充：\n${questionListText(task.questions)}${task.progressNote ? `\n（进展：${task.progressNote}）` : ''}\n\n请把问题转达给用户；拿到答复后用 orchestrator_dispatch 复用同一 conversationId 派发回去，格式：[问题 id] 用户的选择/补充。`
-  }
   const reason = task.fail?.reasonCode ? `\n阻碍类别：${blockReasonLabels[task.fail.reasonCode] ?? task.fail.reasonCode}` : ''
   return `${base}${reason}\n\n任务失败：${task.fail?.error ?? '未知错误'}\n\n请向用户简要说明失败原因${reason ? '；该失败源于系统阻碍，处理后可复用同一 conversationId 继续而不要新建工作流' : '；用户要求重试或调整时复用同一 conversationId'}。`
-}
-
-/** 问题数组 → 给 Lead/用户阅读的紧凑文本（每题一行：header？问题 → 选项）。 */
-export function questionListText(questions: TaskRecord['questions']): string {
-  return (questions ?? []).map(item => {
-    const title = item.header ? `${item.header}：${item.question}` : item.question
-    const opts = item.options?.length
-      ? `（选项：${item.options.map(option => option.label).join(' / ')}${item.multi_select ? '，可多选' : ''}）`
-      : ''
-    return `- [${item.id}] ${title}${opts}`
-  }).join('\n')
 }
 
 /** task_update 返回值里的日程投影：极简字段，Worker 每次上报后可见最新清单。 */

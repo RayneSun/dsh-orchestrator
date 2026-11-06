@@ -7,8 +7,7 @@
  * 快照同时记录 appName（区域限制）与元素 role/label（危险/敏感检测）。
  */
 
-/** 当前快照（单会话单窗口模型，P2 可扩展为多窗口表）。 */
-let snapshot = null
+import { computerSession } from './sessions.js'
 
 /**
  * 保存一次 screen_observe 的快照。
@@ -16,22 +15,23 @@ let snapshot = null
  * @param {Map<number,{token:string,role?:string,label?:string}>} s.entries - 编号 → 元素信息
  */
 export function setSnapshot(s) {
-  snapshot = s
+  computerSession().snapshot = s
 }
 
 /** 读取当前快照（可能为 null）。 */
 export function getSnapshot() {
-  return snapshot
+  return computerSession().snapshot
 }
 
 /** 快照是否新鲜（在 TTL 内）。 */
-export function isFresh(ttlMs) {
+function isFresh(ttlMs) {
+  const snapshot = getSnapshot()
   return Boolean(snapshot) && Date.now() - snapshot.at <= ttlMs
 }
 
 /** 清除快照（例如发生明显环境变化后）。 */
-export function clearSnapshot() {
-  snapshot = null
+function clearSnapshot() {
+  computerSession().snapshot = null
 }
 
 /**
@@ -42,6 +42,7 @@ export function clearSnapshot() {
  * @throws 快照缺失 / 过期 / 编号不存在时抛出带指引的错误
  */
 export function resolveToken(index, ttlMs) {
+  const snapshot = getSnapshot()
   if (!snapshot) {
     throw new Error('没有可用的观察快照：请先调用 screen_observe 再执行动作。')
   }
@@ -66,6 +67,7 @@ export function resolveToken(index, ttlMs) {
  * 取回快照的窗口定位信息（坐标模式使用 window-local 像素）。
  */
 export function resolveWindow(ttlMs) {
+  const snapshot = getSnapshot()
   if (!snapshot) {
     throw new Error('没有可用的观察快照：请先调用 screen_observe 再执行动作。')
   }

@@ -10,6 +10,7 @@ import { spawn } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join, win32 } from 'node:path'
+import { computerSession } from './sessions.js'
 
 /**
  * 解析引擎二进制路径（优先级）：
@@ -46,7 +47,7 @@ export function resolveBin({ platform = process.platform, env = process.env, hom
   return 'cua-driver'
 }
 
-export const CUA_BIN = resolveBin()
+const CUA_BIN = resolveBin()
 
 /**
  * 插件统一的虚拟光标会话 id：所有动作绑定同一会话，
@@ -56,7 +57,7 @@ export const CUA_SESSION = process.env.CUA_SESSION || 'dsh-computer-use'
 
 /** 给动作类调用注入统一会话（观察类只读工具不需要）。 */
 export function withSession(args = {}) {
-  return { session: CUA_SESSION, ...args }
+  return { session: computerSession().id, ...args }
 }
 
 /**
@@ -72,7 +73,7 @@ export async function cuaCall(tool, args = {}) {
     return await rawCall(tool, args)
   } catch (err) {
     if (tool !== 'start_session' && /session '.*' has ended|revive it/.test(err.message)) {
-      await rawCall('start_session', { session: CUA_SESSION }).catch(() => undefined)
+      await rawCall('start_session', { session: args.session ?? computerSession().id }).catch(() => undefined)
       return rawCall(tool, args)
     }
     throw err

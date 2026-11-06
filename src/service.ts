@@ -5,7 +5,7 @@ import { Context, Service } from '@deepseek-ai/cordis'
 import sz from '@deepseek-ai/schemastery'
 import { createUserMessage, type ContextFormed } from '@deepseek-ai/dsh-llm'
 import { delegationDepthOf } from '@deepseek-ai/dsh-subagent'
-import { defineTool } from '@deepseek-ai/dsh-tools'
+import { defineTool, type ToolRunContext } from '@deepseek-ai/dsh-tools'
 import { Remote, TypertRemoteService } from '@deepseek-ai/dsh-typert-protocol'
 import type { Domain } from '@deepseek-ai/dsh-storage-domain'
 import type { Agent } from '@deepseek-ai/dsh-agent'
@@ -13,9 +13,14 @@ import type { SessionId } from '@deepseek-ai/dsh-session'
 import type {} from '@deepseek-ai/dsh-agent-preset-registry'
 import type {} from '@deepseek-ai/dsh-api-session-controller'
 import type {} from '@deepseek-ai/dsh-session-persistence'
-import { deliveryNotice, questionListText, revisionPrompt, rosterSummarySegment, scheduleProjection, scheduleStatusSection, workerPrompt } from './messages.ts'
-import { type ScheduleServiceLike, type SessionActivityGroup } from './schedule-marks.ts'
+import { deliveryNotice, revisionPrompt, rosterSummarySegment, scheduleProjection, scheduleStatusSection, workerPrompt } from './messages.ts'
+import { type ScheduleServiceLike, type SessionActivityGroup } from './host-contracts.ts'
+import { DISPATCH_TOOL_PARAMETERS, TASK_UPDATE_TOOL_PARAMETERS } from './tool-parameters.ts'
+import type { AnswerQuestionsRequest, AnswerQuestionsResult, SetScheduleStatusRequest, SnapshotRequest } from './remote.ts'
 import { toJson } from './json.ts'
+import { isUnfinishedTask } from './task-lifecycle.ts'
+import { PendingAnswers } from './pending-answers.ts'
+import { planScheduleChanges } from './schedule-changes.ts'
 import { isWorkerToolForbidden } from './worker-policy.ts'
 import { GENUI_CARD_SKILL_CONTENT, GENUI_CARD_SKILL_DESCRIPTION } from './genui-card-skill.ts'
 import { LEAD_SUPPRESSED_SECTIONS, leadToolDenyList, unrecognizedGlobalTools } from './lead-policy.ts'
@@ -55,19 +60,17 @@ import {
   type ScheduleRecord,
   type TaskRecord,
   activeTaskStatuses,
-  blockReasonCodes,
   deliverableTaskStatuses,
   type DeliveryToggles,
-  taskUpdateStatuses,
-  todoPriorities,
   dispatchInputSchema,
   conversationIdInputSchema,
   cardValidationError,
   taskUpdateInputSchema,
-  scheduleConsistencyError,
   type DispatchInput,
   type TaskUpdateInput,
 } from './types.ts'
+
+export { DISPATCH_TOOL_PARAMETERS, TASK_UPDATE_TOOL_PARAMETERS } from './tool-parameters.ts'
 
 declare module '@deepseek-ai/dsh-llm' {
   interface MessageSourceMap {
@@ -148,21 +151,6 @@ function formatRosterTime(value: string): string {
   return `${sameYear ? '' : `${date.getFullYear()}/`}${month}/${day} ${hour}:${minute}`
 }
 
-/**
- * orchestrator_dispatch 的参数描述。注意：dsh-tools 的参数 DSL 只支持
- * type/required/enum/const/items/properties/oneOf/description/title/default/examples，
- * 任何其他关键字（如 pattern）会在 defineTool 编译期直接抛错、导致工具注册失败消失。
- * 约束只能写进 description，运行时校验由 dispatchInputSchema 负责。
- */
-export const DISPATCH_TOOL_PARAMETERS = {
-  subject: { type: 'string', required: true, description: '短主题' },
-  workspaceName: { type: 'string', description: '新建子会话必填：子工作区目录名，必须匹配 ^[a-z0-9][a-z0-9-]{0,79}$（英文小写短横线 slug，如 daily-news、plane-war）；复用已有子会话时忽略' },
-  prompt: { type: 'string', required: true, description: '需求本身和验收点。Worker 与你共享同一工作区，不要重复工作目录、路径等环境声明，不要粘贴内部 ID' },
-  conversationId: { type: 'string', description: '复用已有工作流时提供' },
-  acceptanceCriteria: { type: 'string', description: '可选验收标准' },
-  silent: { type: 'boolean', description: '静默模式：记忆整理等后台维护任务使用；终态不会向主会话投递任何消息，看板仍可见状态' },
-} as const
-
 /** 设置页（插件管理 → 本包行配置）的 volatile 配置引用：.get() 读实时值，改动即时生效不重启。 */
 interface OrchestratorConfigRefs {
   deliverOnCompleted?: { get(): boolean }
@@ -194,7 +182,7 @@ export class OrchestratorService extends TypertRemoteService {
   private readonly installed = new Map<string, Array<() => unknown>>()
   private readonly delivering = new Set<string>()
   /** taskId -> resolver，task_update(input_required) 阻塞等待用户作答。 */
-  private readonly pendingAnswerResolvers = new Map<string, { resolve: (answers: QuestionAnswer[]) => void; reject: (error: Error) => void; abort?: AbortController }>()
+  private readonly pendingAnswers = new PendingAnswers()
   private readonly pendingTodoSteps = new Map<string, { taskId: string; steps: ProgressStep[] }>()
   private readonly todoTimers = new Map<string, ReturnType<typeof setTimeout>>()
   // 改单 cancel 自身会产生一次 aborted turn/end，需要忽略，不能当成手动停止或任务失败。
@@ -203,7 +191,7 @@ export class OrchestratorService extends TypertRemoteService {
   private readonly scheduleMarks = new Map<string, boolean>()
   /** childSessionId -> 最近一条入站消息的 source.kind（判定定时触发上报用）。 */
   private readonly lastInboundSource = new Map<string, string>()
-  /** childSessionId -> 已同步到 DSH 侧栏的标题（含定时标记前缀），用于跳过无谓 rename。 */
+  /** childSessionId -> 已同步到 DSH 侧栏的标题（不含定时标记前缀），用于跳过无谓 rename。 */
   private readonly syncedTitles = new Map<string, string>()
   private scheduleSyncTimer: ReturnType<typeof setTimeout> | undefined
   private recoveryTimer: ReturnType<typeof setInterval> | undefined
@@ -274,7 +262,7 @@ export class OrchestratorService extends TypertRemoteService {
             const rest = await next()
             const conv = this.conversationByChild(String(sessionId))
             const active = conv?.activeTaskId ? this.taskById(conv.activeTaskId) : undefined
-            if (!conv || !active || !(activeTaskStatuses as readonly string[]).includes(active.status)) return rest
+            if (!conv || !active || !isUnfinishedTask(active.status)) return rest
             return [{ kind: 'orchestrator', items: [{ id: conv.id, label: `任务进行中：${active.subject}` }] }, ...rest]
           })
         this.recoveryTimer = setInterval(() => { void this.recoverDeliveries() }, RECOVERY_INTERVAL_MS)
@@ -286,6 +274,7 @@ export class OrchestratorService extends TypertRemoteService {
           offActivity()
           if (this.scheduleSyncTimer) clearTimeout(this.scheduleSyncTimer)
           if (this.recoveryTimer) clearInterval(this.recoveryTimer)
+          this.pendingAnswers.close()
           await this.chain.catch(() => undefined)
           await domain.close()
         }
@@ -347,13 +336,13 @@ export class OrchestratorService extends TypertRemoteService {
     return { conversations, tasks, schedules }
   }
 
-  async snapshot(request: { parentSessionId: string }): Promise<Snapshot> {
+  async snapshot(request: SnapshotRequest): Promise<Snapshot> {
     await this.ready
     return this.snapshotFor(request.parentSessionId)
   }
 
   /** 看板用户画勾/取消画勾日程（会话页与日程页同一入口）；持久化并驱动看板刷新。 */
-  async setScheduleStatus(request: { scheduleId: string, status: 'pending' | 'done' }): Promise<{ ok: true }> {
+  async setScheduleStatus(request: SetScheduleStatusRequest): Promise<{ ok: true }> {
     await this.ready
     await this.serialize(async () => {
       const item = this.schedules().get(request.scheduleId)
@@ -600,9 +589,9 @@ export class OrchestratorService extends TypertRemoteService {
       description: '任务进度上报与用户日程维护：实时汇报进展、提交终态结果，并创建/更新需要用户本人推进的日程（schedules）。定时触发轮次无活动任务，仅允许 completed 上报结果。',
       parameters: TASK_UPDATE_TOOL_PARAMETERS,
       output: sharedJsonOutput,
-      execute: async (args: any, exec: { concludeTurn?: () => void }) => {
-        const result = await this.updateFromWorker(args, String(agent.session.id))
-        // 终态（completed/failed/blocked）后无需再做一次全上下文推理：标记 concludesTurn 结束本轮。
+      execute: async (args: any, exec: ToolRunContext) => {
+        const result = await this.updateFromWorker(args, String(agent.session.id), exec.signal)
+        // 终态（completed/failed）后无需再做一次全上下文推理：标记 concludesTurn 结束本轮。
         // input_required 阻塞工具拿到用户答案后 status 为 input_required_answered：不结束轮次，Worker 同轮继续。
         const resultStatus = (result as { status?: string }).status
         if (resultStatus !== 'input_required_answered' && statusConcludesTurn(resultStatus)) exec.concludeTurn?.()
@@ -779,7 +768,7 @@ export class OrchestratorService extends TypertRemoteService {
       let interruptedTaskId: string | undefined
       if (existing.activeTaskId) {
         const active = this.taskById(existing.activeTaskId)
-        if (active && (activeTaskStatuses as readonly string[]).includes(active.status)) {
+        if (active && isUnfinishedTask(active.status)) {
           interruptedTaskId = active.id
         }
       }
@@ -810,6 +799,7 @@ export class OrchestratorService extends TypertRemoteService {
       await this.putPair(conv, task)
 
       if (interruptedTaskId) {
+        this.pendingAnswers.cancel(interruptedTaskId, new Error('任务已被新需求接管，停止等待用户作答'))
         // cancel 本身失败不应拖垮新任务：取消当前轮次后照常注入，新需求在旧轮次收敛后运行。
         try {
           await this.interruptWorker(existing.childSessionId)
@@ -873,10 +863,6 @@ export class OrchestratorService extends TypertRemoteService {
     return { ok: true, conv, task }
   }
 
-  /**
-   * 记忆库共享：把 Worker 工作区的 .dsh-meow 链接到主工作区，Lead 与全部 Worker 共用
-   * 同一份 meow-memory 长期记忆。失败（如 Windows 无 symlink 权限）降级为独立记忆，仅告警。
-   */
   /** 在 withoutInitiator 上下文里解析并操作一个会话 Agent；解析失败直接抛出。 */
   private async withAgent<T>(sessionId: string, work: (agent: Agent) => T | Promise<T>): Promise<T> {
     return this.hostCtx.agents.withoutInitiator(async () => {
@@ -886,6 +872,10 @@ export class OrchestratorService extends TypertRemoteService {
     })
   }
 
+  /**
+   * 记忆库共享：把 Worker 工作区的 .dsh-meow 链接到主工作区，Lead 与全部 Worker 共用
+   * 同一份 meow-memory 长期记忆。失败（如 Windows 无 symlink 权限）降级为独立记忆，仅告警。
+   */
   private async shareMemoryWithRoot(workspaceDir: string, rootCwd: string): Promise<void> {
     try {
       await ensureSharedMemoryLink(workspaceDir, rootCwd)
@@ -949,11 +939,6 @@ export class OrchestratorService extends TypertRemoteService {
   }
 
   /**
-   * 创建根级别的 Worker 会话：与主会话同为一等会话（不带 origin/delegationDepth 的
-   * subagent 血统），因此 schedule 等只对 depth-0 会话开放的宿主能力对 Worker 可用。
-   * cwd 与 agentPreset 直接写入 session header，冷恢复后保持不变；模型继承主会话当前生效的选择。
-   */
-  /**
    * Worker 的模型选项。Agent.options 只是会话创建时的快照：用户在主会话里切换模型走
    * 会话级选择（model/selection 事件 + requestHeader），不回写 options。这里按
    * session-controller 内部 selectionFor 的同一顺序解析主会话当前生效模型——
@@ -997,6 +982,12 @@ export class OrchestratorService extends TypertRemoteService {
     }
     return { ...parent.options }
   }
+
+  /**
+   * 创建根级别的 Worker 会话：与主会话同为一等会话（不带 origin/delegationDepth 的
+   * subagent 血统），因此 schedule 等只对 depth-0 会话开放的宿主能力对 Worker 可用。
+   * cwd 与 agentPreset 直接写入 session header，冷恢复后保持不变；模型继承主会话当前生效的选择。
+   */
   private async createWorkerAgent(childSessionId: string, cwd: string, parent: Agent, title: string): Promise<void> {
     await this.hostCtx.agents.withoutInitiator(async () => {
       const handle = await this.hostCtx.agents.create({
@@ -1054,46 +1045,13 @@ export class OrchestratorService extends TypertRemoteService {
    * 必须在 serialize 串行块内调用；路由卡摘要已改由 dispatch 侧维护。
    */
   private async applyUpdateSideEffects(conv: ConversationRecord, args: TaskUpdateInput): Promise<void> {
-    const now = timestamp()
-    const existing = this.schedulesOf(conv.id)
-    for (const entry of args.schedules?.create ?? []) {
-      const { priority, allDay, ...content } = entry
-      const item: ScheduleRecord = {
-        id: createId('sch'),
-        parentSessionId: conv.parentSessionId,
-        conversationId: conv.id,
-        priority,
-        allDay: allDay ?? false,
-        links: [], attachments: [], contacts: [],
-        ...content,
-        status: 'pending',
-        createdAt: now,
-        updatedAt: now,
-      }
+    const changes = planScheduleChanges(conv, args, this.schedulesOf(conv.id))
+    for (const item of changes) {
       await this.schedules().put(item.id, item)
-    }
-    for (const entry of args.schedules?.update ?? []) {
-      const item = existing.find(schedule => schedule.id === entry.id)
-      if (!item) throw new Error(`schedule not found in this conversation: ${entry.id}`)
-      const { id, status, ...patch } = entry
-      const merged = { ...item, ...patch }
-      const inconsistency = scheduleConsistencyError(merged)
-      if (inconsistency) throw new Error(`schedule ${id}: ${inconsistency}`)
-      await this.schedules().put(id, {
-        ...merged,
-        ...status !== undefined
-          ? {
-              status,
-              // done/cancelled 都是 Worker 侧的终结标记；回到 pending 则清除
-              completedBy: status !== 'pending' ? 'worker' as const : undefined,
-            }
-          : {},
-        updatedAt: now,
-      })
     }
   }
 
-  private async updateFromWorker(rawArgs: unknown, childSessionId: string): Promise<any> {
+  private async updateFromWorker(rawArgs: unknown, childSessionId: string, signal?: AbortSignal): Promise<any> {
     const parsed = taskUpdateInputSchema.safeParse(rawArgs)
     if (!parsed.success) {
       // 全量 issues 带路径返回：模型下一轮能精准补字段，而不是猜"哪里少了字符串"。
@@ -1103,20 +1061,17 @@ export class OrchestratorService extends TypertRemoteService {
       throw new Error(`invalid task_update arguments: ${detail}`)
     }
     let args: TaskUpdateInput = parsed.data
-    // report.card 校验（Host 侧）：JSON object、≤16KB、禁三反引号；非 completed 传入报错提示。
+    // report.card 校验（Host 侧）：JSON object、≤16KB、禁三反引号；report 的状态限制由输入 schema 校验。
     if (args.report?.card !== undefined) {
-      if (args.status !== 'completed') throw new Error(`invalid task_update arguments: report.card: only allowed on completed task_update (got ${args.status})`)
       const cardError = cardValidationError(args.report.card)
       if (cardError) throw new Error(`invalid task_update arguments: report.${cardError}`)
     }
-    // input_required：Host 补齐问题 id（q1..qn，缺省才补），返回值回显给 Worker 备用。
-    let questionEcho: Array<{ id: string, question: string }> | undefined
+    // input_required：Host 补齐问题 id（q1..qn，缺省才补），用户作答后在 answers 中返回给 Worker。
     if (args.status === 'input_required' && args.questions) {
       args = {
         ...args,
         questions: args.questions.map((item, index) => ({ id: item.id ?? `q${index + 1}`, ...item })),
       }
-      questionEcho = args.questions.map(item => ({ id: item.id!, question: item.question }))
     }
     let shouldDeliver = false
     let terminalTaskId: string | undefined
@@ -1172,14 +1127,14 @@ export class OrchestratorService extends TypertRemoteService {
     if (shouldDeliver && terminalTaskId) void this.deliverPendingTask(terminalTaskId)
     // input_required：工具调用阻塞直到用户从任一入口作答，返回值即用户答案。
     if (result.__inputRequired__) {
-      const answers = await this.blockAndWaitForAnswers(result.__inputRequired__, childSessionId)
+      const answers = await this.blockAndWaitForAnswers(result.__inputRequired__, childSessionId, signal)
       return {
         ok: true as const,
         status: 'input_required_answered' as const,
         answers: answers.map(a => ({ id: a.id, selected: a.selected, ...a.custom !== undefined ? { custom: a.custom } : {} })),
       }
     }
-    return questionEcho ? { ...result, questions: questionEcho } : result
+    return result
   }
 
   /**
@@ -1194,7 +1149,7 @@ export class OrchestratorService extends TypertRemoteService {
       const conv = this.conversationByChild(childSessionId)
       if (!conv?.activeTaskId) return
       const previous = this.taskById(conv.activeTaskId)
-      if (!previous || !(activeTaskStatuses as readonly string[]).includes(previous.status)) return
+      if (!previous || !isUnfinishedTask(previous.status)) return
       const now = timestamp()
       let task: TaskRecord
       let nextConv: ConversationRecord
@@ -1221,6 +1176,7 @@ export class OrchestratorService extends TypertRemoteService {
         outcome = 'failed'
       }
       await this.putPair(nextConv, task)
+      this.pendingAnswers.cancel(task.id, new Error('子会话轮次已结束，停止等待用户作答'))
       taskId = task.id
     })
     if (outcome === 'manual_stop' || outcome === 'revision') {
@@ -1289,7 +1245,10 @@ export class OrchestratorService extends TypertRemoteService {
    * - 任务看板：自定义 AskCard
    * 主会话完全不参与（不投递、不弹卡）。任一来源作答后 resolve，工具直接返回用户答案。
    */
-  private blockAndWaitForAnswers(task: TaskRecord, childSessionId: string): Promise<QuestionAnswer[]> {
+  private blockAndWaitForAnswers(task: TaskRecord, childSessionId: string, signal?: AbortSignal): Promise<QuestionAnswer[]> {
+    const current = this.taskById(task.id)
+    if (current?.status === 'running' && current.answers) return Promise.resolve(current.answers)
+    if (current?.status !== 'input_required') return Promise.reject(new Error('任务已结束，停止等待用户作答'))
     const userQuestions = (this.hostCtx as unknown as { get?(key: string): unknown }).get?.('userQuestions') as
       | { ask(request: { questions: unknown; agent: unknown; signal?: AbortSignal }): Promise<{ answers: Array<{ id: string; selected: string[]; custom?: string }> }> }
       | undefined
@@ -1302,45 +1261,27 @@ export class OrchestratorService extends TypertRemoteService {
       ...item.multi_select !== undefined ? { multi_select: item.multi_select } : {},
     }))
 
-    return new Promise<QuestionAnswer[]>((resolve, reject) => {
-      const workerAbort = new AbortController()
-      this.pendingAnswerResolvers.set(task.id, { resolve, reject, abort: workerAbort })
-
-      // 在 Worker 会话挂原生 ask_user_question 卡（Worker 是 live root）。
-      if (userQuestions?.ask) {
-        void this.withAgent(childSessionId, async (agent) => {
-          try {
-            const result = await userQuestions.ask({ questions, agent, signal: workerAbort.signal })
-            // Worker 原生卡作答：走统一入口（answerTaskQuestions 会 resolve 挂起的 Promise）。
-            await this.answerTaskQuestions({ childSessionId, answers: result.answers })
-          } catch {
-            // ask 被取消/abort（看板先答了），不是业务失败。
-          }
-        }).catch(() => undefined)
-      }
-    })
-  }
-
-  /** 看板/子会话原生卡作答后统一 resolve 挂起的 task_update(input_required) 工具调用并清理另一侧卡片。 */
-  private resolvePendingAnswers(taskId: string, answers: QuestionAnswer[]): void {
-    const pending = this.pendingAnswerResolvers.get(taskId)
-    if (pending) {
-      this.pendingAnswerResolvers.delete(taskId)
-      // abort Worker 的 userQuestions.ask()，平台会清理子会话原生问题卡。
-      pending.abort?.abort()
-      pending.resolve(answers)
+    const promise = this.pendingAnswers.wait(task.id, signal)
+    const questionSignal = this.pendingAnswers.signal(task.id)
+    if (userQuestions?.ask && questionSignal) {
+      void this.withAgent(childSessionId, async (agent) => {
+        if (questionSignal.aborted) return
+        const result = await userQuestions.ask({ questions, agent, signal: questionSignal })
+        if (questionSignal.aborted) return
+        await this.answerTaskQuestions({ childSessionId, answers: result.answers })
+      }).catch(error => {
+        if (!questionSignal.aborted) this.hostCtx.logger.warn(`orchestrator: worker question card failed: ${String(error)}`)
+      })
     }
+    return promise
   }
 
   /**
-   * 三处问题卡（看板 / 子会话工具行 / 主会话原生卡）共用的作答路由：
+   * 看板与 Worker 原生问题卡共用的作答路由：
    * 幂等——只有 input_required 的最新任务可答，先答先赢；重开同一 TaskRun 继续执行，
-   * 答案注入 Worker，并给 Lead 日志追加不唤醒的备忘（防 Lead 下一轮重复转派）。
+   * 答案直接返回同轮阻塞的 task_update，另一入口的问题卡同时清理。
    */
-  async answerTaskQuestions(request: {
-    childSessionId: string
-    answers: Array<{ id: string; selected?: string[]; custom?: string }>
-  }): Promise<{ ok: boolean; taskId?: string; error?: string }> {
+  async answerTaskQuestions(request: AnswerQuestionsRequest): Promise<AnswerQuestionsResult> {
     await this.ready
     const answers: QuestionAnswer[] = (request.answers ?? []).map(answer => ({
       id: answer.id,
@@ -1367,11 +1308,11 @@ export class OrchestratorService extends TypertRemoteService {
         updatedAt: now,
       }
       await this.putPair(nextConv, resumed)
-      return { ok: true as const, taskId: resumed.id, childSessionId: conv.childSessionId, parentSessionId: conv.parentSessionId, subject: resumed.subject, questions: resumed.questions }
+      return { ok: true as const, taskId: resumed.id }
     })
     if (!outcome.ok) return outcome
     // 阻塞模型：resolve 挂起的 task_update(input_required) 工具调用，Worker 同轮拿到答案。
-    this.resolvePendingAnswers(outcome.taskId!, answers)
+    this.pendingAnswers.resolve(outcome.taskId, answers)
     return { ok: true, taskId: outcome.taskId }
   }
 
@@ -1396,7 +1337,8 @@ export class OrchestratorService extends TypertRemoteService {
       for (const [, conv] of this.conversations().entries()) {
         // 存量会话补建共享记忆链接（workspaceDir 是主工作区的直接子目录，dirname 即主工作区）。
         if (conv.workspaceDir) await this.shareMemoryWithRoot(conv.workspaceDir, dirname(conv.workspaceDir))
-        const active = conv.activeTaskId ? this.taskById(conv.activeTaskId) : undefined
+        const active = conv.activeTaskId ? this.taskById(conv.activeTaskId) : conv.lastTaskId ? this.taskById(conv.lastTaskId) : undefined
+        if (!conv.activeTaskId && active?.status !== 'input_required') continue
         if (!active) {
           if (conv.activeTaskId) {
             // Repair a dangling reference left by a crash between cross-table writes.
@@ -1405,9 +1347,15 @@ export class OrchestratorService extends TypertRemoteService {
           }
           continue
         }
-        if (!(activeTaskStatuses as readonly string[]).includes(active.status)) {
+        if (!isUnfinishedTask(active.status)) {
           // The task row can reach a terminal state before the conversation row is updated.
           await this.putPair(settleConversation(conv, active, now), active)
+          continue
+        }
+
+        if (active.status === 'input_required') {
+          const interrupted = interruptTaskAfterRestart(active, now)
+          await this.putPair(settleConversation(conv, interrupted, now), interrupted)
           continue
         }
 
@@ -1460,158 +1408,5 @@ export class OrchestratorService extends TypertRemoteService {
     })
   }
 }
-
-/** task_update 的模型可见参数 DSL（defineTool parameters）。与 taskUpdateInputSchema 双写：
- * 模型只能看到这里的字段——zod 加了字段而这里没加，模型就永远不知道（v0.3.13 前踩过）。 */
-export const TASK_UPDATE_TOOL_PARAMETERS = {
-  status: { type: 'string', required: true, enum: [...taskUpdateStatuses] },
-  header: { type: 'string', description: '极度精简的状态标题（最多 8 个字，看板加粗展示），如"抓取新闻源""已查到 3 家"' },
-  progressNote: { type: 'string', description: '一行精简进展（看板直接显示；信息优先，可带三分幽默）' },
-  report: {
-    type: 'object',
-    additionalProperties: false,
-    properties: {
-      result: { type: 'string', required: true, description: '结论；card 已放明细时只写结论，不重复' },
-      artifacts: { type: 'array', items: { type: 'string' }, description: '用户会要看的产物文件，子工作区相对路径（禁止绝对路径和 ..）' },
-      card: { type: 'object', additionalProperties: true, description: 'dsh-ui 展示卡片 JSON；组件规范用 genui skill，放完整明细' },
-    },
-    description: 'completed 时必填：最终结果、产物与可选展示卡片',
-  },
-  questions: {
-    type: 'array',
-    description: 'input_required 时必填：结构化问题（一次问清，id 可省略会自动分配并在返回值回显）',
-    items: {
-      type: 'object',
-      additionalProperties: false,
-      properties: {
-        id: { type: 'string', description: '问题 id，省略则自动分配 q1/q2/…' },
-        question: { type: 'string', required: true, description: '问题正文（可直接展示给用户）' },
-        header: { type: 'string', description: '短标题/分组（如"确认"）' },
-        detail: { type: 'string', description: '补充说明（不出现在选项里）' },
-        options: {
-          type: 'array',
-          description: '可选项；推荐项放首位并在 label 末尾加 (Recommended)',
-          items: {
-            type: 'object',
-            additionalProperties: false,
-            properties: {
-              label: { type: 'string', required: true, description: '短选项文案' },
-              description: { type: 'string', description: '一句话说明该选项的影响' },
-            },
-          },
-        },
-        multi_select: { type: 'boolean', description: '是否可多选，默认单选' },
-      },
-    },
-  },
-  fail: {
-    type: 'object',
-    additionalProperties: false,
-    properties: {
-      error: { type: 'string', required: true, description: '失败原因和已尝试的办法' },
-      reasonCode: { type: 'string', enum: [...blockReasonCodes], description: '系统阻碍类别（权限/配置/依赖/网络/资源/运行时）；普通失败不填' },
-    },
-    description: 'failed 时必填：失败原因；带 reasonCode 表示系统阻碍（可修复后重试）',
-  },
-  schedules: {
-    type: 'object',
-    additionalProperties: false,
-    properties: {
-      create: {
-        type: 'array',
-        items: {
-          type: 'object',
-          additionalProperties: false,
-          properties: {
-            title: { type: 'string', required: true, description: '日程标题（极简，≤30 字）' },
-            allDay: { type: 'boolean', description: '全天日程：true 时 startAt 必填完整纯日期（如 2026-11-04），endAt 可选且尾日包含（11-04 到 11-06 填 2026-11-06），均不带时刻' },
-            startAt: { type: 'string', description: '开始时间；普通日程如 10-28 09:00（可带年份，无明确起点不填）；全天日程（allDay:true）用完整纯日期 2026-11-04。纯日期必须配 allDay:true，否则拒绝' },
-            endAt: { type: 'string', description: '结束时间；普通日程如 10-28 22:00（事项应完成的时刻）；全天日程用完整纯日期，尾日包含当天' },
-            remindAt: { type: 'string', description: '提醒时间，如 10-28 17:30（到点提醒用户，与时间窗分开；全天日程也可设置）' },
-            priority: { type: 'string', enum: [...todoPriorities], description: 'P0 紧急且重要 / P1 重要不紧急 / P2 紧急不重要 / P3 有空再做（默认 P3）' },
-            links: {
-              type: 'array',
-              items: { type: 'object', additionalProperties: false, properties: {
-                url: { type: 'string', required: true, description: 'http(s) 网址' },
-                label: { type: 'string', description: '显示名（缺省显示域名）' },
-              } },
-              description: '相关链接（≤10）',
-            },
-            attachments: {
-              type: 'array',
-              items: { type: 'object', additionalProperties: false, properties: {
-                path: { type: 'string', required: true, description: '子工作区相对路径（禁止绝对路径和 ..）' },
-                name: { type: 'string', description: '显示名（缺省显示文件名）' },
-              } },
-              description: '附件文件（≤10，须已在工作区内生成）',
-            },
-            contacts: {
-              type: 'array',
-              items: { type: 'object', additionalProperties: false, properties: {
-                name: { type: 'string', required: true },
-                phone: { type: 'string' },
-                email: { type: 'string' },
-                note: { type: 'string', description: '如可用时段' },
-              } },
-              description: '联系人信息卡（≤5，电话/邮箱供用户点按联系）',
-            },
-            location: {
-              type: 'object', additionalProperties: false, properties: {
-                name: { type: 'string', required: true },
-                address: { type: 'string' },
-              },
-              description: '地点（名称+可选地址）',
-            },
-            remark: { type: 'string', description: '备注：纯文字说明。联系方式/网址/地点/文件用 contacts/links/location/attachments 字段，不要堆在这里' },
-          },
-        },
-        description: '新建用户日程：只有助理代替不了、需要用户本人推进的事才建；必须挂在 task_update 顶层，不要放进 report；电话/网址/地点/附件写进 contacts/links/location/attachments 字段',
-      },
-      update: {
-        type: 'array',
-        items: {
-          type: 'object',
-          additionalProperties: false,
-          properties: {
-            id: { type: 'string', required: true, description: '日程 id（从投递附言/本工具返回值的清单里抄，禁止编造）' },
-            status: { type: 'string', enum: ['pending', 'done', 'cancelled'], description: '代办完成标 done；不再适用标 cancelled' },
-            title: { type: 'string', description: '改标题（≤30 字）' },
-            allDay: { type: 'boolean', description: '改全天状态：必须同时给新格式的 startAt（普通日程带时刻 / 全天日程纯日期），禁止只改 allDay' },
-            startAt: { type: 'string', description: '开始时间；普通日程如 10-28 09:00（可带年份）；全天日程用完整纯日期 2026-11-04' },
-            endAt: { type: 'string', description: '结束时间；普通日程如 10-28 22:00；全天日程用完整纯日期，尾日包含当天' },
-            remindAt: { type: 'string', description: '提醒时间，如 10-28 17:30' },
-            priority: { type: 'string', enum: [...todoPriorities], description: 'P0~P3' },
-            links: {
-              type: 'array',
-              items: { type: 'object', additionalProperties: false, properties: {
-                url: { type: 'string', required: true }, label: { type: 'string' },
-              } },
-            },
-            attachments: {
-              type: 'array',
-              items: { type: 'object', additionalProperties: false, properties: {
-                path: { type: 'string', required: true }, name: { type: 'string' },
-              } },
-            },
-            contacts: {
-              type: 'array',
-              items: { type: 'object', additionalProperties: false, properties: {
-                name: { type: 'string', required: true }, phone: { type: 'string' }, email: { type: 'string' }, note: { type: 'string' },
-              } },
-            },
-            location: {
-              type: 'object', additionalProperties: false, properties: {
-                name: { type: 'string', required: true }, address: { type: 'string' },
-              },
-            },
-            remark: { type: 'string', description: '备注：纯文字说明' },
-          },
-        },
-        description: '更新已有日程：按 id 改状态或内容（改谁带谁）',
-      },
-    },
-    description: '用户日程：新的放 create，改的放 update（抄 id）',
-  },
-} as const
 
 export default OrchestratorService

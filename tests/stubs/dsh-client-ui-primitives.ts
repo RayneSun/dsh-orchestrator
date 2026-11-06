@@ -3,4 +3,3 @@ export const SettingsFormModel = class {}
 export const SettingsForm = () => null
 export const SettingsValueField = () => null
 export const Switch = () => null
-export const settingsTextField = () => ({})

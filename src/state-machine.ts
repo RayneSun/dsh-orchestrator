@@ -1,5 +1,6 @@
 import type { BlockReasonCode, ConversationRecord, DeliveryToggles, QuestionAnswer, QuestionItem, TaskFail, TaskRecord, TaskReport, TaskStatus } from './types.ts'
 import { defaultDeliveryToggles, deliverableTaskStatuses, taskUpdateFieldAllowList, terminalTaskStatuses } from './types.ts'
+import { isUnfinishedTask } from './task-lifecycle.ts'
 
 export class StateError extends Error {
   constructor(public code: string, message: string) {
@@ -116,22 +117,12 @@ function withTerminalDelivery(task: TaskRecord, status: TaskStatus): TaskRecord[
  * toggles 缺失（未注入配置）时按默认值处理（inputRequired 默认关，其余开）。
  */
 export function deliveryEnabledFor(toggles: DeliveryToggles | undefined, status: TaskStatus): boolean {
-  if (!toggles) return defaultDeliveryEnabled(status)
+  const resolved = toggles ?? defaultDeliveryToggles
   switch (status) {
-    case 'input_required': return toggles.inputRequired
-    case 'completed': return toggles.completed
-    case 'failed': return toggles.failed
-    case 'interrupted': return toggles.interrupted
-    default: return true
-  }
-}
-
-function defaultDeliveryEnabled(status: TaskStatus): boolean {
-  switch (status) {
-    case 'input_required': return defaultDeliveryToggles.inputRequired
-    case 'completed': return defaultDeliveryToggles.completed
-    case 'failed': return defaultDeliveryToggles.failed
-    case 'interrupted': return defaultDeliveryToggles.interrupted
+    case 'input_required': return resolved.inputRequired
+    case 'completed': return resolved.completed
+    case 'failed': return resolved.failed
+    case 'interrupted': return resolved.interrupted
     default: return true
   }
 }
@@ -228,7 +219,7 @@ export function failTask(
   at = new Date().toISOString(),
   options: { reasonCode?: BlockReasonCode } = {},
 ): TaskRecord {
-  if (isTerminal(task.status)) return task
+  if (!isUnfinishedTask(task.status)) return task
   return {
     ...touch(task, at),
     status: 'failed',
@@ -240,18 +231,19 @@ export function failTask(
 
 /** 进程重启时任务仍在运行：保留进展并标记中断，不冒充用户提问；恢复后可在同一子会话继续。 */
 export function interruptTaskAfterRestart(task: TaskRecord, at = new Date().toISOString()): TaskRecord {
-  if (isTerminal(task.status)) return task
+  if (!isUnfinishedTask(task.status)) return task
   return {
     ...touch(task, at),
     status: 'interrupted',
     cancelledReason: '服务重启导致执行中断，已有进展已保留',
     endedAt: at,
+    delivery: undefined,
   }
 }
 
 /** 改单/补充需求时旧任务进入 interrupted；手动停止若需通知，由调用方补 delivery。 */
 export function interruptTaskForRevision(task: TaskRecord, reason: string, at = new Date().toISOString()): TaskRecord {
-  if (isTerminal(task.status)) return task
+  if (!isUnfinishedTask(task.status)) return task
   return {
     ...touch(task, at),
     status: 'interrupted',

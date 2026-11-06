@@ -1,7 +1,15 @@
 import { describe, expect, it } from 'vitest'
+import { readFileSync } from 'node:fs'
 import { DSH_CORE_TOOL_BASELINE, LEAD_SUPPRESSED_SECTIONS, LEAD_TOOL_DENY, LEAD_TOOL_KEEP, leadToolDenyList, unrecognizedGlobalTools } from '../src/lead-policy.ts'
 
 describe('Lead 工具黑名单与提示段抑制', () => {
+  it('当前 vendored macOS 工具全部对 Lead 隐藏', () => {
+    const source = readFileSync(new URL('../vendor/dsh-computer-use-darwin/index.js', import.meta.url), 'utf8')
+    const names = [...source.matchAll(/defineTool\(\{\s*name: '([^']+)'/g)].map(match => match[1])
+    expect(names).toHaveLength(12)
+    expect(leadToolDenyList(names)).toEqual(names)
+    expect(unrecognizedGlobalTools(names)).toEqual([])
+  })
   it('deny 只含第三方执行类：meow 写/管理、qqmail 全家桶、桌面操控', () => {
     expect([...LEAD_TOOL_DENY].sort()).toEqual([
       'click', 'drag', 'get_app_state', 'list_apps', 'memory_dream', 'memory_find_similar', 'memory_home',
@@ -9,6 +17,9 @@ describe('Lead 工具黑名单与提示段抑制', () => {
       'qqmail_attachment', 'qqmail_config', 'qqmail_delete', 'qqmail_folders', 'qqmail_list', 'qqmail_mark',
       'qqmail_move', 'qqmail_read', 'qqmail_reply', 'qqmail_search', 'qqmail_send', 'qqmail_status',
       'render_ui', 'scroll', 'select_text', 'set_value', 'type_text', 'validate_dsh_ui',
+      'screen_observe', 'screen_zoom', 'computer_click', 'computer_double_click', 'computer_right_click',
+      'computer_type', 'computer_key', 'computer_scroll', 'computer_drag', 'computer_wait', 'app_list', 'app_launch',
+      'browser_session', 'browser_page', 'browser_inspect', 'browser_interact', 'browser_tabs', 'browser_assist',
     ].sort())
   })
 

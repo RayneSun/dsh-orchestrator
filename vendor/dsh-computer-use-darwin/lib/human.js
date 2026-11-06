@@ -10,8 +10,8 @@
  *     支持后台/隐藏窗口，无需坐标；引擎文档明确 "Prefer element_token"）
  *   - x/y 坐标模式 → 像素路径（CGEvent），坐标 = 窗口本地截图像素
  */
-import { cuaCall, CUA_SESSION, withSession } from './cua.js'
-import { getSnapshot } from './snapshot.js'
+import { cuaCall, withSession } from './cua.js'
+import { getSnapshot, resolveWindow } from './snapshot.js'
 
 /** 滑行段数（越多越平滑，真人手部轨迹感）。 */
 const GLIDE_SEGMENTS = 5
@@ -27,12 +27,12 @@ const ARC_HEIGHT = 40
  * @param {number} ty - 目标 y
  * @param {object} opts - { pid, windowId } 用于窗口目标
  */
-export async function glideCursor(tx, ty, opts = {}) {
+async function glideCursor(tx, ty, opts = {}) {
   const tryMove = (payload) => cuaCall('move_cursor', payload).catch(() => undefined)
   // 当前光标位置（拿不到就从目标点直线过去）
   let cur = null
   try {
-    cur = await cuaCall('get_cursor_position', { session: CUA_SESSION })
+    cur = await cuaCall('get_cursor_position', withSession())
   } catch { /* 无光标信息 → 直线 */ }
   const sx = cur?.x != null ? cur.x : tx
   const sy = cur?.y != null ? cur.y : ty
@@ -46,14 +46,6 @@ export async function glideCursor(tx, ty, opts = {}) {
     await new Promise((r) => setTimeout(r, GLIDE_STEP_MS))
   }
   await tryMove(withSession({ x: tx, y: ty, ...opts }))
-}
-
-/**
- * 窗口本地截图像素 ⇄ 屏幕坐标换算不再需要：0.21.0 直接接受截图像素。
- * 保留函数仅为兼容旧调用（坐标原样返回）。
- */
-export function windowLocalOf(x, y, _snap) {
-  return { x, y }
 }
 
 /**
@@ -71,7 +63,7 @@ export async function humanClick(opts) {
   }
 
   // 2. 点击：token 优先（AX 路径），否则像素路径（窗口本地截图像素）
-  const payload = { session: CUA_SESSION, pid }
+  const payload = withSession({ pid })
   if (token) {
     payload.element_token = token
     // token 路径同样透传计数/按钮，否则双击/右键会静默退化成单次左键
@@ -91,25 +83,23 @@ export async function humanClick(opts) {
 
 /** 快照辅助：解析编号 → token + 坐标（截图像素空间）。 */
 export function resolveClickTarget(index, ttlMs) {
+  const window = resolveWindow(ttlMs)
   const snap = getSnapshot()
-  if (!snap) throw new Error('没有可用的观察快照：请先调用 screen_observe。')
   const entry = snap.entries?.get(index)
   if (!entry) throw new Error(`编号 [${index}] 不在当前快照中。`)
-  const pt = screenPointOf(entry, snap)
-  const local = windowLocalOf(entry.x, entry.y, snap)
+  const pt = screenPointOf(entry)
   return {
-    pid: snap.pid,
-    windowId: snap.windowId,
+    ...window,
     token: entry.token || null,
-    x: local.x,
-    y: local.y,
+    x: entry.x,
+    y: entry.y,
     sx: pt?.sx,
     sy: pt?.sy,
   }
 }
 
 /** 快照辅助：元素坐标（截图像素空间）。 */
-export function screenPointOf(entry, _snap) {
+function screenPointOf(entry) {
   if (!entry || entry.x == null || entry.y == null) return null
   return { sx: entry.x, sy: entry.y }
 }

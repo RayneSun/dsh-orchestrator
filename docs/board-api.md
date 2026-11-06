@@ -1,7 +1,9 @@
-# dsh-orchestrator 任务看板数据接口（v0.3.17 全天日程版）
+# dsh-orchestrator 任务看板数据接口（v0.3.18）
 
-> 面向下游（移动端 App）开发者。本文档完整描述 DSH Orchestrator 插件在 DSH Web（默认 `http://127.0.0.1:3080`）中暴露的任务看板数据结构：全部字段、全部状态定义、同步机制与展示建议。基于 v0.3.17：用户日程独立表 + 双页签看板（v0.3.15）+ 全天日程纯日期语义与死字段清理（v0.3.17）+ completed `report.card` dsh-ui 卡片（v0.3.17）。
+> 面向下游（移动端 App）开发者。本文档描述 DSH Orchestrator 插件在 DSH Web（默认 `http://127.0.0.1:3080`）中暴露的任务看板数据结构、状态定义、同步机制与展示建议。当前为 v0.3.18 本地里程碑，尚未推送或发包；沿用 v0.3.17 的用户日程、全天日期与 `report.card` 契约。
 > 内部资料，请勿公开分发。
+
+**v0.3.17 → v0.3.18 无接口或数据格式变更**：三个 RPC 的名称、请求与响应、snapshot 字段、状态枚举和持久化 schema 均保持一致，下游无需适配。变化是等待任务的停止/改单/取消/重启清理、日程整批校验，以及两页一致的优先级展示。契约源码见 [types.ts](../src/types.ts) 与 [remote.ts](../src/remote.ts)；变更与验证边界见 [里程碑](milestones/0.3.18.md)。
 
 ## 1. 接入方式
 
@@ -28,7 +30,7 @@
 | 远程方法 | `orchestrator/setScheduleStatus` |
 | 请求 | `{ "scheduleId": "sch_<uuid>", "status": "pending" \| "done" }` |
 | 响应 | `{ "ok": true }`；scheduleId 不存在时抛错 |
-| 说明 | 只允许 pending ↔ done 互转；落库 `completedBy: "user"`。`cancelled` 只能由子会话标记，App 不可设置 |
+| 说明 | 目标状态只接受 pending / done；done 写 `completedBy: "user"`，pending 清除 completedBy。RPC 不检查原状态；Web 对 cancelled 禁用勾选，App 应遵循相同规则，不可请求设置 cancelled |
 
 **answerTaskQuestions**（问题卡作答）：
 
@@ -77,10 +79,10 @@ Task 是子会话内的一次任务执行记录（一次 dispatch / 一次定时
 | prompt | string | 派发指令原文（内部信息，App 一般不展示） |
 | acceptanceCriteria | string? | 验收标准 |
 | status | TaskStatus | 任务状态，见 §6 |
-| header | string? | 极简状态标题（≤8 字，progressNote 压缩版；折叠态/手机端主展示） |
+| header | string? | 极简状态标题（新上报输入限制 ≤8 字；存储读取不限制旧值长度；折叠态/手机端主展示） |
 | progressNote | string? | 一句话进展汇报（拟人风格，实时刷新） |
 | questions | QuestionItem[]? | `input_required` 时必填，结构化问题，见 §4 |
-| answers | QuestionAnswer[]? | 问题卡作答留痕；Host 重开任务前写入 |
+| answers | QuestionAnswer[]? | 问题卡作答留痕；Host 恢复 running 前写入，同轮继续 |
 | fail | TaskFail? | `failed` 时必填：`{ error, reasonCode? }`，不再有顶层 error/reasonCode/remediation |
 | cancelledReason | string? | interrupted 时的中断归类（如 parent、手动停止） |
 | report | TaskReport? | completed 时必填：`{ result, artifacts?, card? }` |
@@ -97,7 +99,7 @@ Task 是子会话内的一次任务执行记录（一次 dispatch / 一次定时
 
 ```ts
 QuestionItem = {
-  id: string           // Worker 可省略；Host 自动补 q1/q2/… 并在 task_update 返回值回显
+  id: string           // Worker 输入可省略；Host 补 q1/q2/…，snapshot 与作答后的 answers 使用该 id
   question: string     // 问题正文
   header?: string      // 短标题/分组
   detail?: string      // 补充说明
@@ -111,18 +113,18 @@ QuestionAnswer = {
 }
 ```
 
-问题卡只出现在两处：任务看板、子会话对话内 task_update 工具行（主会话不参与投递，`answerTaskQuestions` 同源路由，任一处作答另一处自动消失）。
+问题卡只出现在两处：任务看板、Worker 子会话内由 `userQuestions.ask` 创建的原生问题卡（主会话不参与投递，`answerTaskQuestions` 同源路由，任一处作答另一处自动消失）。停止、改单、工具取消或服务卸载会清理等待，已取消原生卡晚到的答案不会进入后续提问；Host 重启后遗留 `input_required` 转为已有 `interrupted`，Conversation 回 `idle`，不投递 Lead。
 
 ## 5. Schedule（用户日程）
 
-主会话 scope 的独立表（v2 存储）。一次任务可创建多条；App 可按会话（归属回链）或按时间（日程页）两个维度展示。没有 startAt/endAt 的日程只在会话页出现，日程页跳过。
+主会话 scope 的独立表（v2 存储）。一次任务可创建多条；App 可按会话（归属回链）或按时间（日程页）两个维度展示。没有 startAt 的日程只在会话页出现，即使有 endAt，日程页也跳过。
 
 | 字段 | 类型 | 说明 |
 |---|---|---|
 | id | string | `sch_<uuid>`；旧 `todo_` id 已废弃，Worker 引用会报不存在 |
 | parentSessionId | string | 主会话 ID（scope 归属） |
 | conversationId | string | 提出该日程的子会话 ID（归属回链；代办/修改派回此会话） |
-| conversationTitle | string? | 仅 snapshot 投影：来源子会话标题，日程页渲染「来自 xx」 |
+| conversationTitle | string | 仅 snapshot 投影，必有字段：来源子会话标题，未找到时为 `''`；日程页渲染「来自 xx」 |
 | title | string | 极简标题，≤30 字 |
 | allDay | boolean | 全天日程标记；缺省 false（旧记录免迁移） |
 | startAt | string? | allDay=true 时为完整纯日期 `YYYY-MM-DD`（必填，不落时区）；否则为 ISO 8601 带时区时间戳（可缺省） |
@@ -135,14 +137,15 @@ QuestionAnswer = {
 | location | `{ name, address? }?` | 地点名称与地址 |
 | remark | string? | 纯文字备注；联系方式/链接/地点/文件应放结构化字段 |
 | status | `'pending' \| 'done' \| 'cancelled'` | done/cancelled 非待处理 |
-| completedBy | `'user' \| 'worker'`? | done 的完成方；pending 无 |
+| completedBy | `'user' \| 'worker'`? | 用户标 done 为 user；Worker 标 done / cancelled 为 worker；恢复 pending 清除 |
 | createdAt / updatedAt | string(ISO 8601) | 创建/更新时间 |
 
 时间输入在 Worker 上报时按 allDay 分叉解析，存储后格式互斥：
 
 - **普通日程（allDay=false/缺省）**：startAt/endAt 必须带时刻（`10-29 09:30`、`2026-10-29T09:00`、完整 ISO 8601 均可），归一化为带本地时区的 ISO 8601。**纯日期输入一律拒绝**（含 `10-25` 月-日简写），不再猜测午夜——`2026-11-04` 与 `2026-11-04 00:00` 从此语义可分。
 - **全天日程（allDay=true）**：startAt 必填完整纯日期 `YYYY-MM-DD`（不省略年、不带时刻）；endAt 可选、尾日包含、≥ startAt。纯日期不落时区，任何设备时区读取均为同一日历日。
-- **原子切换**：task_update 的 `schedules.update` 显式修改 allDay 必须同时携带新格式的 startAt（切全天带纯日期、切回带时刻），只改 allDay 会被 schema 拒绝；未带 allDay 的时间 patch 与存量记录合并后由 Host 做整条一致性校验（allDay 与时间格式不互洽整条报错，不产生部分写入）。
+- **模式与时间一起提交**：task_update 的 `schedules.update` 显式提供 allDay 时必须同时携带对应格式的 startAt（全天带纯日期、普通带时刻），只给 allDay 会被 schema 拒绝。省略 allDay 的时间 patch 按普通带时刻语义解析；更新全天纯日期时必须显式带 `allDay: true` 与 startAt。patch 与存量记录合并后，Host 再校验整条记录的时间一致性。
+- **先校验再写入**：整批 create / update 校验完成后才开始写入；同一 id 的多个 patch 按顺序合并，归属或时间校验失败时零写入。存储没有跨记录 I/O 事务，磁盘失败或进程崩溃仍可能部分落盘。
 - **互斥**：allDay 与 startAt/endAt 格式一一绑定，不存在"全天 + 时刻"混合记录；remindAt 恒为绝对时刻。
 
 > 与 RFC 5545 / MS Graph 的差异：本契约 endAt 为**包含端**（尾日当天有效），迁移自他方日历数据时注意换算（iCal/Graph 的排除端需减一天）。
@@ -226,11 +229,13 @@ App 渲染建议：列表 + 勾（completed）/ 转（in_progress）/ 空（pend
 
 - 月历：周一起始，‹ / 今天 / › 导航；今天描边、选中日高亮；每天下方显示活动日程的优先级色点（最多 3 个 +「+N」），跨天事项每天出现。
 - 选中日列表：默认今天；标题「M 月 D 日 周X · N 条」；已过期未完成的日程置顶「已过期」分组（红字）；每行下方「来自 {conversationTitle}」来源回链。
-- 无 startAt/endAt 的日程不进日程页；同一行组件与看板页共用，点行展开详情（备注/链接/附件/联系人/地点胶囊）。
+- 无 startAt 的日程不进日程页；两页共用日程行，均显示 P0–P3 优先级胶囊，点行展开详情（备注/链接/附件/联系人/地点胶囊）。
 
 ## 11. 同步与兼容性注意
 
 - snapshot 读取时经 schema 迁移，输出永远是最新结构。
+- **v0.3.17 → v0.3.18**：snapshot / RPC 和存储格式不变，无新增 status，无 schema 迁移。`Snapshot` 与 RPC 请求类型从原有 Zod schema 推导；`snapshotResultSchema` 移至 types.ts，remote.ts 保留重导出。生命周期修复会使遗留等待任务在重启后进入已有 interrupted 状态。
+- 以下为历史变更记录，包含当时的方案用语；当前问题卡只有看板与 Worker 原生卡两个入口，以 §4 为准。
 - **v0.3.13 → v0.3.14 破坏性变化**：
   - `TaskStatus` 删除 `blocked`；系统阻碍并入 `failed.fail.reasonCode`。
   - `task.error / task.reasonCode / task.remediation` 删除；改为 `task.fail = { error, reasonCode? }`。

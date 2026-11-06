@@ -219,6 +219,12 @@ describe('用户回答后重开任务', () => {
 })
 
 describe('改单中断与 Worker 提问', () => {
+  it('等待用户作答的任务仍可停止、失败和重启中断', () => {
+    const waiting = transitionTask(bgTask(), { status: 'input_required', questions: [{ id: 'q1', question: '继续吗？' }] })
+    expect(interruptTaskForRevision(waiting, '新需求').status).toBe('interrupted')
+    expect(interruptTaskAfterRestart(waiting).status).toBe('interrupted')
+    expect(failTask(waiting, '轮次结束').status).toBe('failed')
+  })
   it('活动任务可被新需求中断并记录原因，且不保留后台失败投递', () => {
     const { task, conv } = pair()
     const interrupted = interruptTaskForRevision(task, '被新需求取代')

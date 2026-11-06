@@ -66,7 +66,7 @@ description: "dsh-ui 卡片组件规范：结果含结构化数据（对比表�
 - callout: `{"type":"callout","tone":"info|success|warning|error","title":"...","content":"..."}` — 用于单条强调、提醒或风险摘要；`content` 是文本字符串，可用 JSON `"\n"` 分行。多条独立事项用 `list` 的 `{title,desc}` 保留逐项层次
 - steps: `{"type":"steps","current":n,"steps":[{"title":"...","desc":"..."}]}`
 - arrow: `{"type":"arrow","dir":"down|right","length":16-96,"label":"..."}` — 图里两个块之间的**细线连接件**（1.4px 线宽 + V 形箭头，固定长度）。上下流程图一律用它，**不要用文字「↓」**：字符箭头跟着文字基线走，撑不开间距
-- icon: `{"type":"icon","name":"Nodes","tone":"info|success|warning|danger|muted|default","size":16|20|24|32,"tile":true,"label":"<user-language 无障碍名>"}` — 内置图标集（749 个可忠实渲染；64 个内联秒开，其余首次使用时载入，完整名单见 ICON-NAMES.md）。`tile:true` 画成**淡色圆角方底**，用于阶段卡/语义标记；不带 `tile` 是跟随文字色的行内图标。`label` 可省略（纯装饰），成对出现时只给一个加 label
+- icon: `{"type":"icon","name":"Nodes","tone":"info|success|warning|danger|muted|default","size":16|20|24|32,"tile":true,"label":"<user-language 无障碍名>"}` — 内置图标集（749 个可忠实渲染；64 个内联秒开，其余首次使用时载入，优先使用下列常用名称）。`tile:true` 画成**淡色圆角方底**，用于阶段卡/语义标记；不带 `tile` 是跟随文字色的行内图标。`label` 可省略（纯装饰），成对出现时只给一个加 label
 - blocks: `{"type":"blocks","title":"...","rows":[{"label":"初始","cells":["0","1","2"],"color":"#64748b"}],"columns":n?,"caption":"..."}` — **色块图解**：按行分组的格子。三种形态同一个结构：① 阶梯图（每行格子数不同，各行自己等分宽度，如 8→4→2→1）② 等分块（一行 4 块）③ 泳道图（`columns` 固定列数，`cells` 里写 `"—"` 或留空）。`color` 省略时用强调色淡底；文字颜色按亮度自动反转（深底白字/浅底黑字）。**有「分成几份、逐轮推进、分组对照」的结构就用它，不要手写 svg 坐标。** `caption` 必写：一句话说明每格代表什么
   - 行级 `"variant":"outline"`：细边框不填充，用于**矩阵**（每格都是一个框）；`"variant":"plain"`：连框都不画，用于**位串**（`1 0 1 0 0 0 0 0` 读起来是数字不是表格）——只有带 `tone`/`color` 的格子会画出底色
   - 格子可以写成对象：`{"text":"1","tone":"danger","sub":"SF"}` —— `tone`（accent/success/warning/danger/muted）给**单个格子**上语义色，`sub` 在格子下方挂一行小字（位名、序号、角色）。`color` 可显式指定十六进制，优先于 tone
@@ -76,7 +76,7 @@ description: "dsh-ui 卡片组件规范：结果含结构化数据（对比表�
 
 Check CheckCircle Info InfoCircle Warning Error X Plus Minus Circle ArrowDown ArrowUp ArrowRight ArrowLeft ArrowCurvedRight Function Functions Operator Atom Nodes Connect Share Branch Grid GridAlt Stack Cube Storage Chart Trending Pulse Speed Timer Clock TableFilled Code SquareCode Terminal File FileCode Folder Link Paperclip Lightbulb Book BookOpen GraduationCap Flask Lab Brain Robot Sparkles ShieldCheck Lock Globe WebsiteNetwork Search MagnifyingGlassSearch PluginPuzzle Settings Bolt Compass
 
-其余 **685 个按需载入**（首次用到时拉取约 1 MB，此后本页全部可用）。完整名单在本 SKILL 同目录的 `ICON-NAMES.md`——需要猜名字时读它或 grep 它，不要在对话里穷举。
+其余 **685 个按需载入**（首次用到时拉取约 1 MB，此后本页全部可用）。本包未附完整图标名单；使用其他名称前先确认宿主支持，无法确认时使用上列常用名称，不要在对话里穷举。
 ### 图表
 - chart: `{"type":"chart","kind":"bars|line|donut","data":[{"label":"...","value":n,"color":"#hex?"}],"series":[{"label":"...","data":[...]}]?,"horizontal":true?}` — bars 默认；line 趋势；donut 占比；**series：bars 是分组柱，line 是多序列折线；每个 `series[].data` 使用 `[{"label":"Q1","value":30},{"label":"Q2","value":45}]` 这样的对象数组，不是 `[30,45]` 这样的纯数字数组**；**`horizontal:true` 画横向柱**（排行/长标签首选）；**`stacked:true` 把 series 堆叠**（构成/占比随时间）；堆叠段够高时数值直接印在段内，鼠标悬停任意柱/段/点/扇区都会弹出即时 tooltip（堆叠显示该段数值 + 合计）。v3 渲染：宽度自适应、Y 轴 1/2/5 刻度、单序列负值在零线以下真实绘制、line 带面积渐变与抽稀 X 标签、donut 图例显示数值与百分比。**≤8 个点的快速对比用 chart；多序列、需要缩放/交互或数据量大时用 echart**
 - plot: `{"type":"plot","series":[{"expr":"a*sin(b*x)","label":"...","color":"#hex?","params":[{"name":"a","value":1,"min":0,"max":5,"animateTo":3,"durationMs":4000,"loop":true},{"name":"b","value":1,"min":0.5,"max":5}]}],"xMin":-6.28,"xMax":6.28,"title":"..."}` — SVG 函数图；**series 可带 `"kind":"line|area|scatter"`**（缺省 line；area 填色到基线；scatter 散点）；**params 渲染成实时滑块**（拖动即时重绘，**y 轴锁定**=只变曲线不变数轴）；**animateTo 参数会显示播放按钮**（自动动画演示）；SVG 可拖拽平移、滚轮缩放；表达式支持 sin/cos/tan/asin/acos/atan/sqrt/cbrt/exp/log/ln/abs/floor/ceil/round/min/max/pow，常量 pi/e/tau，变量 x（其他字母=参数）
@@ -146,11 +146,11 @@ Check CheckCircle Info InfoCircle Warning Error X Plus Minus Circle ArrowDown Ar
 
 ## card 级版式：默认无卡，焦点唯一
 
-**规则来自设计规范，不是口味**（`design` skill 的 `references/design-reference.md`）：
+**版式规则如下，无需加载外部设计文件**：
 「通用圆角矩形卡片当默认容器 = 模板思维，默认无卡；只有内容类型确实需要时才加卡片处理」，
 「如果替换内容不需要改布局，那就是模板，重做」。
 
-### 三条判据（不设组件数量上限）
+### 三条判据（数量随内容，遵守节点与体积预算）
 
 1. **必要性**：这个组件承载的信息，用文字表达会明显更差吗？数字对比、趋势、空间关系、代码/数据原文才算过关，否则删掉。
 2. **焦点唯一**：一个 card只有一个视觉焦点（最大那张图或那组数字）；其余组件的视觉权重必须明显更低，靠尺寸/位置/色彩强度拉开，**不是靠数组件个数**。
@@ -298,11 +298,11 @@ Check CheckCircle Info InfoCircle Warning Error X Plus Minus Circle ArrowDown Ar
 
 1. **card 就是唯一输出方式**：只在 completed 的 task_update 里提交，不要用其他工具
 2. **组合优先**：复杂界面用 `grid`+`card`+`stat`+`table` 拼，不要追求单一巨型组件
-3. **JSON 合法，字段名按组件词汇**：字符串值内不要用半角双引号（中文引语用 `“”` 或 `「」`）；无尾随逗号；不要在字符串里放 markdown；超长表格/列表拆成多个组件，宁短勿长
+3. **JSON 合法，字段名按组件词汇**：字符串内的半角双引号必须转义（中文引语可用 `“”` 或 `「」`）；无尾随逗号；文字字段可用上文列出的行内富文本，不嵌 Markdown 表格或代码围栏；超长表格/列表拆成多个组件，宁短勿长
 4. **不要嵌套围栏**：card JSON 里不要再包代码围栏
 5. **深色主题友好**：配色选深底亮色；UI 主题跟随应用
 6. **场景判断**：先查上面的映射表 —— 内容类型命中就上对应组件；只有纯文字问答、一句话能说清时才不用
 7. **图表范围**：`plot` 给合理 xMin/xMax（如 -3.14 到 3.14）；3D 场景 mesh 少而精
 8. **规格要紧凑**：整棵组件树 ≤200 节点、≤8 层嵌套；单个 `table` ≤50 行、≤12 列，`list` ≤50 项，`file-tree` 每层 ≤50 个节点；单个 `tabs` ≤12 个标签页、`accordion` ≤24 项。序列化后 ≤16KB。
 9. **一个主题选一个主组件**：命中映射表后选**一种**组件承载，同一信息不要用两种组件重复表达（同一批数据又画 bars 又画 donut = 冗余）
-10. **数量纪律**：一个 card 3–8 个组件为宜，宁缺毋滥。反例：该用 `table` 对比时写三段 `text`；一个 `stat` 能说清的事套 `card`+`grid`；与内容无关的 `scene3d` 炫技——3D 只在内容本身就是几何/空间时才用
+10. **数量纪律**：一个 card 3–8 个组件为常见建议，按内容增减，仍遵守节点和体积预算。反例：该用 `table` 对比时写三段 `text`；一个 `stat` 能说清的事套 `card`+`grid`；与内容无关的 `scene3d` 炫技——3D 只在内容本身就是几何/空间时才用

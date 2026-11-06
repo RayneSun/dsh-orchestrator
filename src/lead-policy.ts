@@ -42,10 +42,28 @@ export const LEAD_TOOL_DENY = [
   'select_text',
   'set_value',
   'type_text',
+  'screen_observe',
+  'screen_zoom',
+  'computer_click',
+  'computer_double_click',
+  'computer_right_click',
+  'computer_type',
+  'computer_key',
+  'computer_scroll',
+  'computer_drag',
+  'computer_wait',
+  'app_list',
+  'app_launch',
+  'browser_session',
+  'browser_page',
+  'browser_inspect',
+  'browser_interact',
+  'browser_tabs',
+  'browser_assist',
 ] as const
 
 /**
- * DSH 自带全局工具基线快照（2026-11-03 实测枚举，55 个）。
+ * DSH 自带全局工具基线快照（2026-11-06 源码枚举，57 个）。
  * 用途：Lead 挂载时对比当前注册表——出现在注册表但既不在基线、也未命中 deny
  * 的名字 = 新装第三方插件（或 DSH 新增自带工具），打 warn 提醒复查
  * LEAD_TOOL_DENY。本清单只在"发现变化 → 确认归属"时更新，不参与过滤。
@@ -54,7 +72,7 @@ export const DSH_CORE_TOOL_BASELINE: readonly string[] = [
   'ask_user_question', 'bash', 'cordis_inspect_list', 'cordis_inspect_query', 'create_goal',
   'create_worktree', 'edit', 'get_goal', 'glob', 'grep', 'interrupt_agent', 'job_kill',
   'job_list', 'job_output', 'list_agents', 'list_mcp_resource_templates', 'list_mcp_resources',
-  'list_subagent_models', 'load_workspace_dependencies', 'present', 'pwsh', 'ralph', 'read',
+  'list_subagent_models', 'load_workspace_dependencies', 'plugin_manager', 'plugin_market', 'present', 'pwsh', 'ralph', 'read',
   'read_image', 'read_mcp_resource', 'schedule_create', 'schedule_delete', 'schedule_list',
   'schedule_update', 'send_message', 'session_event_read', 'session_event_search',
   'session_event_trace', 'session_search', 'session_trace', 'skill', 'spawn_teammate',

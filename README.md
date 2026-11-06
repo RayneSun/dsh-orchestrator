@@ -2,6 +2,8 @@
 
 DSH 主控助理编排插件，也是一个开箱即用的个人助理能力包。Lead 主会话只负责理解需求、维护路由卡、派发任务和转述结果；持久子会话保存完整执行上下文，每次派发对应一条 TaskRun。
 
+当前仓库版本 **0.3.18**，作为本地里程碑保存，尚未推送或发包。本版完成等待任务生命周期、日程批量校验、工具策略与桌面会话隔离加固，并拆分看板组件；snapshot / RPC、状态枚举和持久化格式与 0.3.17 保持一致，下游无需适配。详见 [0.3.18 里程碑](docs/milestones/0.3.18.md)与[文档索引](docs/README.md)。
+
 ## 预设
 
 - `may-orchestrator-lead`：主控助理。DSH 自带工具全部可用（一步轻量查询、记忆查阅直接做）；第三方执行类工具（浏览器、邮件、桌面操控、记忆写入/管理）走黑名单对 Lead 隐藏，DSH 升级新增的自带能力不会被误伤。同时遮蔽 meow 记忆手册与 qqmail 公告提示段，并关闭 Lead 会话的记忆自动注入/写回/空闲整理——主控上下文只保留路由所需的最小面。记忆查询由影子只读工具承接；meow-memory 缺失或导出变更时整体降级，不影响其余功能。
@@ -39,33 +41,36 @@ Worker 的任务上报协议、安全红线（支付/删除等不可逆操作先
 - **终态投递开关（设置页）**：插件管理 → 已安装 → `@may/dsh-orchestrator` → 行“配置”，可按状态（completed / failed / interrupted）勾选是否向主会话投递终态消息；默认全部开启。input_required 不参与投递（问题卡只在看板 + 子会话渲染）。改动即时生效。投递只决定“消息是否唤醒主会话回应”：`task_update` 的状态、进展与日程总是持久化，roster 与看板照常实时更新——这与 `silent` 的分界一致（silent 是整个会话不投，开关是按状态不投）。关闭期间产生的终态不补投。
 - Lead 只以 Worker 的 `report.result` 和 `report.card` 为权威结果；`report.artifacts` 制品路径自动带工作区前缀。
 - 定时/周期任务由 Worker 的 schedule 工具创建并绑定其自身子会话；到点触发后 Worker 执行并上报，Lead 转述给用户。绑定了定时任务的会话在看板带定时时钟徽标（schedule/changed 事件与轮次结束双触发刷新；DSH 侧栏标题不加图标前缀）。若 Worker 发现同主题任务反复定期出现，会主动建议用户设为定时任务。
-- 重启后恢复看板；普通未完成任务标记 interrupted，无法确认持久化状态时标记 failed 并带 runtime 原因；未投递的后台终态会重试唤醒 Lead。
+- 等待用户作答期间，手动停止、改单、工具取消和服务卸载会清理等待与原生问题卡；已取消卡片晚到的答案不会答入后续提问。
+- 重启后恢复看板；普通未完成任务（queued / running / input_required）标记 interrupted，工作流回 idle；无法确认持久化状态时标记 failed 并带 runtime 原因；未投递的后台终态会重试唤醒 Lead。
+- 日程变更整批完成归属和时间一致性校验后才开始写入，校验失败不写入任何日程；存储没有跨记录事务，I/O 失败仍可能部分落盘。
 
 ## Web 看板
 
 在主会话 header 点击“任务看板”。右侧栏按子会话展示：
 
-- **会话卡片**：状态徽标、静默 / 定时 / dsh-ui 卡片徽标、独立工作区名、任务时间线；支持折叠；折叠态保留问题卡与日程，运行中的会话高亮并带柔光扫过动效。completed 任务可展开查看卡片 JSON 预览。看板提供**会话 / 日程**双页签：日程页为月历（周一起始、优先级色点、跨天事项逐日出现、过期未完成置顶、无时间字段的日程只在会话页），停留在日程页时任务更新会在会话页签亮起未读点，切回即清除。
+- **会话卡片**：状态徽标、静默 / 定时 / dsh-ui 卡片徽标、独立工作区名、任务时间线；支持折叠；折叠态保留问题卡与日程，运行中的会话高亮并带柔光扫过动效。completed 任务可展开查看卡片 JSON 预览。看板提供**会话 / 日程**双页签：日程页为月历（周一起始、优先级色点、跨天事项逐日出现、过期未完成置顶、缺少 startAt 的日程只在会话页），停留在日程页时任务更新会在会话页签亮起未读点，切回即清除。
 - **用户日程框**：位于工作区行上方、折叠也显示；用户可画勾/取消（经 `setScheduleStatus` 持久化并同步给子会话），已完成灰显划线保留，Worker 作废的日程带"已作废"胶囊不可勾；每条日程带优先级胶囊（P0 红 / P1 橙 / P2 黄 / P3 绿，默认 P3），时间窗/提醒渲染为胶囊，点击日程行展开详情（备注/链接/附件/联系人/地点）。
 - **任务框**：把多轮任务圈起来，默认只显示最新一轮，可展开全部。任务行含状态徽标、精简主题、实时步骤进度（✓/● 框选清单）、加粗 `header` + 一句话进展（运行中带扫光动效）、创建时间与实时耗时；“展开详情”含完整结果/错误、作答留痕、可点击打开的制品文件与同步状态。
 - 点击“打开子会话”可查看完整子会话（Worker 是与主会话同级的一等会话）。除日程画勾和问题卡作答外看板只读。
+
+会话页与日程页共用日程行，两页都显示 P0–P3 优先级胶囊。macOS 桌面工具按 Agent 隔离快照和驱动 session，同一 Agent 的调用串行；元素编号点击必须通过快照时效校验。
 
 ## 分发安装
 
 要求接收方已安装 DSH `0.2.1-rc.2` 或更高版本，并且使用 Web profile。
 
-把 `may-dsh-orchestrator-0.3.16.tgz` 发给对方后执行（安装后新会话自动进入主控助理预设，无需手改配置）：
+正式发包后，把 `may-dsh-orchestrator-0.3.18.tgz` 发给对方再执行（安装后新会话自动进入主控助理预设，无需手改配置；以下为分发步骤，本地里程碑不执行）：
 
 ```sh
-dsh plugin --profile web add /path/to/may-dsh-orchestrator-0.3.16.tgz
-dsh web --no-open --host 127.0.0.1 --port 3080
+dsh plugin --profile web add /absolute/path/to/may-dsh-orchestrator-0.3.18.tgz
 ```
 
 新版本覆盖安装时，先移除旧版本再添加新 tarball：
 
 ```sh
 dsh plugin --profile web remove @may/dsh-orchestrator
-dsh plugin --profile web add /path/to/may-dsh-orchestrator-0.3.16.tgz
+dsh plugin --profile web add /absolute/path/to/may-dsh-orchestrator-0.3.18.tgz
 ```
 
 重新生成分发包：
@@ -75,7 +80,7 @@ pnpm install
 pnpm pack:dist
 ```
 
-tarball 只包含运行所需的 `lib/`、`cordis.patch.yml`、README、LICENSE 和 package metadata；不包含源码测试、source map、本机 `node_modules` 或开发仓库路径。
+tarball 只包含运行所需的 `lib/`、`cordis.patch.yml`、`genui-card-skill.md`、README、LICENSE 和 package metadata；不包含源码测试、source map、本机 `node_modules` 或开发仓库路径。
 
 ## 本地开发
 
@@ -88,10 +93,11 @@ pnpm verify:packaging
 pnpm pack:dry
 ```
 
-安装到本地 Web profile：
+正式构建分发包后安装到本地 Web profile（必须使用 tgz 绝对路径，覆盖安装先 remove）：
 
 ```sh
-dsh plugin --profile web add /path/to/dsh-orchestrator
+dsh plugin --profile web remove @may/dsh-orchestrator
+dsh plugin --profile web add /absolute/path/to/may-dsh-orchestrator-0.3.18.tgz
 ```
 
 移除：
@@ -100,12 +106,12 @@ dsh plugin --profile web add /path/to/dsh-orchestrator
 dsh plugin --profile web remove @may/dsh-orchestrator
 ```
 
-启动：
+本机启动使用指定脚本，并通过 `start_new_session` 脱离命令会话；普通前台调用或 `nohup` 可能被回收：
 
 ```sh
-/Users/lixuchuan/work/harness/start-dsh-web.sh
+uv run --no-project --python /usr/bin/python3 python -c 'import subprocess; subprocess.Popen(["/Users/lixuchuan/work/harness/start-dsh-web.sh", "--no-open"], start_new_session=True, stdin=subprocess.DEVNULL, stdout=open("/private/tmp/dsh-web.log", "ab"), stderr=subprocess.STDOUT)'
 ```
 
 ## 存储
 
-插件使用 `storageDomain` 的 `orchestrator` v1 domain，包含 `conversations` 与 `tasks` 两张表。完整子会话 transcript 仍由 DSH Session 持久化保存，插件只保存路由摘要和任务状态。
+插件使用 `storageDomain` 的 `orchestrator` v2 domain，采用 per-record 布局，位于 `~/.dsh/storages/orchestrator/`，包含 `conversations`、`tasks`、`schedules` 三张表。完整子会话 transcript 仍由 DSH Session 持久化保存，插件保存路由摘要、任务状态和日程。

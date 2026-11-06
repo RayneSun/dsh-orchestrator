@@ -83,11 +83,7 @@ async function loadMeow(logger: { info?(message: string): void; warn?(message: s
   return cached
 }
 
-export function leadMemoryState(): 'loaded' | 'unavailable' | 'pending' {
-  return cached === undefined ? 'pending' : cached === null ? 'unavailable' : 'loaded'
-}
-
-export interface LeadMemoryTarget {
+interface LeadMemoryTarget {
   workspace: string
   sessionId: string
 }

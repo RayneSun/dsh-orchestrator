@@ -31,10 +31,11 @@ import { defineTool } from '@deepseek-ai/dsh-tools'
 
 import { screenObserve, screenZoom } from './lib/observe.js'
 import {
-  click, doubleClick, rightClick, typeText, key, scroll, drag, wait, listApps, launchApp,
+  click, doubleClick, rightClick, typeText, dispatchKey, scroll, drag, wait, listApps, launchApp,
 } from './lib/actions.js'
 import { guard } from './lib/guard.js'
 import { cuaCall, CUA_SESSION } from './lib/cua.js'
+import { computerSession, createComputerSessionScope } from './lib/sessions.js'
 
 export const name = 'dsh-computer-use'
 
@@ -134,19 +135,25 @@ export function apply(ctx, config) {
     visionModel: config.visionModel || 'deepseek-v4-flash-vision-exp',
   }
 
-  // 初始化虚拟光标：声明统一会话 + 应用主题（异步，不阻塞插件加载）
-  cuaCall('start_session', { session: CUA_SESSION }).catch(() => undefined)
-  if (cfg.cursorTheme) {
-    cuaCall('set_agent_cursor_theme', { session: CUA_SESSION, theme_id: cfg.cursorTheme })
-      .catch(() => undefined)
-  }
+  const runInSession = createComputerSessionScope(CUA_SESSION)
 
   /** 统一包装：先过安全护栏，再执行实现（exec 透传给需要 route 的实现）。 */
   const wrap = (toolName, impl) => async (args, exec) => {
     try {
-      const g = await guard(ctx, cfg, toolName, args, exec)
-      if (!g.ok) return { ok: false, result: `✗ ${g.reason}` }
-      return await impl(args, cfg, exec)
+      return await runInSession(exec, async () => {
+        const session = computerSession()
+        const g = await guard(ctx, cfg, toolName, args, exec)
+        if (!g.ok) return { ok: false, result: `✗ ${g.reason}` }
+        if (toolName !== 'computer_wait' && !session.initialized) {
+          await cuaCall('start_session', { session: session.id })
+          if (cfg.cursorTheme) {
+            await cuaCall('set_agent_cursor_theme', { session: session.id, theme_id: cfg.cursorTheme })
+              .catch(error => ctx.logger?.warn?.(`dsh-computer-use: cursor theme unavailable: ${String(error)}`))
+          }
+          session.initialized = true
+        }
+        return impl(args, cfg, exec)
+      })
     } catch (err) {
       return { ok: false, result: `✗ ${err.message}` }
     }
@@ -266,7 +273,7 @@ export function apply(ctx, config) {
       key: { type: 'string', required: true, description: '按键名或组合（示例: return / cmd+c / shift+tab / cmd+shift+p）。' },
     },
     output: OUT(),
-    execute: wrap('computer_key', (args, cfg2) => key(args, cfg2)),
+    execute: wrap('computer_key', (args, cfg2) => dispatchKey(args, cfg2)),
   }))
 
   ctx.tools.register(defineTool({
