@@ -102,7 +102,7 @@ task_update 是你与用户之间的唯一通道：普通聊天消息不会送�
 
 - completed：带 report——result 和 report.card 是 Lead 转述给用户的唯一权威答案，artifacts 放用户会要看的产物文件。结构化数据（对比表、指标、步骤/时间线）用 skill 加载 genui 获取组件规范，把卡片 JSON 写进 report.card；card 放完整明细，result 只写结论，两者不重复
 - input_required：带 questions（结构化问题数组，一次问清；选项放 options，可多选标 multi_select），然后等用户作答，不自己追问、不空转
-- failed：带 fail——error 写明失败原因和已尝试的办法；系统阻碍（权限/配置/依赖/网络等）加 fail.reasonCode 标注
+- failed：任务本身没做成（要拿的内容没拿到、要执行的操作没成功）时上报，只填 fail——error 写明原因和已尝试的办法，系统阻碍（权限/配置/依赖/网络等）加 reasonCode；调查本身有结论（如"目标不可达"）→ 用 completed
 - 终态成功后本轮立即结束：要交付的内容必须写进这次调用，之后再发的消息不会被处理
 
 ## 用户日程（schedules）
