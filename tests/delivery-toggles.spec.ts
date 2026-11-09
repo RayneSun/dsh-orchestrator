@@ -38,16 +38,16 @@ describe('终态投递开关', () => {
   })
 
   it('gateTaskDelivery 剥掉被关闭状态的 pending，其他字段不变', () => {
-    const done = transitionTask(bgTask(), { status: 'completed', report: { result: '搞定' } })
+    const done = transitionTask(bgTask(), { status: 'completed', result: '搞定' })
     expect(done.delivery).toEqual({ state: 'pending', attempts: 0 })
     const gated = gateTaskDelivery(done, { ...defaultDeliveryToggles, completed: false })
     expect(gated.delivery).toBeUndefined()
     expect(gated.status).toBe('completed')
-    expect(gated.report?.result).toBe('搞定')
+    expect(gated.result).toBe('搞定')
   })
 
   it('gateTaskDelivery 对开启状态与非 pending 记录是恒等操作', () => {
-    const done = transitionTask(bgTask(), { status: 'completed', report: { result: 'x' } })
+    const done = transitionTask(bgTask(), { status: 'completed', result: 'x' })
     expect(gateTaskDelivery(done, defaultDeliveryToggles)).toBe(done)
     expect(gateTaskDelivery(done, undefined)).toBe(done)
     const running = transitionTask(bgTask(), { status: 'running', progressNote: '进行中' })
@@ -55,7 +55,7 @@ describe('终态投递开关', () => {
   })
 
   it('silent 任务本就不挂起 pending，开关不再产生任何影响', () => {
-    const silentDone = transitionTask({ ...bgTask(), silent: true }, { status: 'completed', report: { result: 'x' } })
+    const silentDone = transitionTask({ ...bgTask(), silent: true }, { status: 'completed', result: 'x' })
     expect(silentDone.delivery).toBeUndefined()
     expect(gateTaskDelivery(silentDone, allOff)).toBe(silentDone)
   })

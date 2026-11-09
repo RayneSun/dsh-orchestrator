@@ -1,9 +1,12 @@
-# dsh-orchestrator 任务看板数据接口（v0.3.18）
+# dsh-orchestrator 任务看板数据接口（v0.3.19-dev）
 
-> 面向下游（移动端 App）开发者。本文档描述 DSH Orchestrator 插件在 DSH Web（默认 `http://127.0.0.1:3080`）中暴露的任务看板数据结构、状态定义、同步机制与展示建议。当前为 v0.3.18 正式版；沿用 v0.3.17 的用户日程、全天日期与 `report.card` 契约。
+> 面向下游（移动端 App）开发者。本文档描述 DSH Orchestrator 插件在 DSH Web（默认 `http://127.0.0.1:3080`）中暴露的任务看板数据结构、状态定义、同步机制与展示建议。
 > 内部资料，请勿公开分发。
 
-**v0.3.17 → v0.3.18 无接口或数据格式变更**：三个 RPC 的名称、请求与响应、snapshot 字段、状态枚举和持久化 schema 均保持一致，下游无需适配。变化是等待任务的停止/改单/取消/重启清理、日程整批校验，以及两页一致的优先级展示。契约源码见 [types.ts](../src/types.ts) 与 [remote.ts](../src/remote.ts)；变更与验证边界见 [里程碑](milestones/0.3.18.md)。
+**⚠️ v0.3.18 → v0.3.19 破坏性变化（下游必读）**：
+1. **Task 字段拍平**：`task.report = { result, artifacts?, card? }` 拆为顶层 `task.result / task.artifacts / task.card`；`task.fail = { error, reasonCode? }` 拆为顶层 `task.error / task.reasonCode`。旧包裹字段不再输出。
+2. **Worker 上报协议拆分**：单工具 `task_update` 拆为 5 个工具——`task_running / task_input_required / task_completed / task_failed / task_schedule`；`schedules` 不再挂在状态上报上，改为独立 `task_schedule` 工具。状态枚举与 snapshot 结构除上述拍平外不变。
+3. **不兼容旧会话**：升级后旧存储里的 `report/fail` 包裹数据直接丢弃、不迁移；升级前产生的历史 completed/failed 任务在 snapshot 中丢失 result/error 内容。RPC（snapshot / setScheduleStatus / answerTaskQuestions）名称与请求响应结构不变。
 
 ## 1. 接入方式
 
@@ -39,7 +42,7 @@
 | 远程方法 | `orchestrator/answerTaskQuestions` |
 | 请求 | `{ "childSessionId": "<子会话 sessionId>", "answers": QuestionAnswer[] }` |
 | 响应 | `{ "ok": true, "taskId": "task_<uuid>" }`，失败为 `{ "ok": false, "error": string }` |
-| 行为 | 串行幂等：只有最新任务仍是 `input_required` 才接受；先答先赢。Host resolve 挂起的 `task_update(input_required)` 工具调用（工具返回用户答案，Worker 同轮继续），并 abort 另一侧未答的问题卡。 |
+| 行为 | 串行幂等：只有最新任务仍是 `input_required` 才接受；先答先赢。Host resolve 挂起的 `task_input_required` 工具调用（工具返回用户答案，Worker 同轮继续），并 abort 另一侧未答的问题卡。 |
 
 ### 1.3 变更通知
 
@@ -83,9 +86,12 @@ Task 是子会话内的一次任务执行记录（一次 dispatch / 一次定时
 | progressNote | string? | 一句话进展汇报（拟人风格，实时刷新） |
 | questions | QuestionItem[]? | `input_required` 时必填，结构化问题，见 §4 |
 | answers | QuestionAnswer[]? | 问题卡作答留痕；Host 恢复 running 前写入，同轮继续 |
-| fail | TaskFail? | `failed` 时必填：`{ error, reasonCode? }`，不再有顶层 error/reasonCode/remediation |
+| result | string? | `completed` 时必填：用户最终看到的权威答案文本 |
+| artifacts | string[]? | completed 产物文件（子工作区相对路径） |
+| card | Record<string, unknown>? | completed 的 dsh-ui 展示卡片 JSON（≤16KB，禁围栏嵌套） |
+| error | string? | `failed` 时必填：失败原因 |
+| reasonCode | BlockReasonCode? | failed 的系统阻碍类别；普通失败不填 |
 | cancelledReason | string? | interrupted 时的中断归类（如 parent、手动停止） |
-| report | TaskReport? | completed 时必填：`{ result, artifacts?, card? }` |
 | progressSteps | ProgressStep[] | 多步骤进度清单（来自 Worker 的 todo_write），见 §8 |
 | silent | boolean | 会话/任务是否静默；true 时终态不向主会话投递 |
 | scheduled | boolean? | 定时触发产生的上报任务标记 |
@@ -144,7 +150,7 @@ QuestionAnswer = {
 
 - **普通日程（allDay=false/缺省）**：startAt/endAt 必须带时刻（`10-29 09:30`、`2026-10-29T09:00`、完整 ISO 8601 均可），归一化为带本地时区的 ISO 8601。**纯日期输入一律拒绝**（含 `10-25` 月-日简写），不再猜测午夜——`2026-11-04` 与 `2026-11-04 00:00` 从此语义可分。
 - **全天日程（allDay=true）**：startAt 必填完整纯日期 `YYYY-MM-DD`（不省略年、不带时刻）；endAt 可选、尾日包含、≥ startAt。纯日期不落时区，任何设备时区读取均为同一日历日。
-- **模式与时间一起提交**：task_update 的 `schedules.update` 显式提供 allDay 时必须同时携带对应格式的 startAt（全天带纯日期、普通带时刻），只给 allDay 会被 schema 拒绝。省略 allDay 的时间 patch 按普通带时刻语义解析；更新全天纯日期时必须显式带 `allDay: true` 与 startAt。patch 与存量记录合并后，Host 再校验整条记录的时间一致性。
+- **模式与时间一起提交**：task_schedule 的 `update` 显式提供 allDay 时必须同时携带对应格式的 startAt（全天带纯日期、普通带时刻），只给 allDay 会被 schema 拒绝。省略 allDay 的时间 patch 按普通带时刻语义解析；更新全天纯日期时必须显式带 `allDay: true` 与 startAt。patch 与存量记录合并后，Host 再校验整条记录的时间一致性。
 - **先校验再写入**：整批 create / update 校验完成后才开始写入；同一 id 的多个 patch 按顺序合并，归属或时间校验失败时零写入。存储没有跨记录 I/O 事务，磁盘失败或进程崩溃仍可能部分落盘。
 - **互斥**：allDay 与 startAt/endAt 格式一一绑定，不存在"全天 + 时刻"混合记录；remindAt 恒为绝对时刻。
 
@@ -157,26 +163,26 @@ QuestionAnswer = {
 | 状态 | 含义 | 关键字段 |
 |---|---|---|
 | queued | 已入队，Worker 轮次未开始 | — |
-| running | 执行中 | header / progressNote / progressSteps / schedules 可更新 |
+| running | 执行中 | header / progressNote / progressSteps |
 | input_required | 待用户操作（阻塞工具，看板 + 子会话原生卡双入口作答） | questions 必填 |
-| completed | 完成 | report 必填 |
-| failed | 失败（含系统阻碍） | fail.error 必填；系统阻碍加 fail.reasonCode |
+| completed | 完成 | result 必填 |
+| failed | 失败（含系统阻碍） | error 必填；系统阻碍加 reasonCode |
 | interrupted | 改单接管、用户手动停止或重启恢复 | cancelledReason |
 
-**Worker task_update 状态（协议）**：`running / input_required / completed / failed`（`blocked` 已删除；`interrupted` 只由 Host 写入）。
+**Worker 上报协议（v0.3.19 起 5 个独立工具，单工具 `task_update` 已删除）**：
 
 ```txt
-task_update（input_required 为阻塞调用，返回值即用户答案 { answers: [{id, selected, custom?}] }）
-├── status: 'running'|'input_required'|'completed'|'failed'  ★
-├── header?: string                    全状态可选，≤8 字
-├── progressNote?: string              全状态可选，一句话进展
-├── schedules?: { create?: ScheduleNew[], update?: ScheduleUpdate[] }   全状态可选，顶层字段
-├── questions?: QuestionItem[]         input_required ★ 必填
-├── report?: { result ★, artifacts?, card? }  completed ★ 必填；card 为 dsh-ui JSON
-└── fail?: { error ★, reasonCode? }    failed ★ 必填
+task_running        { header?, progressNote? }
+task_input_required { header?, progressNote?, questions: QuestionItem[] ★ }   阻塞调用，返回用户答案
+task_completed      { header?, progressNote?, result: string ★, artifacts?, card? }   终态，本轮立即结束
+task_failed         { header?, progressNote?, error: string ★, reasonCode? }          终态，本轮立即结束
+task_schedule       { create?: ScheduleNew[], update?: ScheduleUpdate[] }   日程 CRUD，与任务状态无关
 ```
 
-`reasonCode`：`permission_denied / configuration / dependency / network / resource / runtime`。
+- `task_input_required` 为阻塞调用，返回值即用户答案 `{ answers: [{id, selected, custom?}] }`，Worker 同轮继续。
+- `task_completed / task_failed` 为终态：提交成功后 Worker 本轮不再推理；无活动任务的定时触发轮次只允许 `task_completed`。
+- `task_schedule` 返回最新日程清单（含 id），随时可调用，不产生状态迁移。
+- `reasonCode`：`permission_denied / configuration / dependency / network / resource / runtime`。
 
 ## 7. 状态映射与展示
 
@@ -234,6 +240,10 @@ App 渲染建议：列表 + 勾（completed）/ 转（in_progress）/ 空（pend
 ## 11. 同步与兼容性注意
 
 - snapshot 读取时经 schema 迁移，输出永远是最新结构。
+- **v0.3.18 → v0.3.19（破坏性）**：
+  - `task.report` / `task.fail` 包裹层删除：`report.result / report.artifacts / report.card` → `task.result / task.artifacts / task.card`；`fail.error / fail.reasonCode` → `task.error / task.reasonCode`。
+  - Worker 协议：单工具 `task_update` 拆为 `task_running / task_input_required / task_completed / task_failed / task_schedule`；状态上报不再携带 `schedules`。
+  - 旧存储的 `report/fail` 数据直接丢弃（不兼容旧会话），升级前的历史终态内容不可恢复。
 - **v0.3.17 → v0.3.18**：snapshot / RPC 和存储格式不变，无新增 status，无 schema 迁移。`Snapshot` 与 RPC 请求类型从原有 Zod schema 推导；`snapshotResultSchema` 移至 types.ts，remote.ts 保留重导出。生命周期修复会使遗留等待任务在重启后进入已有 interrupted 状态。
 - 以下为历史变更记录，包含当时的方案用语；当前问题卡只有看板与 Worker 原生卡两个入口，以 §4 为准。
 - **v0.3.13 → v0.3.14 破坏性变化**：

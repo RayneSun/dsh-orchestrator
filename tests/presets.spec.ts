@@ -69,12 +69,11 @@ describe('Orchestrator agent presets', () => {
   it('Worker persona 固化了 task_update 协议和通用约束', () => {
     const persona = byId.get(WORKER_PRESET)!.plugins.find(row => row.id === 'persona')
     const prefix = String((persona!.config as { prefix: string }).prefix)
-    expect(prefix).toContain('task_update')
+    expect(prefix).toContain('task_completed')
     expect(prefix).toContain('completed')
     expect(prefix).toContain('工作区')
-    // 记忆纪律与安全边界（工具用法由工具自身描述，不在 persona 重复）
-    expect(prefix).toContain('memory_remember')
-    expect(prefix).toContain('fail.reasonCode')
+    // 安全边界（memory 纪律由 meow-memory 自身注入，不在 persona 双写）
+    expect(prefix).toContain('reasonCode')
     expect(prefix).toContain('系统阻碍')
     expect(prefix).toContain('input_required')
     expect(prefix).toContain('subagent')

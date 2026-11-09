@@ -16,7 +16,7 @@ describe('统一 Worker 权限', () => {
 
   it('禁止 Worker 直接向用户提问，要求改走 input_required + question', () => {
     for (const name of ['ask_user_question', 'ask_user']) {
-      expect(isWorkerToolForbidden(name)).toContain('task_update')
+      expect(isWorkerToolForbidden(name)).toContain('task_input_required')
     }
   })
 

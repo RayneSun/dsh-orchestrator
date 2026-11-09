@@ -68,9 +68,9 @@ function taskHeadline(task: TaskRecord): string {
     case 'input_required':
       return firstLine(task.questions?.[0]?.question) || '等待用户操作'
     case 'completed':
-      return firstLine(task.report?.result) || '已完成'
+      return firstLine(task.result) || '已完成'
     case 'failed':
-      return firstLine(task.fail?.error) || '执行失败'
+      return firstLine(task.error) || '执行失败'
     case 'interrupted':
       return task.cancelledReason || '已中断'
     case 'queued':
@@ -109,7 +109,7 @@ function TaskHead({ task }: { task: TaskRecord }): React.ReactElement {
     <span className={`dsho-badge dsho-badge-${task.status}`}>{taskStatusLabels[task.status] ?? task.status}</span>
     {task.silent && <TagChip kind="silent" title="静默：终态不通知主会话" />}
     {task.scheduled && <TagChip kind="scheduled" title="定时触发：由定时任务自动执行" />}
-    {task.report?.card && <TagChip kind="card" title="含 dsh-ui 展示卡片" />}
+    {task.card && <TagChip kind="card" title="含 dsh-ui 展示卡片" />}
     <span className="dsho-taskSubject" title={task.subject}>{task.subject}</span>
   </div>
 }
@@ -123,8 +123,8 @@ interface TaskLineProps {
 
 function TaskLine({ task, conv, nowMs, onOpenArtifact }: TaskLineProps): React.ReactElement {
   const [expanded, setExpanded] = useState(false)
-  const result = task.report?.result
-  const artifacts = task.report?.artifacts ?? []
+  const result = task.result
+  const artifacts = task.artifacts ?? []
   const live = task.status === 'running' && !task.endedAt
   const duration = durationText(task, nowMs)
 
@@ -135,10 +135,10 @@ function TaskLine({ task, conv, nowMs, onOpenArtifact }: TaskLineProps): React.R
     const parts = [answer.selected.length > 0 ? answer.selected.join('、') : '', answer.custom ?? ''].filter(Boolean)
     return `[${answer.id}] ${parts.join('；') || '（未作答）'}`
   }).join('；')}</div>)
-  if (task.status === 'failed' && task.fail) {
+  if (task.status === 'failed' && task.error) {
     detailSections.push(<div key="err" className="dsho-detailSec">
-      <b>失败原因</b>：{task.fail.error}
-      {task.fail.reasonCode && <>（<b>{blockReasonLabels[task.fail.reasonCode] ?? task.fail.reasonCode}</b> 阻碍，处理后可继续）</>}
+      <b>失败原因</b>：{task.error}
+      {task.reasonCode && <>（<b>{blockReasonLabels[task.reasonCode] ?? task.reasonCode}</b> 阻碍，处理后可继续）</>}
     </div>)
   }
   if (task.acceptanceCriteria) detailSections.push(<div key="ac" className="dsho-detailSec"><b>验收标准</b>：{task.acceptanceCriteria}</div>)
@@ -152,7 +152,7 @@ function TaskLine({ task, conv, nowMs, onOpenArtifact }: TaskLineProps): React.R
       onClick={() => onOpenArtifact(conv, artifact)}
     ><FileIcon />{artifact}</button>)}</div>
   </div>)
-  if (task.report?.card) detailSections.push(<CardPreview key="card" card={task.report.card} />)
+  if (task.card) detailSections.push(<CardPreview key="card" card={task.card} />)
   if (task.delivery?.state === 'pending') detailSections.push(<div key="dp" className="dsho-detailSec dsho-subtle">
     {task.delivery.attempts === 0 ? '正在把结果同步回主会话…' : `同步未成功（已重试 ${task.delivery.attempts} 次，将自动继续）${task.delivery.lastError ? ` · ${task.delivery.lastError}` : ''}`}
   </div>)

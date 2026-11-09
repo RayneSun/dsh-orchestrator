@@ -38,20 +38,15 @@ describe('Worker turn/end 原因分类', () => {
 })
 
 describe('任务状态机', () => {
-  it('completed 缺少 report.result 时拒绝', () => {
-    const { task } = pair()
-    expect(() => transitionTask(task, { status: 'completed' })).toThrowError(StateError)
-  })
-
   it('终态不能再次迁移', () => {
     let { task } = pair()
-    task = transitionTask(task, { status: 'completed', report: { result: 'done' } })
+    task = transitionTask(task, { status: 'completed', result: 'done' })
     expect(() => transitionTask(task, { status: 'running' })).toThrow(/cannot move/)
   })
 
   it('成功完成会释放 Conversation', () => {
     let { conv, task } = pair()
-    task = transitionTask(task, { status: 'completed', report: { result: '晴' } })
+    task = transitionTask(task, { status: 'completed', result: '晴' })
     conv = settleConversation(conv, task)
     expect(conv.state).toBe('idle')
     expect(conv.activeTaskId).toBeNull()
@@ -59,7 +54,7 @@ describe('任务状态机', () => {
 
   it('Worker/任务失败后持久工作流仍可复用；Host 致命错误才标记会话失败', () => {
     let { conv, task } = pair()
-    task = transitionTask(task, { status: 'failed', fail: { error: '构建失败' } })
+    task = transitionTask(task, { status: 'failed', error: '构建失败' })
     conv = settleConversation(conv, task)
     expect(task.status).toBe('failed')
     expect(conv.state).toBe('idle')
@@ -87,76 +82,62 @@ describe('任务状态机', () => {
 })
 
 describe('statusConcludesTurn', () => {
-  it('终态全部结束本轮，仅 running 继续；undefined 不结束', () => {
-    for (const status of ['completed', 'failed', 'input_required', 'interrupted'] as const) {
+  it('仅 completed 和 failed 结束本轮', () => {
+    for (const status of ['completed', 'failed'] as const) {
       expect(statusConcludesTurn(status)).toBe(true)
     }
-    expect(statusConcludesTurn('running')).toBe(false)
-    expect(statusConcludesTurn(undefined)).toBe(false)
+    for (const status of ['running', 'input_required', 'input_required_answered', 'interrupted', undefined]) {
+      expect(statusConcludesTurn(status)).toBe(false)
+    }
   })
 })
 
-describe('task_update header', () => {
+describe('task_* header', () => {
   it('header 随状态迁移更新，未提供时保留旧值', () => {
     let task = bgTask()
     task = transitionTask(task, { status: 'running', header: '开始抓取' })
     expect(task.header).toBe('开始抓取')
     task = transitionTask(task, { status: 'running', progressNote: '抓到一半' })
     expect(task.header).toBe('开始抓取')
-    task = transitionTask(task, { status: 'completed', header: '抓取完成', report: { result: '答案' } })
+    task = transitionTask(task, { status: 'completed', header: '抓取完成', result: '答案' })
     expect(task.header).toBe('抓取完成')
   })
 })
 
 describe('状态迁移和修订号', () => {
-  it('input_required 必须带问题，failed 必须带 fail.error', () => {
+  it('failed 上报写入拍平存储', () => {
     const queued = bgTask()
-    expect(() => transitionTask(queued, { status: 'input_required' })).toThrow(/question/)
-    expect(() => transitionTask(queued, { status: 'failed' })).toThrow(/failed/)
-    expect(() => transitionTask(queued, {
-      status: 'input_required',
-      questions: [{ id: 'q1', question: 'q?' }],
-      fail: { error: '权限不足' },
-    })).toThrow(/not allowed/)
-    expect(transitionTask(queued, { status: 'failed', fail: { error: 'boom' } }).status).toBe('failed')
+    expect(transitionTask(queued, { status: 'failed', error: 'boom' }).status).toBe('failed')
   })
 
   it('状态迁移会清理不属于新状态的上下文字段', () => {
     const failed = transitionTask({ ...bgTask(), status: 'running', questions: [{ id: 'q1', question: '旧问题' }] }, {
       status: 'failed',
-      fail: { error: '权限不足', reasonCode: 'permission_denied' },
+      error: '权限不足',
+      reasonCode: 'permission_denied',
     })
     expect(failed.questions).toBeUndefined()
-    expect(failed.fail).toEqual({ error: '权限不足', reasonCode: 'permission_denied' })
+    expect(failed.error).toBe('权限不足')
+    expect(failed.reasonCode).toBe('permission_denied')
 
-    const completed = transitionTask({ ...bgTask(), status: 'running', fail: { error: '旧错误' } }, {
+    const completed = transitionTask({ ...bgTask(), status: 'running', error: '旧错误' }, {
       status: 'completed',
-      report: { result: '已完成' },
+      result: '已完成',
     })
-    expect(completed.fail).toBeUndefined()
-    expect(completed.report?.result).toBe('已完成')
-
-    expect(() => transitionTask(bgTask(), {
-      status: 'running',
-      questions: [{ id: 'q1', question: 'q?' }],
-    })).toThrow(/not allowed/)
-    expect(() => transitionTask(bgTask(), {
-      status: 'completed',
-      report: { result: 'ok' },
-      fail: { error: 'x' },
-    })).toThrow(/not allowed/)
+    expect(completed.error).toBeUndefined()
+    expect(completed.result).toBe('已完成')
   })
 
   it('queued 可直接完成，完成后修订号递增且不能继续迁移', () => {
     const task = bgTask()
-    const done = transitionTask(task, { status: 'completed', report: { result: '答案' } })
+    const done = transitionTask(task, { status: 'completed', result: '答案' })
     expect(done.revision).toBe(1)
     expect(done.endedAt).toBe(done.updatedAt)
     expect(canTransition(done.status, 'running')).toBe(false)
   })
 
   it('后台任务进入可投递终态时自动挂起投递；interrupted 不投递', () => {
-    expect(transitionTask(bgTask(), { status: 'completed', report: { result: 'ok' } }).delivery)
+    expect(transitionTask(bgTask(), { status: 'completed', result: 'ok' }).delivery)
       .toEqual({ state: 'pending', attempts: 0 })
     expect(transitionTask(bgTask(), {
       status: 'input_required',
@@ -164,27 +145,28 @@ describe('状态迁移和修订号', () => {
     }).delivery).toEqual({ state: 'pending', attempts: 0 })
     expect(transitionTask(bgTask(), {
       status: 'failed',
-      fail: { error: '权限被拒绝', reasonCode: 'permission_denied' },
+      error: '权限被拒绝',
+      reasonCode: 'permission_denied',
     }).delivery).toEqual({ state: 'pending', attempts: 0 })
     expect(interruptTaskForRevision(bgTask(), '改单').delivery).toBeUndefined()
   })
 
   it('静默任务进入任何终态都不挂投递', () => {
     const silent = { ...bgTask(), silent: true }
-    expect(transitionTask(silent, { status: 'completed', report: { result: 'ok' } }).delivery).toBeUndefined()
+    expect(transitionTask(silent, { status: 'completed', result: 'ok' }).delivery).toBeUndefined()
     expect(transitionTask(silent, {
       status: 'input_required',
       questions: [{ id: 'q1', question: 'q?' }],
     }).delivery).toBeUndefined()
     expect(transitionTask(silent, {
-      status: 'failed', fail: { error: 'e', reasonCode: 'network' },
+      status: 'failed', error: 'e', reasonCode: 'network',
     }).delivery).toBeUndefined()
     expect(failTask(silent, 'boom').delivery).toBeUndefined()
   })
 
   it('终态任务再次失败时保持原记录不变', () => {
     const { task } = pair()
-    const done = transitionTask(task, { status: 'completed', report: { result: 'done' } })
+    const done = transitionTask(task, { status: 'completed', result: 'done' })
     expect(failTask(done, 'later')).toBe(done)
   })
 
@@ -213,7 +195,7 @@ describe('用户回答后重开任务', () => {
     expect(task.delivery).toBeUndefined()
     expect(task.progressNote).toContain('回答')
     expect(() => resumeTaskWithAnswers(transitionTask(bgTask(), {
-      status: 'completed', report: { result: 'done' },
+      status: 'completed', result: 'done',
     }), answers)).toThrow(/not awaiting user input/)
   })
 })
@@ -270,7 +252,7 @@ describe('改单中断与 Worker 提问', () => {
 
   it('failed 任务把工作流置回 idle', () => {
     let { conv } = pair()
-    const failed = transitionTask(bgTask(), { status: 'failed', fail: { error: '缺少 bsk' } })
+    const failed = transitionTask(bgTask(), { status: 'failed', error: '缺少 bsk' })
     conv = settleConversation(conv, failed)
     expect(conv.state).toBe('idle')
   })
@@ -279,14 +261,17 @@ describe('改单中断与 Worker 提问', () => {
 describe('card 字段', () => {
   const base = () => createTask({ id: 't1', parentSessionId: 'p1', conversationId: 'c1', predecessorTaskId: null, subject: '查距离', prompt: 'p' })
 
-  it('completed 时 report.card 随 transitionTask 持久化', () => {
+  it('completed 时 card 随 transitionTask 持久化', () => {
     const card = { title: '对比', items: [{ type: 'table', columns: ['a'], rows: [['1']] }] }
-    const task = transitionTask({ ...base(), status: 'running' }, { status: 'completed', report: { result: 'ok', card } })
-    expect(task.report?.card).toEqual(card)
+    const task = transitionTask({ ...base(), status: 'running' }, { status: 'completed', result: 'ok', card })
+    expect(task.card).toEqual(card)
   })
 
-  it('非 completed 时 report（含 card）被 allowlist 拒绝', () => {
-    expect(() => transitionTask({ ...base(), status: 'queued' }, { status: 'running', report: { result: 'x', card: { title: 'x' } } })).toThrow(StateError)
+  it('running 迁移不携带终态字段（输入类型已收敛）', () => {
+    const task = transitionTask({ ...base(), status: 'queued' }, { status: 'running', progressNote: 'x' })
+    expect(task.result).toBeUndefined()
+    expect(task.card).toBeUndefined()
+    expect(task.error).toBeUndefined()
   })
 
   it('cardValidationError：非 object / 超 16KB / 含三反引号', async () => {

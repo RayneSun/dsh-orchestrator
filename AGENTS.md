@@ -81,12 +81,12 @@ uv run --no-project --python /usr/bin/python3 python -c 'import subprocess; subp
 - 新建 Conversation 必须在主会话 cwd 下创建唯一子目录（同名冲突递增 `-N` 后缀），`meta.cwd` 写入 session header，冷恢复后不变；复用 Conversation 不换目录。新建派发必须提供 `workspaceName`（`workspaceNameSchema` 强制英文小写 slug），经 `src/workspaces.ts` 清洗后落盘。
 - Task 状态：`queued / running / input_required / completed / failed / interrupted`（0.3.14 起删除 blocked；cancelled 从未产生过，旧记录加载时迁移为 interrupted）。
   - `input_required`：只表示 Worker 需要用户补充信息/选择，或需要用户接管浏览器、系统安全界面；必须有 `questions`。
-  - `failed`：普通失败与系统阻碍统一；系统阻碍用 `fail.reasonCode`（permission_denied/configuration/dependency/network/resource/runtime）标记。
+  - `failed`：普通失败与系统阻碍统一；系统阻碍用顶层 `reasonCode`（permission_denied/configuration/dependency/network/resource/runtime）标记。
   - `interrupted`：被改单接管或用户手动停止。改单接管不投递；用户手动停止需要投递一条非失败通知，工作流回 `idle` 可继续派发。
   - `input_required / completed / failed / interrupted` 都允许带 delivery；interrupted 是否挂起由具体路径决定（`deliverableTaskStatuses`）。Worker 主动 failed 后 Conversation 回 idle；只有 Host 级致命错误（如子会话启动失败/持久化记录缺失）才额外 failConversation。
 - Conversation 状态：`provisioning / running / idle / input_required / failed`。
 - 终态投递（delivery outbox）由状态机在迁移时统一挂起，**不要**在创建任务或别处预挂 `delivery: pending`（否则看板对运行中任务误报"同步中"）。
-- **终态投递开关**：`OrchestratorService.static Config`（schemastery）声明 3 个 volatile 布尔（deliverOnCompleted/Failed/Interrupted，默认全部 true；inputRequired 固定 false，无设置项）。volatile 改动经 loader `_commitVolatile` 即时生效、不重启 fiber；服务构造器第二参数接收 volatile 引用（`.get()` 实时读）。判定收敛在纯函数 `deliveryEnabledFor(toggles, status)` 与 `gateTaskDelivery(task, toggles)`（state-machine.ts），挂接点：updateFromWorker 两处 transitionTask 后、onWorkerTurnEnd（manual_stop/failed）、failLaunch、deliverPendingTask 兜底（关闭时清掉存量 pending，不补投）。语义分界：开关只影响"消息是否回投主会话"，task_update 的状态/进展/日程总是持久化并更新 roster/看板——silent 是整会话不投，开关是按状态不投。
+- **终态投递开关**：`OrchestratorService.static Config`（schemastery）声明 3 个 volatile 布尔（deliverOnCompleted/Failed/Interrupted，默认全部 true；inputRequired 固定 false，无设置项）。volatile 改动经 loader `_commitVolatile` 即时生效、不重启 fiber；服务构造器第二参数接收 volatile 引用（`.get()` 实时读）。判定收敛在纯函数 `deliveryEnabledFor(toggles, status)` 与 `gateTaskDelivery(task, toggles)`（state-machine.ts），挂接点：reportFromWorker 两处 transitionTask 后、onWorkerTurnEnd（manual_stop/failed）、failLaunch、deliverPendingTask 兜底（关闭时清掉存量 pending，不补投）。语义分界：开关只影响"消息是否回投主会话"，上报的状态与进展总是持久化并更新 roster/看板——silent 是整会话不投，开关是按状态不投。
 - **设置页（客户端）**：`src/client/settings-card.tsx` 注册 `plugins.row.config` 槽（key `<包名>#<行id>` = `@may/dsh-orchestrator#may-dsh-orchestrator`），入口：插件管理 → 已安装 → 本包 → 行"配置"。SettingsFormModel+Switch 模式仿 dsh-ciri；`@deepseek-ai/dsh-client-ui-primitives`/`dsh-client-store` 是前端 ModuleLoader 运行时 external（package.json `dsh.client.external` + tsdown neverBundle + vitest alias 桩）；`dsh.client.immediately: true` 保证插件管理页打开时槽位已注册。
 - 所有状态修改走 `service.serialize()` 串行链；涉及改单必须"旧任务 interrupted + reviseConversation 原子切 activeTaskId"先落盘，再做外部调用。
 
@@ -95,7 +95,7 @@ uv run --no-project --python /usr/bin/python3 python -c 'import subprocess; subp
 - 创建：`agents.withoutInitiator` + `agents.create({sessionId, meta:{cwd, agentPreset: WORKER_PRESET}, agentOptions: {...parent.options}})`；随后 `sessionTitle.rename` 显式命名为任务主题（自动标题只响应真人消息）。
 - 投递：`sessionController.resolveAgent` 恢复冷会话 → `agent.followup(message)`（source.kind='orchestrator'）→ `sessions.flush` 确认落盘后才算投递成功（与 dsh-schedule 的提醒投递同一机制）。
 - 中断：`agent.cancel({kind:'parent'})`（fire-and-return，单独 try/catch，失败不拖垮新任务）。
-- 完成驱动：监听子会话 `turn/end`。`classifyWorkerTurnEnd`：`aborted.reason.kind=user` → 用户手动停止（interrupted + 投递非失败通知）；`kind=parent` → 改单中断。无 task_update 终态就结束的轮次按失败处理。
+- 完成驱动：监听子会话 `turn/end`。`classifyWorkerTurnEnd`：`aborted.reason.kind=user` → 用户手动停止（interrupted + 投递非失败通知）；`kind=parent` → 改单中断。无终态上报就结束的轮次按失败处理。
 - 等待管理：`PendingAnswers` 按 taskId 保存 Promise 与原生卡取消信号，作答、工具取消、手动停止、改单与服务卸载均清理监听和原生卡；已取消卡片晚到的答案不得答入后续提问。重启时 queued/running/input_required 均按未完成任务恢复为已有 interrupted，Conversation 回 idle，不新增状态或投递。
 
 ### 改单（同一工作流补充/修改需求）时序
@@ -112,7 +112,7 @@ uv run --no-project --python /usr/bin/python3 python -c 'import subprocess; subp
 
 - Lead **预设挂载面**（presets.ts）：显式挂载自带插件 tool-web（web_search/web_fetch）、tool-fs-search（glob/grep，必配 `sampleOverCapGlobResults`）、tool-fs（read/write/edit/read_image）、tool-todo（必配 `allowParallelInProgress`）、tool-goal、tool-ask-user。0.2.7 起 tool-web 曾被误删，"一步查询"长期是空头承诺，0.3.16 补回。不挂 bash/terminal/jobs/schedule/session-query/present/skill/mcp-resources/subagent/teams/worktree——执行与编排都在 Worker 侧；缺必配 config 会新建会话即报 agent-preset/invalid。
 - Lead：**黑名单裁剪**（0.3.16 起。0.3.13 曾完全放开——浏览器/邮件/记忆写入等执行类工具与手册注入主控上下文，拖慢路由；0.3.15 改 allow 白名单——DSH 升级新增自带工具会被误藏；0.3.16 定稿 deny 第三方黑名单）。denylist 按精确名运行时匹配（工具不存在自动跳过，不会重演 0.3.12 的静默缺失——meow 只读走影子工具，不依赖全局名存在）。memory_search/read 的 meow 检索逻辑在 lead-memory.ts 复刻（getDb/search/readSeen/markSearched/markAccessed/projectCovers），tsdown neverBundle 'meow-memory' 保证与插件共用同一模块实例；剔除 meow 时只删 patch 行 + 依赖，代码自动降级。
-- Worker：按 `isWorkerToolForbidden`（worker-policy.ts）枚举工具并 `scoped.tools.restrict({ deny })`，失败时回退 `guard`。编排/派生类禁止项见 `workerForbiddenPatterns`（workflow/ralph/orchestrator），直接向用户提问类见 `workerQuestionPatterns`（ask_user 系，命中时引导改走 task_update input_required）；新增"禁止类"工具只改这两张表。子智能体工具由 Worker 预设的 delegation 组显式组合（与平台 standard 预设同款，spawn/fork 后端驻留宿主平面）。
+- Worker：按 `isWorkerToolForbidden`（worker-policy.ts）枚举工具并 `scoped.tools.restrict({ deny })`，失败时回退 `guard`。编排/派生类禁止项见 `workerForbiddenPatterns`（workflow/ralph/orchestrator），直接向用户提问类见 `workerQuestionPatterns`（ask_user 系，命中时引导改走 task_input_required）；新增"禁止类"工具只改这两张表。子智能体工具由 Worker 预设的 delegation 组显式组合（与平台 standard 预设同款，spawn/fork 后端驻留宿主平面）。
 - **工具清单巡检（每次相关改动必做）**：改 lead-policy/service 工具面相关代码、或 DSH/插件升级后，重新枚举全局工具（扫 DSH core + profile 插件的 defineTool 名字）与 `DSH_CORE_TOOL_BASELINE` 快照对比。运行时也有兜底：Lead 挂载时 `unrecognizedGlobalTools` 发现基线外且未命中 deny 的名字会打 warn。发现新工具 → 确认归属 → 自带的更新基线、第三方的评估加入 LEAD_TOOL_DENY（或确认放行）。用户主动装新插件同样适用。
 - 不要用白名单限制 Worker；仅禁止上述类别，用户后装工具（MCP/浏览器/技能）默认可用。
 - 当前 Lead deny 包含 macOS 桌面工具实际精确名及 BrowserSkill 的 `browser_session/page/inspect/interact/tabs/assist` 六个精确名；`bsk_` / `ego_` 仍作前缀兜底。核心工具基线 57 项，含 plugin_manager / plugin_market。
@@ -121,7 +121,7 @@ uv run --no-project --python /usr/bin/python3 python -c 'import subprocess; subp
 ### 定时任务
 
 - Worker 预设挂载 `dsh-tool-schedule`（schedule_create/list/update/delete）；提醒绑定 Worker 会话，到点作为新消息发回该会话。
-- 定时触发的轮次没有活动任务：只允许 `task_update({status:'completed'})`，Host 生成 ad-hoc 已完成任务并经 outbox 投递给 Lead（service.ts updateFromWorker 的无 activeTaskId 分支）。
+- 定时触发的轮次没有活动任务：只允许 `task_completed`，Host 生成 ad-hoc 已完成任务并经 outbox 投递给 Lead（service.ts reportFromWorker 的无 activeTaskId 分支）。
 - 定时标记：`schedule/changed` 事件 + Worker `turn/end` 双触发全量核对（500ms 防抖），`scheduleMarks` 内存 Map → snapshot 投影 `hasActiveSchedule`（看板 badge）。DSH 侧栏标题**不加**图标前缀（0.3.x 曾加 ⏰/🕐，已按用户要求移除，renameWorkerSession 只同步看板标题本身）。turn/end 双触发的原因：schedule/changed 的 cordis 传播链路未实测可靠，而轮次内创建的 schedule 在 turn/end 时必已提交。注意 Worker 经它自己的 subagent/job 创建的 schedule 绑定的是那个子会话，不在本机制覆盖内。
 
 ### 记忆共享（0.3.4 起）
@@ -148,15 +148,22 @@ uv run --no-project --python /usr/bin/python3 python -c 'import subprocess; subp
 
 ### Worker 上报协议
 
-- `task_update`：running / input_required(+questions[]) / completed(+report) / failed(+fail)；全状态可带 header（≤8 字极简状态标题）、progressNote（一句话进展，允许三分幽默）和顶层 schedules。差异必填字段收敛到 1 个：input_required→questions，completed→report，failed→fail。questions 是结构化问卷 `{id?, question, header?, detail?, options?, multi_select?}`，Worker 的 id 可省略，Host 补 q1/q2/…，snapshot 与作答后的 answers 使用该 id。fail 是 `{error, reasonCode?}`；旧顶层 error/reasonCode/remediation 和 blocked 已迁移/删除。schedules 分桶 `{create:[], update:[]}`，create.title / update.id 在 DSL 层静态必填（type 判别已废弃——分支规则必须由结构而非文案表达，模型多次踩过文案条件必填的坑）。completed 的 report{result, artifacts?, card?}：result 写权威结论，card 放 dsh-ui 展示明细，Host 序列化围栏后由 Lead 原样转发；artifacts 为子工作区相对路径，投递时自动加工作区前缀。日程时间逻辑位于 `schedule-time.ts`，types.ts 保留重导出：allDay=true 的 startAt/endAt 使用完整纯日期；普通日程必须带时刻，remindAt 使用 `normalizeTimePoint` 宽松解析，省略年份取最近未来、缺时区补本地；自然语言（"明天下午"）拒绝；另有 priority(P0~P3 默认 P3)/links/attachments(相对路径)/contacts/location/remark（备注，排字段表末位诱导先填结构化字段；旧字段 detail 已迁移为 remark）。双向知情通道：新任务投递附"会话日程现状"（scheduleStatusSection，pending 全列+用户已勾的防重复代办），task_update 返回值带 `schedules` 投影（id/title/status/priority，scheduleProjection）。用户在看板画勾走 setScheduleStatus RPC（Host 持久化+看板刷新，Worker 不实时通知，靠上述两个通道知情）。
-- 终态（completed/failed）task_update 成功后调 `exec.concludeTurn()` 直接结束本轮（statusConcludesTurn），省掉末次全上下文推理；running 不结束；input_required 为阻塞工具调用（不 concludeTurn，用户作答后同轮返回答案继续）。
-- **zod/DSL 双写**：模型可见的只有 defineTool 的 parameters DSL（`tool-parameters.ts` 的 `TASK_UPDATE_TOOL_PARAMETERS`，service.ts 保留重导出），zod（taskUpdateInputSchema）是 Host 侧校验；两处必须同步——zod 加了字段而 DSL 没加，模型永远不知道（0.3.13 踩过）。tool-params.spec 锁定 DSL 可编译且关键字段齐全。
-- header 的 8 字上限只在输入边界（taskUpdateInputSchema）限制；baseTaskSchema 用 z.string() 不加 max，防止存储层解析拒绝旧记录。
-- 用户日程（v2 独立表 schedules，主会话 scope；v0.3.17 起 conv.todos 字段删除、旧残留数据直接丢弃）：ScheduleRecord{id/title/startAt/endAt/remindAt/priority/links/attachments/contacts/location/remark/status: pending|done|cancelled/completedBy: user|worker + parentSessionId/conversationId 归属回链}，Worker 用 schedules.create 提出、schedules.update 标 done 或 cancelled 作废；用户在任务看板画勾/取消走 `setScheduleStatus` RPC（仅 pending/done）；日程框在"工作区"行上方，折叠也显示，cancelled 灰显划线带"已作废"胶囊且不可勾。派发与改单注入末尾附 `scheduleStatusSection`（会话日程现状：pending 全列含 id，用户自己勾掉的标注"不要重复代办"，cancelled 不提）。看板双页签：会话（会话页）+ 日程（月历页：周一起始、优先级色点、跨天逐日出现、过期未完成置顶、无时间字段只在会话页）；停留在日程页时任务更新会在会话页签显示未读点（颜色跟最新任务状态），切回即清除。Lead 把日程转述给用户；用户让代办/修改时复用原 conversationId 派发并要求 Worker schedules.update。校验失败报错带全量路径（如 schedules.create[0].title: …），模型可一轮自愈。
+- **5 个独立工具（v0.3.19 起，单工具 `task_update` 已删除）**：`task_running` / `task_input_required` / `task_completed` / `task_failed` / `task_schedule`。每个工具的 zod input schema（`taskReportInputSchemas` / `taskScheduleInputSchema`）只含该工具合法字段，schema 结构即校验——不再有 allowlist / superRefine 交叉校验（单工具 + 条件必填被模型多次踩坑，拆分是根治）。全部可带 header（≤8 字极简状态标题）、progressNote（一句话进展，允许三分幽默）。
+  - `task_input_required`：必填 `questions[]`，结构化问卷 `{id?, question, header?, detail?, options?, multi_select?}`，Worker 的 id 可省略，Host 补 q1/q2/…，snapshot 与作答后的 answers 使用该 id。阻塞工具调用，返回值即用户答案。
+  - `task_completed`：必填 `result`（权威结论）；可选 `artifacts`（子工作区相对路径，投递时自动加工作区前缀）与 `card`（dsh-ui 展示明细 JSON，Host 序列化围栏后由 Lead 原样转发）。
+  - `task_failed`：必填 `error`，系统阻碍加 `reasonCode`。
+  - `task_schedule`：日程 CRUD（`create`/`update` 分桶，create.title / update.id 在 DSL 层静态必填——分支规则必须由结构而非文案表达）；返回最新日程清单投影，与任务状态无关、不产生状态迁移。
+  - **存储拍平**：TaskRecord 顶层 `result/artifacts/card/error/reasonCode`，`report/fail` 包裹层删除；旧存储包裹数据由 migrateRecord 直接剥离（不兼容旧会话，已拍板）。transitionTask 输入是判别联合 `TaskTransitionInput`，按 status 收敛字段并在迁移时清空非对应终态字段。
+- 终态（completed/failed）提交成功后调 `exec.concludeTurn()` 直接结束本轮（statusConcludesTurn），省掉末次全上下文推理；running 不结束；input_required 为阻塞工具调用（不 concludeTurn，用户作答后同轮返回答案继续）。
+- **zod/DSL 双写**：模型可见的只有 defineTool 的 parameters DSL（`tool-parameters.ts` 的 `TASK_*_TOOL_PARAMETERS` 五个常量，service.ts 保留重导出），zod 是 Host 侧校验；两处必须同步——zod 加了字段而 DSL 没加，模型永远不知道（0.3.13 踩过）。tool-params.spec 锁定 5 个工具的 DSL 可编译且字段与 zod 契约一致。
+- header 的 8 字上限只在输入边界限制；baseTaskSchema 用 z.string() 不加 max，防止存储层解析拒绝旧记录。
+- 日程时间逻辑位于 `schedule-time.ts`，types.ts 保留重导出：allDay=true 的 startAt/endAt 使用完整纯日期；普通日程必须带时刻，remindAt 使用 `normalizeTimePoint` 宽松解析，省略年份取最近未来、缺时区补本地；自然语言（"明天下午"）拒绝；priority(P0~P3 默认 P3)/links/attachments(相对路径)/contacts/location/remark（备注，排字段表末位诱导先填结构化字段）。
+- 双向知情通道：新任务投递附"会话日程现状"（scheduleStatusSection，pending 全列+用户已勾的防重复代办），task_schedule 与状态上报的返回值都带 `schedules` 投影（id/title/status/priority，scheduleProjection）。用户在看板画勾走 setScheduleStatus RPC（Host 持久化+看板刷新，Worker 不实时通知，靠上述两个通道知情）。
+- 用户日程（v2 独立表 schedules，主会话 scope；v0.3.17 起 conv.todos 字段删除、旧残留数据直接丢弃）：ScheduleRecord{id/title/startAt/endAt/remindAt/priority/links/attachments/contacts/location/remark/status: pending|done|cancelled/completedBy: user|worker + parentSessionId/conversationId 归属回链}，Worker 用 task_schedule 的 create 提出、update 标 done 或 cancelled 作废；用户在任务看板画勾/取消走 `setScheduleStatus` RPC（仅 pending/done）；日程框在"工作区"行上方，折叠也显示，cancelled 灰显划线带"已作废"胶囊且不可勾。派发与改单注入末尾附 `scheduleStatusSection`（会话日程现状：pending 全列含 id，用户自己勾掉的标注"不要重复代办"，cancelled 不提）。看板双页签：会话（会话页）+ 日程（月历页：周一起始、优先级色点、跨天逐日出现、过期未完成置顶、无时间字段只在会话页）；停留在日程页时任务更新会在会话页签显示未读点（颜色跟最新任务状态），切回即清除。Lead 把日程转述给用户；用户让代办/修改时复用原 conversationId 派发并要求 Worker task_schedule update。校验失败报错带全量路径（如 create[0].title: …），模型可一轮自愈。
 - ScheduleRecord 还包含 allDay（默认 false）。缺少 startAt 的日程只在会话页显示；两页共用 ScheduleList，均展示 P0–P3 胶囊。更新全天纯日期时显式提供 allDay=true 与 startAt，未提供 allDay 的时间输入按普通带时刻语义解析。
 - Worker 会话在 configureWorker 时切到 `danger-full-access` 权限预设（permissionPresets.set，沙箱全开放+审批 never）：后台无人值守，默认 workspace-write+ask 会把敏感操作卡在审批上。Lead 保持默认。
 - Worker 不能直接向用户提问（ask-user 工具由 restrict 隐藏，失败时由 guard 拦截，且不进预设）。
-- todo_write 是内部步骤清单：Host 监听 `todo/write` 事件，350ms 防抖写入 `task.progressSteps` 驱动看板；Worker 无需为 todo 调 task_update，todo 全完成不等于任务完成。
+- todo_write 是内部步骤清单：Host 监听 `todo/write` 事件，350ms 防抖写入 `task.progressSteps` 驱动看板；Worker 无需为 todo 调状态上报，todo 全完成不等于任务完成。
 
 ### 存储与兼容性
 
@@ -175,7 +182,7 @@ uv run --no-project --python /usr/bin/python3 python -c 'import subprocess; subp
 
 - typecheck（host + client 两个 project）必须干净；提交前跑全量 vitest。
 - 新语义先在 state-machine/types 层落纯函数 + 单测，再接 service。
-- 状态字面量列表用 types.ts 的常量（activeTaskStatuses / deliverableTaskStatuses / terminalTaskStatuses / taskUpdateStatuses / blockReasonCodes），不要再散落状态数组；仅内部使用的常量不要 export。
+- 状态字面量列表用 types.ts 的常量（activeTaskStatuses / deliverableTaskStatuses / terminalTaskStatuses / blockReasonCodes），不要再散落状态数组；仅内部使用的常量不要 export。
 - 日志用 `hostCtx.logger.info/warn`，英文即可；面向用户的文案一律中文。
 - 看板文案与状态标签中文；新增 TaskStatus/ConversationState 时同步 task-box.tsx 的标签、Board.tsx 的会话聚合与 styles.ts 的 badge 颜色。
 - 死代码及时删（已清理：scene 四模式、PLAN.md、subagent 时代 settled 双重拦截、{{cwd}} suffix 等），不要留兼容分支以外的旧代码。

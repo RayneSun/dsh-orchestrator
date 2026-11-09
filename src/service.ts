@@ -15,7 +15,7 @@ import type {} from '@deepseek-ai/dsh-api-session-controller'
 import type {} from '@deepseek-ai/dsh-session-persistence'
 import { deliveryNotice, revisionPrompt, rosterSummarySegment, scheduleProjection, scheduleStatusSection, workerPrompt } from './messages.ts'
 import { type ScheduleServiceLike, type SessionActivityGroup } from './host-contracts.ts'
-import { DISPATCH_TOOL_PARAMETERS, TASK_UPDATE_TOOL_PARAMETERS } from './tool-parameters.ts'
+import { DISPATCH_TOOL_PARAMETERS, TASK_COMPLETED_TOOL_PARAMETERS, TASK_FAILED_TOOL_PARAMETERS, TASK_INPUT_REQUIRED_TOOL_PARAMETERS, TASK_RUNNING_TOOL_PARAMETERS, TASK_SCHEDULE_TOOL_PARAMETERS } from './tool-parameters.ts'
 import type { AnswerQuestionsRequest, AnswerQuestionsResult, SetScheduleStatusRequest, SnapshotRequest } from './remote.ts'
 import { toJson } from './json.ts'
 import { isUnfinishedTask } from './task-lifecycle.ts'
@@ -65,12 +65,13 @@ import {
   dispatchInputSchema,
   conversationIdInputSchema,
   cardValidationError,
-  taskUpdateInputSchema,
   type DispatchInput,
-  type TaskUpdateInput,
+  taskReportInputSchemas,
+  taskScheduleInputSchema,
+  type TaskReportStatus,
 } from './types.ts'
 
-export { DISPATCH_TOOL_PARAMETERS, TASK_UPDATE_TOOL_PARAMETERS } from './tool-parameters.ts'
+export { DISPATCH_TOOL_PARAMETERS, TASK_COMPLETED_TOOL_PARAMETERS, TASK_FAILED_TOOL_PARAMETERS, TASK_INPUT_REQUIRED_TOOL_PARAMETERS, TASK_RUNNING_TOOL_PARAMETERS, TASK_SCHEDULE_TOOL_PARAMETERS } from './tool-parameters.ts'
 
 declare module '@deepseek-ai/dsh-llm' {
   interface MessageSourceMap {
@@ -167,7 +168,7 @@ export class OrchestratorService extends TypertRemoteService {
 
   /**
    * 终态投递开关（设置页可配，全部默认开）。
-   * 只决定"终态消息是否回投主会话"：task_update 的状态/摘要/待办总是持久化，
+   * 只决定"终态消息是否回投主会话"：上报的状态与进展总是持久化，
    * roster 与看板照常更新——与 silent 的语义分界一致（silent 是整会话不投，开关是按状态不投）。
    */
   static Config = sz.object({
@@ -181,7 +182,7 @@ export class OrchestratorService extends TypertRemoteService {
   private chain: Promise<unknown> = Promise.resolve()
   private readonly installed = new Map<string, Array<() => unknown>>()
   private readonly delivering = new Set<string>()
-  /** taskId -> resolver，task_update(input_required) 阻塞等待用户作答。 */
+  /** taskId -> resolver，task_input_required 阻塞等待用户作答。 */
   private readonly pendingAnswers = new PendingAnswers()
   private readonly pendingTodoSteps = new Map<string, { taskId: string; steps: ProgressStep[] }>()
   private readonly todoTimers = new Map<string, ReturnType<typeof setTimeout>>()
@@ -452,7 +453,7 @@ export class OrchestratorService extends TypertRemoteService {
       this.keep(agent, scoped.systemPrompt.section({ name: sectionName, order: 0, text: '', interpolate: false }))
     }
     this.applyLeadToolDenylist(agent, scoped)
-    // Lead 侧覆盖 genui skill：Lead 不生成卡片，即使 invoke 也读到 report.card 通道而非围栏教学。
+    // Lead 侧覆盖 genui skill：Lead 不生成卡片，即使 invoke 也读到 card 通道而非围栏教学。
     this.registerGenuiCardSkill(agent, scoped)
     // 记忆只读层：关自动注入/写回/整理，再挂影子 search/read（meow 缺失时自动跳过）。
     const header = agent.session.header as { id?: unknown; cwd?: unknown }
@@ -538,7 +539,7 @@ export class OrchestratorService extends TypertRemoteService {
 
     const scoped = agent.ctx
     // 不做工具白名单裁剪：宿主与用户安装的其他工具（浏览器、MCP、技能等）对 Worker 全部可见；
-    // 通用行为约束和 task_update 协议已固化在 WORKER_PRESET 的 persona 中。
+    // 通用行为约束和 task_* 上报协议已固化在 WORKER_PRESET 的 persona 中。
     // restrict 从工具清单里直接移除（模型看不到），比 guard（可见但调用报错）更干净。
     try {
       const globalNames = [...new Set(scoped.tools.schemas().map(schema => schema.name))]
@@ -554,7 +555,7 @@ export class OrchestratorService extends TypertRemoteService {
     for (const sectionName of WORKER_SUPPRESSED_SECTIONS) {
       this.keep(agent, scoped.systemPrompt.section({ name: sectionName, order: 0, text: '', interpolate: false }))
     }
-    // Runtime skill 覆盖 dsh-genui 原版 skill（runtime rank 250 < provider rank 600）；通道改为 task_update.report.card。
+    // Runtime skill 覆盖 dsh-genui 原版 skill（runtime rank 250 < provider rank 600）；通道改为 task_completed 的 card。
     this.registerGenuiCardSkill(agent, scoped)
     this.keep(agent, scoped.on('session/event', (session, event) => {
       if (String(session.id) !== String(agent.session.id)) return
@@ -584,19 +585,54 @@ export class OrchestratorService extends TypertRemoteService {
         })
       }
     }))
-    this.keep(agent, scoped.tools.register(defineTool({
-      name: 'task_update',
-      description: '任务进度上报与用户日程维护：实时汇报进展、提交终态结果，并创建/更新需要用户本人推进的日程（schedules）。定时触发轮次无活动任务，仅允许 completed 上报结果。',
-      parameters: TASK_UPDATE_TOOL_PARAMETERS,
-      output: sharedJsonOutput,
-      execute: async (args: any, exec: ToolRunContext) => {
-        const result = await this.updateFromWorker(args, String(agent.session.id), exec.signal)
-        // 终态（completed/failed）后无需再做一次全上下文推理：标记 concludesTurn 结束本轮。
-        // input_required 阻塞工具拿到用户答案后 status 为 input_required_answered：不结束轮次，Worker 同轮继续。
-        const resultStatus = (result as { status?: string }).status
-        if (resultStatus !== 'input_required_answered' && statusConcludesTurn(resultStatus)) exec.concludeTurn?.()
-        return toJson(result)
+    const reportToolExecute = async (status: TaskReportStatus, args: unknown, exec: ToolRunContext) => {
+      const result = await this.reportFromWorker(status, args, String(agent.session.id), exec.signal)
+      // 终态（completed/failed）后无需再做一次全上下文推理：标记 concludeTurn 结束本轮。
+      const resultStatus = (result as { status?: string }).status
+      if (statusConcludesTurn(resultStatus)) exec.concludeTurn?.()
+      return toJson(result)
+    }
+    const statusReportTools = [
+      {
+        name: 'task_running',
+        status: 'running',
+        parameters: TASK_RUNNING_TOOL_PARAMETERS,
+        description: '任务进行中上报：开始任务和每个关键步骤后各刷一条，保持看板实时。',
       },
+      {
+        name: 'task_input_required',
+        status: 'input_required',
+        parameters: TASK_INPUT_REQUIRED_TOOL_PARAMETERS,
+        description: '需要用户补充信息、做选择或接管浏览器/系统确认时上报：工具调用阻塞，返回值即用户在问题卡的作答，拿到答案同轮继续。',
+      },
+      {
+        name: 'task_completed',
+        status: 'completed',
+        parameters: TASK_COMPLETED_TOOL_PARAMETERS,
+        description: '任务成功收尾：result 是用户最终看到的权威答案，产物放 artifacts，结构化数据用 card 展示。提交后本轮立即结束。定时触发轮次无活动任务时也只允许本工具上报结果。',
+      },
+      {
+        name: 'task_failed',
+        status: 'failed',
+        parameters: TASK_FAILED_TOOL_PARAMETERS,
+        description: '任务本身没做成（要拿的内容没拿到、要执行的操作没成功）时上报；调查有结论（如目标不可达）用 task_completed。提交后本轮立即结束。',
+      },
+    ] as const
+    for (const tool of statusReportTools) {
+      this.keep(agent, scoped.tools.register(defineTool({
+        name: tool.name,
+        description: tool.description,
+        parameters: tool.parameters,
+        output: sharedJsonOutput,
+        execute: (args: any, exec: ToolRunContext) => reportToolExecute(tool.status, args, exec),
+      })))
+    }
+    this.keep(agent, scoped.tools.register(defineTool({
+      name: 'task_schedule',
+      description: '用户日程维护（与任务状态无关，随时可调用）：创建/更新需要用户本人推进的日程，返回最新日程清单（含 id）。',
+      parameters: TASK_SCHEDULE_TOOL_PARAMETERS,
+      output: sharedJsonOutput,
+      execute: async (args: unknown) => toJson(await this.scheduleFromWorker(args, String(agent.session.id))),
     })))
   }
 
@@ -655,8 +691,8 @@ export class OrchestratorService extends TypertRemoteService {
       const last = conv.lastTaskId ? this.taskById(conv.lastTaskId) : undefined
       const tail = active
         ? `｜进行中：${active.subject}`
-        : last?.report?.result
-          ? `｜最近结果：${last.report.result.slice(0, 80)}`
+        : last?.result
+          ? `｜最近结果：${last.result.slice(0, 80)}`
           : ''
       const schedules = this.schedulesOf(conv.id)
       const pending = schedules.filter(schedule => schedule.status === 'pending')
@@ -665,7 +701,7 @@ export class OrchestratorService extends TypertRemoteService {
         : pending.length > 0
           ? `｜日程 ${pending.length} 项待处理：${pending.slice(0, 3).map(schedule => schedule.title).join('、')}${pending.length > 3 ? '…' : ''}`
           : `｜日程 ${schedules.length} 项全部完成`
-      return `- ${conv.id} [${conv.state}] ${conv.title}${rosterSummarySegment(conv.outline.summary)}｜创建 ${formatRosterTime(conv.createdAt)}｜更新 ${formatRosterTime(conv.updatedAt)}${tail}${todoSegment}`
+      return `- ${conv.id} [${conv.state}] ${conv.title}${rosterSummarySegment(conv.outline.summary, conv.title)}｜创建 ${formatRosterTime(conv.createdAt)}｜更新 ${formatRosterTime(conv.updatedAt)}${tail}${todoSegment}`
     })
     return `Orchestrator roster（dispatch 用 conversationId 复用子会话；get 看详情）：\n${lines.join('\n')}`
   }
@@ -699,9 +735,9 @@ export class OrchestratorService extends TypertRemoteService {
               status: task.status,
               ...task.progressNote ? { progressNote: task.progressNote } : {},
               ...task.questions?.length ? { questions: task.questions } : {},
-              ...task.report?.result ? { answer: task.report.result } : {},
-              ...task.report?.artifacts?.length ? { artifacts: task.report.artifacts } : {},
-              ...task.fail ? { fail: task.fail } : {},
+              ...task.result ? { answer: task.result } : {},
+              ...task.artifacts?.length ? { artifacts: task.artifacts } : {},
+              ...task.error ? { error: task.error, ...task.reasonCode ? { reasonCode: task.reasonCode } : {} } : {},
               updatedAt: task.updatedAt,
             }))
           const schedules = this.schedulesOf(conv.id).map(schedule => ({
@@ -785,7 +821,7 @@ export class OrchestratorService extends TypertRemoteService {
       // subject 与会话标题同源：复用时主题有变化则同步更新会话标题（看板/roster/侧栏一致）。
       const titleChanged = args.subject !== existing.title
       if (titleChanged) conv = { ...conv, title: args.subject }
-      // 路由卡摘要（roster"摘要"行）由 Host 维护：最近主题链，替代旧 task_update.summary。
+      // 路由卡摘要（roster"摘要"行）由 Host 维护：最近主题链。
       conv = appendOutlineSubject(conv, args.subject)
       if (interruptedTaskId) {
         const active = this.taskById(interruptedTaskId)
@@ -1040,51 +1076,66 @@ export class OrchestratorService extends TypertRemoteService {
 
 
   /**
-   * task_update 的会话级副作用：schedules.create/update 写入独立日程表
+   * task_schedule 的会话级副作用：create/update 写入独立日程表
    * （Host 分配 id；update 的 id 必须属于当前会话，未知 id 抛错，不产生部分写入）。
    * 必须在 serialize 串行块内调用；路由卡摘要已改由 dispatch 侧维护。
    */
-  private async applyUpdateSideEffects(conv: ConversationRecord, args: TaskUpdateInput): Promise<void> {
-    const changes = planScheduleChanges(conv, args, this.schedulesOf(conv.id))
-    for (const item of changes) {
-      await this.schedules().put(item.id, item)
+  private async scheduleFromWorker(rawArgs: unknown, childSessionId: string): Promise<unknown> {
+    const parsed = taskScheduleInputSchema.safeParse(rawArgs)
+    if (!parsed.success) {
+      const detail = parsed.error.issues.map(issue => `${issue.path.join('.') || '(root)'}: ${issue.message}`).join('; ')
+      throw new Error(`invalid task_schedule arguments: ${detail}`)
     }
+    return this.serialize(async () => {
+      const conv = this.conversationByChild(childSessionId)
+      if (!conv) throw new Error('task_schedule is only available in a managed worker')
+      const changes = planScheduleChanges(conv, parsed.data, this.schedulesOf(conv.id))
+      for (const item of changes) {
+        await this.schedules().put(item.id, item)
+      }
+      return { ok: true as const, schedules: scheduleProjection(this.schedulesOf(conv.id)) }
+    })
   }
 
-  private async updateFromWorker(rawArgs: unknown, childSessionId: string, signal?: AbortSignal): Promise<any> {
-    const parsed = taskUpdateInputSchema.safeParse(rawArgs)
+  private async reportFromWorker(
+    status: TaskReportStatus,
+    rawArgs: unknown,
+    childSessionId: string,
+    signal?: AbortSignal,
+  ): Promise<any> {
+    const parsed = taskReportInputSchemas[status].safeParse(rawArgs)
     if (!parsed.success) {
       // 全量 issues 带路径返回：模型下一轮能精准补字段，而不是猜"哪里少了字符串"。
       const detail = parsed.error.issues
         .map(issue => `${issue.path.join('.') || '(root)'}: ${issue.message}`)
         .join('; ')
-      throw new Error(`invalid task_update arguments: ${detail}`)
+      throw new Error(`invalid task_${status} arguments: ${detail}`)
     }
-    let args: TaskUpdateInput = parsed.data
-    // report.card 校验（Host 侧）：JSON object、≤16KB、禁三反引号；report 的状态限制由输入 schema 校验。
-    if (args.report?.card !== undefined) {
-      const cardError = cardValidationError(args.report.card)
-      if (cardError) throw new Error(`invalid task_update arguments: report.${cardError}`)
+    let args: { header?: string, progressNote?: string } & Record<string, unknown> = parsed.data
+    // card 校验（Host 侧）：JSON object、≤16KB、禁三反引号。
+    if (status === 'completed' && args.card !== undefined) {
+      const cardError = cardValidationError(args.card)
+      if (cardError) throw new Error(`invalid task_completed arguments: ${cardError}`)
     }
     // input_required：Host 补齐问题 id（q1..qn，缺省才补），用户作答后在 answers 中返回给 Worker。
-    if (args.status === 'input_required' && args.questions) {
+    if (status === 'input_required') {
       args = {
         ...args,
-        questions: args.questions.map((item, index) => ({ id: item.id ?? `q${index + 1}`, ...item })),
+        questions: (args.questions as Array<{ id?: string, question: string }>).map((item, index) => ({ id: item.id ?? `q${index + 1}`, ...item })),
       }
     }
     let shouldDeliver = false
     let terminalTaskId: string | undefined
     const result = await this.serialize(async () => {
       const conv = this.conversationByChild(childSessionId)
-      if (!conv) throw new Error('task_update is only available in a managed worker')
+      if (!conv) throw new Error(`task_${status} is only available in a managed worker`)
       if (!conv.activeTaskId) {
-        // 定时提醒触发等无活动任务的轮次：只允许 completed 上报，
+        // 定时提醒触发等无活动任务的轮次：只允许 task_completed 上报，
         // 生成一条 ad-hoc 已完成任务并照常经 outbox 投递给主会话。
-        if (args.status !== 'completed') {
-          throw new Error('no active task: only completed task_update is allowed (e.g. schedule-fired reporting)')
+        if (status !== 'completed') {
+          throw new Error(`no active task: only task_completed is allowed (e.g. schedule-fired reporting)`)
         }
-        const subject = (args.report?.result?.trim().split('\n')[0] || '定时触发上报').slice(0, 60)
+        const subject = ((args.result as string | undefined)?.trim().split('\n')[0] || '定时触发上报').slice(0, 60)
         const seeded = createTask({
           id: createId('task'),
           parentSessionId: conv.parentSessionId,
@@ -1096,10 +1147,9 @@ export class OrchestratorService extends TypertRemoteService {
         // 定时触发的入站消息带 source.kind='schedule'，据此给上报任务打定时标记（仅显示用）。
         const marked = this.lastInboundSource.get(childSessionId) === 'schedule'
         const task = gateTaskDelivery(
-          transitionTask({ ...seeded, status: 'running', startedAt: seeded.createdAt, ...marked ? { scheduled: true } : {} }, args),
+          transitionTask({ ...seeded, status: 'running', startedAt: seeded.createdAt, ...marked ? { scheduled: true } : {} }, { status, ...args } as never),
           this.deliveryToggles(),
         )
-        await this.applyUpdateSideEffects(conv, args)
         await this.putPair(settleConversation(conv, task), task)
         terminalTaskId = task.id
         shouldDeliver = task.delivery?.state === 'pending'
@@ -1108,10 +1158,9 @@ export class OrchestratorService extends TypertRemoteService {
       const previous = this.taskById(conv.activeTaskId)
       if (!previous) throw new Error('active task record is missing')
 
-      const task = gateTaskDelivery(transitionTask(previous, args), this.deliveryToggles())
+      const task = gateTaskDelivery(transitionTask(previous, { status, ...args } as never), this.deliveryToggles())
       const terminal = (deliverableTaskStatuses as readonly string[]).includes(task.status)
       const isInputRequired = task.status === 'input_required'
-      await this.applyUpdateSideEffects(conv, args)
       // input_required 不 settle（activeTaskId 保留、轮次未结束），但聚合状态要同步为待决策；
       // 其余终态照常 settle 回 idle。
       const nextConv = terminal && !isInputRequired
@@ -1138,7 +1187,7 @@ export class OrchestratorService extends TypertRemoteService {
   }
 
   /**
-   * Worker 轮次结束的结算：task_update 已提交终态的任务在 settle 后 activeTaskId 为空，
+   * Worker 轮次结束的结算：已提交终态的任务在 settle 后 activeTaskId 为空，
    * 走到这里的都是“轮次结束了但任务没有终态”——按结束原因分为手动停止、改单中断或失败。
    */
   private async onWorkerTurnEnd(childSessionId: string, endCause: WorkerTurnEndCause | undefined): Promise<void> {
@@ -1168,7 +1217,7 @@ export class OrchestratorService extends TypertRemoteService {
         outcome = 'revision'
       } else {
         task = gateTaskDelivery(
-          failTask(previous, previous.status === 'queued' ? '子会话在任务开始前结束' : '子会话结束前未提交终态 task_update', now),
+          failTask(previous, previous.status === 'queued' ? '子会话在任务开始前结束' : '子会话结束前未提交终态上报', now),
           this.deliveryToggles(),
         )
         nextConv = failConversation(settleConversation(conv, task, now), now)
@@ -1212,7 +1261,7 @@ export class OrchestratorService extends TypertRemoteService {
     }
     this.delivering.add(taskId)
     try {
-      // input_required 由 task_update 工具阻塞处理，不走 deliverPendingTask。
+      // input_required 由 task_input_required 阻塞处理，不走 deliverPendingTask。
       if (task.status === 'input_required') return
       await this.withAgent(task.parentSessionId, async (agent) => {
         const message = createUserMessage({
@@ -1239,7 +1288,7 @@ export class OrchestratorService extends TypertRemoteService {
   }
 
   /**
-   * input_required 的阻塞作答：task_update(input_required) 的工具调用本身挂起不返回。
+   * input_required 的阻塞作答：task_input_required 的工具调用本身挂起不返回。
    * 问题卡只在两个地方渲染：
    * - 子会话：平台原生 ask_user_question（Worker 是 live root，直接对 Worker 挂 ask）
    * - 任务看板：自定义 AskCard
@@ -1279,7 +1328,7 @@ export class OrchestratorService extends TypertRemoteService {
   /**
    * 看板与 Worker 原生问题卡共用的作答路由：
    * 幂等——只有 input_required 的最新任务可答，先答先赢；重开同一 TaskRun 继续执行，
-   * 答案直接返回同轮阻塞的 task_update，另一入口的问题卡同时清理。
+   * 答案直接返回同轮阻塞的 task_input_required，另一入口的问题卡同时清理。
    */
   async answerTaskQuestions(request: AnswerQuestionsRequest): Promise<AnswerQuestionsResult> {
     await this.ready
@@ -1311,7 +1360,7 @@ export class OrchestratorService extends TypertRemoteService {
       return { ok: true as const, taskId: resumed.id }
     })
     if (!outcome.ok) return outcome
-    // 阻塞模型：resolve 挂起的 task_update(input_required) 工具调用，Worker 同轮拿到答案。
+    // 阻塞模型：resolve 挂起的 task_input_required 工具调用，Worker 同轮拿到答案。
     this.pendingAnswers.resolve(outcome.taskId, answers)
     return { ok: true, taskId: outcome.taskId }
   }

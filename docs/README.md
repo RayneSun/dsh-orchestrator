@@ -10,7 +10,7 @@
 | [AGENTS](../AGENTS.md) | 环境约束、模块职责、状态机、工具策略与开发门禁 |
 | [看板数据接口](board-api.md) | snapshot、日程勾选、问题作答 RPC 及字段契约；0.3.18 与 0.3.17 兼容 |
 | [投递机制](delivery-to-lead.md) | 当前 followup / outbox 与同轮作答链路，附平台 API 调研 |
-| [GenUI 卡片规范](../genui-card-skill.md) | 随包加载的 Worker 运行时文档，规定 report.card 展示通道与组件 |
+| [GenUI 卡片规范](../genui-card-skill.md) | 随包加载的 Worker 运行时文档，规定 task_completed 的 card 展示通道与组件 |
 | [0.3.18 里程碑](milestones/0.3.18.md) | A–D、B1–B5 的最终变更、清理统计、门禁和验证边界 |
 | [TODO](../TODO.md) | 当前未处理机会与原始历史方案、验收记录 |
 

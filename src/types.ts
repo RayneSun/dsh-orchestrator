@@ -32,15 +32,6 @@ export const blockReasonCodes = ['permission_denied', 'configuration', 'dependen
 
 const trimmed = z.string().trim().min(1)
 
-export const taskUpdateStatuses = ['running', 'input_required', 'completed', 'failed'] as const
-
-export const taskUpdateFieldAllowList: Record<(typeof taskUpdateStatuses)[number], readonly string[]> = {
-  running: ['header', 'progressNote', 'schedules'],
-  input_required: ['header', 'progressNote', 'questions', 'schedules'],
-  completed: ['header', 'progressNote', 'report', 'schedules'],
-  failed: ['header', 'progressNote', 'fail', 'schedules'],
-}
-
 const now = () => new Date().toISOString()
 
 /** 待办时间点：宽松输入（startAt/endAt/remindAt 共用），输出归一化 ISO 8601 带时区。 */
@@ -53,7 +44,7 @@ const todoTimeSchema = z.string().trim().transform((value, ctx) => {
   return normalized
 })
 
-/** 相对路径：拒绝绝对路径、盘符与 .. 逃逸（待办附件与 report.artifacts 共用）。 */
+/** 相对路径：拒绝绝对路径、盘符与 .. 逃逸（日程附件与任务产物共用）。 */
 const relativePathSchema = z.string().trim().min(1).max(500).refine(
   (value) => {
     if (value.startsWith('/') || /^[a-zA-Z]:[\\/]/.test(value)) return false
@@ -110,7 +101,7 @@ const todoContentFields = {
   remark: z.string().trim().max(2_000).optional(),
 }
 
-/** task_update 的 schedules.create 元素：新建日程（title 静态必填，结构上接触不到 id/status）。 */
+/** task_schedule 的 create 元素：新建日程（title 静态必填，结构上接触不到 id/status）。 */
 export const todoCreateSchema = z.object({
   title: trimmed.max(30),
   ...scheduleTimeFields,
@@ -122,7 +113,7 @@ export const todoCreateSchema = z.object({
   return { ...value, ...times }
 })
 
-/** task_update 的 schedules.update 元素：更新已有日程（id 静态必填，抄自可见清单，禁止编造）。 */
+/** task_schedule 的 update 元素：更新已有日程（id 静态必填，抄自可见清单，禁止编造）。 */
 export const todoUpdateEntrySchema = z.object({
   id: trimmed,
   status: z.enum(['pending', 'done', 'cancelled']).optional(),
@@ -185,14 +176,6 @@ export const deliverySchema = z.discriminatedUnion('state', [
   }).strict(),
 ])
 
-/** completed 上报：result 给主会话转述；artifacts 是产物文件；card 是 dsh-ui 展示卡片（仅 completed）。 */
-export const reportSchema = z.object({
-  result: trimmed.max(50_000),
-  artifacts: z.array(relativePathSchema).max(20).optional(),
-  card: z.record(z.string(), z.unknown()).optional(),
-}).strict()
-export type TaskReport = z.infer<typeof reportSchema>
-
 /** 问题选项：与平台 ask_user_question 同构（推荐项放首位，label 后缀 "(Recommended)"）。 */
 const questionOptionSchema = z.object({
   label: trimmed.max(100),
@@ -221,13 +204,6 @@ export const questionAnswerSchema = z.object({
 }).strict()
 export type QuestionAnswer = z.infer<typeof questionAnswerSchema>
 
-/** failed 上报：error 必填；reasonCode 标记系统阻碍（Lead 可修复后重派），remediation 已废除。 */
-export const taskFailSchema = z.object({
-  error: trimmed.max(10_000),
-  reasonCode: z.enum(blockReasonCodes).optional(),
-}).strict()
-export type TaskFail = z.infer<typeof taskFailSchema>
-
 const baseConversationSchema = z.object({
   id: trimmed,
   childSessionId: trimmed,
@@ -246,7 +222,7 @@ const baseConversationSchema = z.object({
   hasActiveSchedule: z.boolean().optional(),
 }).strict()
 
-/** report.card 校验：JSON object、序列化 ≤16KB、禁三反引号（防围栏嵌套）。 */
+/** card 校验：JSON object、序列化 ≤16KB、禁三反引号（防围栏嵌套）。 */
 export function cardValidationError(card: unknown): string | undefined {
   if (card === null || typeof card !== 'object' || Array.isArray(card)) return `card: expected object, received ${Array.isArray(card) ? 'array' : typeof card}`
   const json = JSON.stringify(card)
@@ -264,19 +240,23 @@ const baseTaskSchema = z.object({
   prompt: trimmed,
   acceptanceCriteria: z.string().optional(),
   status: z.enum(taskStatuses).default('queued'),
-  /** 极简状态标题（最多 8 个字，手机端/折叠态展示），progressNote 的压缩版。长度只在 task_update 输入边界限制，存储层不加约束（旧记录兼容）。 */
+  /** 极简状态标题（最多 8 个字，手机端/折叠态展示），progressNote 的压缩版。长度只在 task_* 输入边界限制，存储层不加约束（旧记录兼容）。 */
   header: z.string().optional(),
   progressNote: z.string().optional(),
   /** input_required 的结构化问题（id 已由 Host 补齐）。 */
   questions: z.array(questionItemObjectSchema).max(10).optional(),
   /** 看板/主会话卡的作答留痕（Host 路由时写入）。 */
   answers: z.array(questionAnswerSchema).max(10).optional(),
-  /** failed 时的失败原因；reasonCode 标记系统阻碍（可修复重派）。 */
-  fail: taskFailSchema.optional(),
+  /** completed 终态：result 是用户最终看到的权威答案；card 是 dsh-ui 展示卡片（card 放明细，result 只写结论）。 */
+  result: z.string().optional(),
+  artifacts: z.array(relativePathSchema).optional(),
+  card: z.record(z.string(), z.unknown()).optional(),
+  /** failed 终态：error 必填；reasonCode 标记系统阻碍（Lead 可修复后重派）。 */
+  error: z.string().optional(),
+  reasonCode: z.enum(blockReasonCodes).optional(),
   cancelledReason: z.string().optional(),
   progressSteps: z.array(progressStepSchema).default([]),
   silent: z.boolean().default(false),
-  report: reportSchema.optional(),
   /** 定时触发产生的上报任务（宿主按入站消息来源自动判定，看板定时标识）。 */
   scheduled: z.boolean().optional(),
   delivery: deliverySchema.optional(),
@@ -290,8 +270,7 @@ const baseTaskSchema = z.object({
 /**
  * 旧存储记录迁移：
  * - 0.2.x：blocked(+scene/blockedQuestion)→input_required，丢弃废弃 scene；0.3.1 的 blocked 无 scene，必须保留。
- * - ≤0.3.10：userAnswer/resultSummary → report.result（内容保留，旧任务的结果在看板和 roster 仍可读）；
- *   outlinePatch 从未写入过，直接剥离；cancelled 状态从未产生过，防御性并入 interrupted。
+ * - 旧结果字段及 report/fail 包裹层直接剥离；cancelled 状态并入 interrupted。
  * - v2 起 conv.todos 与大纲死字段（keyFacts/entities/tags/artifacts/openQuestions）直接删除，不做数据搬迁。
  */
 function migrateRecord(raw: unknown): unknown {
@@ -308,43 +287,16 @@ function migrateRecord(raw: unknown): unknown {
     if (record.question === undefined) record.question = record.blockedQuestion
     delete record.blockedQuestion
   }
-  if (record.report === undefined) {
-    const legacyResult = record.userAnswer ?? record.resultSummary
-    if (typeof legacyResult === 'string' && legacyResult.trim()) record.report = { result: legacyResult }
-  }
-  // 0.3.17 开发期顶层 card → report.card；当前 report 已存在时原样搬迁。
-  if (isTask && record.card !== undefined) {
-    const report = record.report
-    if (report && typeof report === 'object' && !Array.isArray(report) && 'card' in report === false) {
-      record.report = { ...report, card: record.card }
-    }
-    delete record.card
-  }
+  // v0.3.19 协议：report/fail 包裹层拍平为顶层 result/artifacts/card/error/reasonCode；旧包裹数据不迁移，直接剥离。
   delete record.userAnswer
   delete record.resultSummary
   delete record.outlinePatch
-  // 0.3.12 的 report.todos 是待办创建请求的冗余回显（数据已落 conv.todos），0.3.13 协议移出 report，剥离。
-  if (record.report && typeof record.report === 'object' && 'todos' in record.report) {
-    const { todos, ...rest } = record.report as Record<string, unknown>
-    record.report = rest
-  }
+  delete record.report
+  delete record.fail
+  delete record.remediation
   if (record.status === 'cancelled') record.status = 'interrupted'
   if (isTask) {
-    // 0.3.14 协议收缩：blocked 并入 failed（reasonCode 表达系统阻碍）；remediation 并入 error 文本。
     if (record.status === 'blocked') record.status = 'failed'
-    if (record.fail === undefined
-      && (record.error !== undefined || record.reasonCode !== undefined || record.remediation !== undefined)) {
-      const parts = [
-        typeof record.error === 'string' && record.error.trim() ? record.error.trim() : undefined,
-        typeof record.remediation === 'string' && record.remediation.trim() ? `建议：${record.remediation.trim()}` : undefined,
-      ].filter(Boolean)
-      const fail: Record<string, unknown> = { error: parts.length > 0 ? parts.join('\n') : '任务失败' }
-      if (typeof record.reasonCode === 'string') fail.reasonCode = record.reasonCode
-      record.fail = fail
-    }
-    delete record.error
-    delete record.reasonCode
-    delete record.remediation
     // title → header；question(字符串) → questions[{id:'q1', question}]
     if (record.header === undefined && typeof record.title === 'string') record.header = record.title
     delete record.title
@@ -466,39 +418,54 @@ export const dispatchInputSchema = z.object({
   }
 })
 
-export const taskUpdateInputSchema = z.object({
-  status: z.enum(taskUpdateStatuses),
+/** task_* 工具的公共字段：header 与 progressNote（长度只在输入边界限制，存储层不加约束）。 */
+const taskCommonFields = {
   header: trimmed.max(8).optional(),
   progressNote: trimmed.max(500).optional(),
-  report: reportSchema.optional(),
-  questions: z.array(questionItemInputSchema).min(1).max(10).optional(),
-  fail: taskFailSchema.optional(),
-  schedules: z.object({
-    create: z.array(todoCreateSchema).max(50).optional(),
-    update: z.array(todoUpdateEntrySchema).max(50).optional(),
-  }).strict().optional(),
-}).strict().superRefine((value, ctx) => {
-  if (value.status === 'completed' && !value.report) {
-    ctx.addIssue({ code: 'custom', path: ['report'], message: 'completed task_update requires report' })
-  }
-  if (value.status === 'failed' && !value.fail?.error?.trim()) {
-    ctx.addIssue({ code: 'custom', path: ['fail'], message: 'failed task_update requires fail.error（系统阻碍加 fail.reasonCode）' })
-  }
-  if (value.status === 'input_required' && !(value.questions?.length)) {
-    ctx.addIssue({ code: 'custom', path: ['questions'], message: 'input_required task_update requires questions' })
-  }
+}
 
-  const allowed = new Set(taskUpdateFieldAllowList[value.status])
-  for (const [field, fieldValue] of Object.entries(value)) {
-    if (field !== 'status' && fieldValue !== undefined && !allowed.has(field)) {
-      ctx.addIssue({
-        code: 'custom',
-        path: [field],
-        message: `${field} is not allowed on a ${value.status} task_update`,
-      })
-    }
-  }
-})
+export const taskRunningInputSchema = z.object({
+  ...taskCommonFields,
+}).strict()
+export type TaskRunningInput = z.infer<typeof taskRunningInputSchema>
+
+export const taskCompletedInputSchema = z.object({
+  ...taskCommonFields,
+  result: trimmed.max(50_000),
+  artifacts: z.array(relativePathSchema).max(20).optional(),
+  card: z.record(z.string(), z.unknown()).optional(),
+}).strict()
+export type TaskCompletedInput = z.infer<typeof taskCompletedInputSchema>
+
+export const taskFailedInputSchema = z.object({
+  ...taskCommonFields,
+  error: trimmed.max(10_000),
+  reasonCode: z.enum(blockReasonCodes).optional(),
+}).strict()
+export type TaskFailedInput = z.infer<typeof taskFailedInputSchema>
+
+export const taskInputRequiredInputSchema = z.object({
+  ...taskCommonFields,
+  questions: z.array(questionItemInputSchema).min(1).max(10),
+}).strict()
+export type TaskInputRequiredInput = z.infer<typeof taskInputRequiredInputSchema>
+
+export const taskScheduleInputSchema = z.object({
+  create: z.array(todoCreateSchema).max(50).optional(),
+  update: z.array(todoUpdateEntrySchema).max(50).optional(),
+}).strict().refine(
+  value => (value.create?.length ?? 0) + (value.update?.length ?? 0) > 0,
+  { message: 'task_schedule requires create or update' },
+)
+export type TaskScheduleInput = z.infer<typeof taskScheduleInputSchema>
+
+/** 四个状态上报工具的 schema 查找表（service 按工具名取用）。 */
+export const taskReportInputSchemas = {
+  running: taskRunningInputSchema,
+  input_required: taskInputRequiredInputSchema,
+  completed: taskCompletedInputSchema,
+  failed: taskFailedInputSchema,
+} as const
+export type TaskReportStatus = keyof typeof taskReportInputSchemas
 
 export type DispatchInput = z.infer<typeof dispatchInputSchema>
-export type TaskUpdateInput = z.infer<typeof taskUpdateInputSchema>

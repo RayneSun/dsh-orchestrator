@@ -87,7 +87,7 @@ export function buildPresetDefinitions(): PresetDefinition[] {
       id: WORKER_PRESET,
       name: '执行 Worker',
       order: 20,
-      description: '可使用宿主与用户安装的全部工具执行任务（含子智能体与后台任务）；禁止编排循环与 orchestrator 工具，通过 task_update 上报状态',
+      description: '可使用宿主与用户安装的全部工具执行任务（含子智能体与后台任务）；禁止编排循环与 orchestrator 工具，通过 task_* 上报工具汇报状态与维护日程',
       plugins: [
         {
           id: 'persona',

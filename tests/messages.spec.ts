@@ -4,9 +4,10 @@ import { createConversation, createTask, type ConversationRecord, type TaskRecor
 import { LEAD_PROMPT, rosterSummarySegment, WORKER_PROMPT } from '../src/messages.ts'
 
 describe('roster 摘要段', () => {
-  it('空摘要/纯空白不产生片段', () => {
+  it('空摘要/纯空白/与标题相同不产生片段', () => {
     expect(rosterSummarySegment(undefined)).toBe('')
     expect(rosterSummarySegment('   ')).toBe('')
+    expect(rosterSummarySegment('公司简介对比', '公司简介对比')).toBe('')
   })
 
   it('60 字以内原样输出，超长截断并加省略号', () => {
@@ -20,7 +21,7 @@ describe('deliveryNotice 用户日程段', () => {
   const baseTask = (): TaskRecord => ({
     ...createTask({ id: 't1', parentSessionId: 'p1', conversationId: 'c1', predecessorTaskId: null, subject: '查距离', prompt: 'p' }),
     status: 'completed',
-    report: { result: '安贞最近' },
+    result: '安贞最近',
   })
 
   it('有日程时附带 pending 清单与代办指引；无日程不带该段', () => {
@@ -40,7 +41,7 @@ describe('deliveryNotice 用户日程段', () => {
     expect(text).toContain('用户日程')
     expect(text).toContain('[todo_1] 拨打预约电话')
     expect(text).toContain('结束 10-27')
-    expect(text).toContain("schedules.update")
+    expect(text).toContain('task_schedule 的 update')
     expect(text).not.toContain('todo_2')
     const without = deliveryNotice(baseTask(), conv, [])
     expect(without).not.toContain('用户日程')
@@ -85,6 +86,8 @@ describe('prompt 编排约定', () => {
     expect(LEAD_PROMPT).toContain('Worker 能做什么')
     expect(LEAD_PROMPT).toContain('dsh-ui 卡片能力')
     expect(LEAD_PROMPT).toContain('用户日程管理')
+    expect(LEAD_PROMPT).toContain('task_schedule')
+    expect(LEAD_PROMPT).not.toMatch(/schedules\.(create|update)/)
     expect(LEAD_PROMPT).toContain('原样转发给用户，一字不改')
   })
 

@@ -14,7 +14,7 @@ const HOST_NAMESPACE = 'may-dsh-orchestrator'
 const SLOT_KEY = '@may/dsh-orchestrator#may-dsh-orchestrator'
 
 const SUMMARY = '子会话终态消息的投递开关：按状态勾选是否通知主会话。'
-const SECTION_HINT = '勾选子会话 task_update 的各终态是否投递消息给主会话。'
+const SECTION_HINT = '勾选子会话各终态（completed/failed/interrupted）是否投递消息给主会话。'
   + '无论是否投递，任务状态、进度与日程都会实时更新到任务看板；静默（silent）会话始终不投递。'
   + '改动即时生效；关闭期间产生的终态不补投。'
 

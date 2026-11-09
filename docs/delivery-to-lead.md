@@ -1,7 +1,7 @@
 # 向主会话（Lead）投递消息的方式调研
 
 > 调研基线：DSH 0.2.1-rc.2（2026-10-28）。结论来自 `@deepseek-ai/dsh-agent` 与 `@deepseek-ai/dsh-session` 的类型定义与 README 实读。
-> **当前实现（v0.3.18）：completed / failed / interrupted 经 followup 投递；completed 文本由 `report.result`、制品清单、用户日程附言和可选 `report.card` 的 dsh-ui 围栏组成，要求 Lead 原样转发。`input_required` 由看板和 Worker 原生问题卡承载，不投递 Lead；任一入口通过 `answerTaskQuestions` 作答后，阻塞的 task_update 在同轮返回用户答案。**
+> **当前实现（v0.3.18）：completed / failed / interrupted 经 followup 投递；completed 文本由 `task.result`、制品清单、用户日程附言和可选 `task.card` 的 dsh-ui 围栏组成，要求 Lead 原样转发。`input_required` 由看板和 Worker 原生问题卡承载，不投递 Lead；任一入口通过 `answerTaskQuestions` 作答后，阻塞的 task_input_required 在同轮返回用户答案。**
 
 ## 背景
 
@@ -21,7 +21,7 @@ Worker 的 completed / failed / interrupted 通过持久 outbox 投递到 Lead �
 
 1. Worker 上报 `input_required + questions`；任务持久化为待你操作。
 2. 看板渲染问题卡；Host 在 Worker Agent 上调用 `userQuestions.ask` 渲染原生问题卡。inputRequired 固定为 false，无 `deliverOnInputRequired` 配置。
-3. 用户在任一入口作答 → `orchestrator/answerTaskQuestions`；Host 串行幂等校验 → 任务恢复 running → resolve 等待中的 task_update；Worker 在同轮直接收到结构化答案。
+3. 用户在任一入口作答 → `orchestrator/answerTaskQuestions`；Host 串行幂等校验 → 任务恢复 running → resolve 等待中的 task_input_required；Worker 在同轮直接收到结构化答案。
 4. 任一入口成功作答后清理另一侧原生卡及取消监听。工具取消、手动停止、改单、服务卸载均清理等待；已取消原生卡晚到的答案被丢弃，不会进入后续提问。重启时遗留 input_required 转为现有 interrupted 状态，工作流回 idle，不投递 Lead。
 5. 原生问题服务不可用时仍可从看板作答；原生卡异常记录告警。作答不追加 Lead 备忘，不派发新的 Worker 轮次。
 

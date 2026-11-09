@@ -1,13 +1,13 @@
 ---
 name: genui
-description: "dsh-ui 卡片组件规范：结果含结构化数据（对比表、指标、步骤/时间线）时，把展示卡片 JSON 通过 task_update 的 report.card 提交给用户。Preserve conversation language for all user-visible text."
+description: "dsh-ui 卡片组件规范：结果含结构化数据（对比表、指标、步骤/时间线）时，把展示卡片 JSON 通过 task_completed 的 card 提交给用户。Preserve conversation language for all user-visible text."
 ---
 
 # GenUI — 生成式 UI 输出规范
 
 **Language:** Match the user's requested language (otherwise the language of their message) in both surrounding prose and all user-visible UI text: titles, labels, content, options, and explanations. Chinese examples below illustrate JSON only; do not switch the conversation to Chinese after loading this skill. Keep JSON keys, component types, and IDs unchanged. An English request gets English prose and UI text; a Chinese request gets Chinese prose and UI text. `<user-language ...>` tokens are meta-placeholders only. Replace every one with actual content in the conversation language; never emit these placeholders literally.
 
-结果含结构化数据时，把 dsh-ui JSON 规格作为 **task_update 的 report.card**提交，随终态通知送达用户。
+结果含结构化数据时，把 dsh-ui JSON 规格作为 **task_completed 的 card**提交，随终态通知送达用户。
 
 ```json
 {"title":"<user-language text>","gap":14,"items":[...]}
@@ -15,12 +15,12 @@ description: "dsh-ui 卡片组件规范：结果含结构化数据（对比表�
 
 ## card 提交规则（先读这一节）
 
-**禁止在回复正文输出 dsh-ui 围栏**——你的唯一输出通道是 task_update 的 report.card。
+**禁止在回复正文输出 dsh-ui 围栏**——你的唯一输出通道是 task_completed 的 card。
 
-把整个 JSON 规格作为 task_update 的 report.card 值传入。card 是**单个 JSON 对象**，序列化后 ≤16KB，内容**禁止出现三反引号（```）**。
+把整个 JSON 规格作为 task_completed 的 card 值传入。card 是**单个 JSON 对象**，序列化后 ≤16KB，内容**禁止出现三反引号（```）**。
 
-- card 只在 task_update({status:'completed'}) 的 report.card 生效
-- 一个任务最多提交一个 card；report.result 写结论和关键判断，card 放完整数据明细，两者不复述——如果内容已经出现在 card 里，result 只写一句结论（如"对比完成，推荐安贞医院，明细见卡片"），不要把表格数据再写一遍
+- card 只在 task_completed 工具的 card 字段生效
+- 一个任务最多提交一个 card；result 写结论和关键判断，card 放完整数据明细，两者不复述——如果内容已经出现在 card 里，result 只写一句结论（如"对比完成，推荐安贞医院，明细见卡片"），不要把表格数据再写一遍
 - 只用**展示型组件**（布局/展示/图表/高级），不要用交互组件（button/input/select/checkbox/radio/switch/slider/textarea/submit）——card 是纯展示通道，交互没有回传路径
 - 不要嵌套围栏：card JSON 里不要再写 ``` 代码围栏
 
@@ -296,7 +296,7 @@ Check CheckCircle Info InfoCircle Warning Error X Plus Minus Circle ArrowDown Ar
 
 ## 使用规则
 
-1. **card 就是唯一输出方式**：只在 completed 的 task_update 里提交，不要用其他工具
+1. **card 就是唯一输出方式**：只在 task_completed 的 card 字段里提交，不要用其他工具
 2. **组合优先**：复杂界面用 `grid`+`card`+`stat`+`table` 拼，不要追求单一巨型组件
 3. **JSON 合法，字段名按组件词汇**：字符串内的半角双引号必须转义（中文引语可用 `“”` 或 `「」`）；无尾随逗号；文字字段可用上文列出的行内富文本，不嵌 Markdown 表格或代码围栏；超长表格/列表拆成多个组件，宁短勿长
 4. **不要嵌套围栏**：card JSON 里不要再包代码围栏

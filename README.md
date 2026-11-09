@@ -9,10 +9,16 @@ DSH 主控助理编排插件，也是一个开箱即用的个人助理能力包�
 - `may-orchestrator-lead`：主控助理。DSH 自带工具全部可用（一步轻量查询、记忆查阅直接做）；第三方执行类工具（浏览器、邮件、桌面操控、记忆写入/管理）走黑名单对 Lead 隐藏，DSH 升级新增的自带能力不会被误伤。同时遮蔽 meow 记忆手册与 qqmail 公告提示段，并关闭 Lead 会话的记忆自动注入/写回/空闲整理——主控上下文只保留路由所需的最小面。记忆查询由影子只读工具承接；meow-memory 缺失或导出变更时整体降级，不影响其余功能。
 - `may-orchestrator-worker`：统一执行 Worker，是与主会话同级的**一等根会话**（非子代理），因此定时任务（schedule）等平台能力对其开放。工具采用**黑名单**：文件、命令、网页、浏览器、技能、MCP、定时任务等宿主自带与用户安装的工具默认可用，可使用子智能体（subagent/fork）与后台任务（job）做并行、隔离或长耗时处理；仅禁止编排循环（workflow/ralph）、调用 orchestrator 编排工具和直接向用户提问。
 
-Worker 的任务上报协议、安全红线（支付/删除等不可逆操作先确认）、文件边界与整洁约束都固化在预设 persona 中，每次派发只传递任务本身（独立工作区由运行时自动绑定，不重复环境声明）。`task_update` 状态为 running、input_required、completed、failed；每次上报可带 `header`（最多 8 个字的状态标题）与 `progressNote`（一句话进展）。`completed` 必须带 `report`；结构化结果可再传 `report.card`（dsh-ui 展示卡片 JSON），`card` 放完整明细、`result` 只写结论；`input_required` 必须带结构化 `questions`，在看板和子会话渲染同源问题卡（阻塞工具调用，任一入口作答后工具直接返回用户答案，Worker 同轮继续）；`failed` 必须带 `fail.error`，系统阻碍另加 `fail.reasonCode`。全状态都可用顶层 `schedules` 维护**用户日程**（需要用户本人推进的事）：新的放 `create`（title 必填，可加 startAt/endAt / remindAt / priority / links / attachments / contacts / location / remark），改的放 `update`（抄 id 标 done 或 cancelled 作废）；日程主会话 scope 独立成表，`conversationId` 归属回链，代办/修改都派回所属子会话处理。看板会话卡片上以日程框展示、用户可画勾。
+Worker 的任务上报协议、安全红线（支付/删除等不可逆操作先确认）、文件边界与整洁约束都固化在预设 persona 中，每次派发只传递任务本身（独立工作区由运行时自动绑定，不重复环境声明）。上报拆为 5 个独立工具，每个工具的 schema 只含该状态合法字段（v0.3.19 起，不兼容旧会话）：
+
+- `task_running`：进行中上报，可带 `header`（最多 8 个字的状态标题）与 `progressNote`（一句话进展）
+- `task_input_required`：必带结构化 `questions`，在看板和子会话渲染同源问题卡；阻塞工具调用，任一入口作答后工具直接返回用户答案，Worker 同轮继续
+- `task_completed`：终态，必带 `result`（用户最终看到的权威答案）；结构化结果可再传 `card`（dsh-ui 展示卡片 JSON，card 放完整明细、result 只写结论）与 `artifacts`（产物文件）；提交后本轮立即结束
+- `task_failed`：终态，必带 `error`，系统阻碍另加 `reasonCode`；提交后本轮立即结束
+- `task_schedule`：**用户日程**维护（需要用户本人推进的事），与任务状态无关、随时可调用——新的放 `create`（title 必填，可加 startAt/endAt / remindAt / priority / links / attachments / contacts / location / remark），改的放 `update`（抄 id 标 done 或 cancelled 作废）；日程主会话 scope 独立成表，`conversationId` 归属回链，代办/修改都派回所属子会话处理。看板会话卡片上以日程框展示、用户可画勾。
 
 - `input_required` 只表示需要用户回复/选择，或需要用户接管浏览器、系统安全界面。
-- `failed` 既表示普通失败，也表示权限、配置、依赖、网络、资源、运行时等系统阻碍；系统阻碍用 `fail.reasonCode` 标记，便于重派。
+- `failed` 既表示普通失败，也表示权限、配置、依赖、网络、资源、运行时等系统阻碍；系统阻碍用 `reasonCode` 标记，便于重派。
 - Worker 主动上报 `failed` 时只结束本次任务，持久子会话仍可复用；只有子会话启动/崩溃等 Host 级致命错误才会让 Conversation 进入 failed。
 - 安装 bundle 后，新会话自动使用 `may-orchestrator-lead` 预设，不需要手动修改模型或 DSH 配置文件；用户仍可在 DSH 界面主动切换其他预设。
 
@@ -33,13 +39,13 @@ Worker 的任务上报协议、安全红线（支付/删除等不可逆操作先
 - `orchestrator_dispatch` 新建 Conversation，或向已有持久子会话排队新 TaskRun；目标会话仍在运行时，会先把旧任务原子标记为 `interrupted`（改单中断，区别于失败/取消，不向主会话投递失败通知），中断子会话当前轮次，再把新需求 steer 进**同一个**子会话继续执行。
 - 用户在子会话中手动停止执行时，活动任务进入 `interrupted`（非失败），工作流回到 idle，并向主会话投递中断通知：Lead 据此简短告知用户并询问继续、改需求还是放弃，答复仍复用同一工作流。
 - Worker 系统提示自动遮蔽 DSH 自举开发说明（checkout/Web GUI/HMR）等与执行任务无关的全局段落，且不组合 present/goal 等面向终端用户的插件，降低每轮上下文体积。
-- Worker 不能直接向用户提问：需要用户选择、补充或接管浏览器/系统确认时调用 `task_update({status:'input_required', questions})`，问题卡在看板和子会话同步展示；任一入口作答后阻塞的工具调用立即返回用户答案，Worker 同轮继续执行。权限/配置/依赖/网络等系统阻碍使用 `failed + fail.reasonCode`。
-- Worker 多步骤任务继续使用内置 `todo_write`；Host 监听子会话的 `todo/write` 事件（约 350ms 合并）并自动同步到 TaskRun 的步骤进度，任务看板会实时显示 `✓/▶/○` 与 `已完成/总数`。Worker 不需要为每个 todo 变化调用 `task_update`，todo 全完成也不会自动结束任务，终态仍以 `task_update` 为准。
+- Worker 不能直接向用户提问：需要用户选择、补充或接管浏览器/系统确认时调用 `task_input_required({questions})`，问题卡在看板和子会话同步展示；任一入口作答后阻塞的工具调用立即返回用户答案，Worker 同轮继续执行。权限/配置/依赖/网络等系统阻碍使用 `task_failed + reasonCode`。
+- Worker 多步骤任务继续使用内置 `todo_write`；Host 监听子会话的 `todo/write` 事件（约 350ms 合并）并自动同步到 TaskRun 的步骤进度，任务看板会实时显示 `✓/▶/○` 与 `已完成/总数`。Worker 不需要为每个 todo 变化调用状态上报，todo 全完成也不会自动结束任务，终态仍以 `task_completed`/`task_failed` 为准。
 - 新建 Worker 会在当前主工作区下获得独立工作目录：派发时必须提供 `workspaceName`（英文小写短横线 slug，如 `daily-news`，正则 `^[a-z0-9][a-z0-9-]{0,79}$`；同名冲突自动递增 `-2`、`-3`）。复用已有子会话时继续使用原目录，无需再传。
 - `dispatch` 一律后台派发，不阻塞主对话；需要了解进展时由 Lead 主动调用 `orchestrator_get` 查询。记忆整理等后台维护任务可设 `silent: true`：终态（含失败）完全不向主会话投递，Lead 不跟进，看板仍显示状态并带“静默”徽标。
 - 完成、失败或被用户手动停止后通过持久 outbox 唤醒 Lead；`input_required` 由看板 + 子会话双入口问题卡承载，不唤醒主会话；改单接管和普通重启中断的旧任务不产生通知。
-- **终态投递开关（设置页）**：插件管理 → 已安装 → `@may/dsh-orchestrator` → 行“配置”，可按状态（completed / failed / interrupted）勾选是否向主会话投递终态消息；默认全部开启。input_required 不参与投递（问题卡只在看板 + 子会话渲染）。改动即时生效。投递只决定“消息是否唤醒主会话回应”：`task_update` 的状态、进展与日程总是持久化，roster 与看板照常实时更新——这与 `silent` 的分界一致（silent 是整个会话不投，开关是按状态不投）。关闭期间产生的终态不补投。
-- Lead 只以 Worker 的 `report.result` 和 `report.card` 为权威结果；`report.artifacts` 制品路径自动带工作区前缀。
+- **终态投递开关（设置页）**：插件管理 → 已安装 → `@may/dsh-orchestrator` → 行“配置”，可按状态（completed / failed / interrupted）勾选是否向主会话投递终态消息；默认全部开启。input_required 不参与投递（问题卡只在看板 + 子会话渲染）。改动即时生效。投递只决定“消息是否唤醒主会话回应”：上报的状态与进展总是持久化，roster 与看板照常实时更新——这与 `silent` 的分界一致（silent 是整个会话不投，开关是按状态不投）。关闭期间产生的终态不补投。
+- Lead 只以 Worker 的 `task.result` 和 `task.card` 为权威结果；`task.artifacts` 制品路径自动带工作区前缀。
 - 定时/周期任务由 Worker 的 schedule 工具创建并绑定其自身子会话；到点触发后 Worker 执行并上报，Lead 转述给用户。绑定了定时任务的会话在看板带定时时钟徽标（schedule/changed 事件与轮次结束双触发刷新；DSH 侧栏标题不加图标前缀）。若 Worker 发现同主题任务反复定期出现，会主动建议用户设为定时任务。
 - 等待用户作答期间，手动停止、改单、工具取消和服务卸载会清理等待与原生问题卡；已取消卡片晚到的答案不会答入后续提问。
 - 重启后恢复看板；普通未完成任务（queued / running / input_required）标记 interrupted，工作流回 idle；无法确认持久化状态时标记 failed 并带 runtime 原因；未投递的后台终态会重试唤醒 Lead。

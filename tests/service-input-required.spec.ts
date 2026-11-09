@@ -4,7 +4,7 @@ import { createConversation, createTask, type ConversationRecord, type TaskRecor
 import { activateConversation } from '../src/state-machine.ts'
 
 /**
- * updateFromWorker 是 OrchestratorService 的私有方法；这里用最小桩宿主直接调用真实实现，
+ * reportFromWorker 是 OrchestratorService 的私有方法；这里用最小桩宿主直接调用真实实现，
  * 验证活动任务上报后的 Conversation/Task 持久化契约（issue #15 的状态同步缺口）。
  */
 function harness() {
@@ -21,7 +21,6 @@ function harness() {
     serialize: (fn: () => Promise<unknown>) => fn(),
     conversationByChild: () => conv,
     taskById: (id: string) => id === 'task_1' ? task : undefined,
-    applyUpdateSideEffects: async () => {},
     schedulesOf: () => [],
     deliveryToggles: () => ({ completed: true, failed: true, inputRequired: false, interrupted: true }),
     putPair: async (c: ConversationRecord, t?: TaskRecord) => { saved.push({ conv: c, task: t }) },
@@ -29,17 +28,16 @@ function harness() {
     deliverPendingTask: async () => {},
     hostCtx: { logger: { warn() {}, info() {} }, emit() {} },
   }
-  const call = (args: unknown) =>
-    (OrchestratorService.prototype as unknown as Record<string, (a: unknown, c: string) => Promise<any>>).updateFromWorker!
-      .call(fake, args, 'child-1')
+  const call = (args: unknown, status = 'input_required') =>
+    (OrchestratorService.prototype as unknown as Record<string, (...args: unknown[]) => Promise<any>>).reportFromWorker!
+      .call(fake, status, args, 'child-1')
   return { call, saved }
 }
 
-describe('updateFromWorker：活动任务上报后的 Conversation 状态同步', () => {
+describe('reportFromWorker：活动任务上报后的 Conversation 状态同步', () => {
   it('input_required 上报后 Conversation.state 同步为 input_required 且保留 activeTaskId', async () => {
     const { call, saved } = harness()
     const result = await call({
-      status: 'input_required',
       questions: [{ id: 'q1', question: '选 A 还是 B？' }],
     })
     expect(saved).toHaveLength(1)
@@ -53,7 +51,7 @@ describe('updateFromWorker：活动任务上报后的 Conversation 状态同步'
 
   it('completed 上报后 Conversation 回 idle（既有聚合不被破坏）', async () => {
     const { call, saved } = harness()
-    await call({ status: 'completed', report: { result: '完成' } })
+    await call({ result: '完成' }, 'completed')
     expect(saved[0].task?.status).toBe('completed')
     expect(saved[0].conv.state).toBe('idle')
     expect(saved[0].conv.activeTaskId).toBeNull()

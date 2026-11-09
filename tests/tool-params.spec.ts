@@ -1,8 +1,22 @@
 import { describe, expect, it } from 'vitest'
 import { parameterSchemaSpecToJsonSchema } from '@deepseek-ai/dsh-tools'
 import { z } from 'zod'
-import { DISPATCH_TOOL_PARAMETERS, TASK_UPDATE_TOOL_PARAMETERS } from '../src/service.ts'
-import { dispatchInputSchema, taskUpdateInputSchema } from '../src/types.ts'
+import {
+  DISPATCH_TOOL_PARAMETERS,
+  TASK_COMPLETED_TOOL_PARAMETERS,
+  TASK_FAILED_TOOL_PARAMETERS,
+  TASK_INPUT_REQUIRED_TOOL_PARAMETERS,
+  TASK_RUNNING_TOOL_PARAMETERS,
+  TASK_SCHEDULE_TOOL_PARAMETERS,
+} from '../src/service.ts'
+import {
+  dispatchInputSchema,
+  taskCompletedInputSchema,
+  taskFailedInputSchema,
+  taskInputRequiredInputSchema,
+  taskRunningInputSchema,
+  taskScheduleInputSchema,
+} from '../src/types.ts'
 
 interface ContractSchema {
   type?: unknown
@@ -25,7 +39,11 @@ function fieldContracts(schema: ContractSchema, prefix = ''): unknown[] {
 describe('工具参数描述可被 dsh-tools DSL 编译', () => {
   it.each([
     ['dispatch', dispatchInputSchema, DISPATCH_TOOL_PARAMETERS],
-    ['task_update', taskUpdateInputSchema, TASK_UPDATE_TOOL_PARAMETERS],
+    ['task_running', taskRunningInputSchema, TASK_RUNNING_TOOL_PARAMETERS],
+    ['task_completed', taskCompletedInputSchema, TASK_COMPLETED_TOOL_PARAMETERS],
+    ['task_failed', taskFailedInputSchema, TASK_FAILED_TOOL_PARAMETERS],
+    ['task_input_required', taskInputRequiredInputSchema, TASK_INPUT_REQUIRED_TOOL_PARAMETERS],
+    ['task_schedule', taskScheduleInputSchema, TASK_SCHEDULE_TOOL_PARAMETERS],
   ] as const)('%s 的全部嵌套字段、类型、枚举和静态必填约束与 Host 一致', (_name, input, parameters) => {
     const host = z.toJSONSchema(input, { io: 'input', unrepresentable: 'any' })
     const visible = parameterSchemaSpecToJsonSchema(parameters)
@@ -36,19 +54,19 @@ describe('工具参数描述可被 dsh-tools DSL 编译', () => {
     expect(() => parameterSchemaSpecToJsonSchema(DISPATCH_TOOL_PARAMETERS)).not.toThrow()
   })
 
-  it('task_update 参数能通过 DSL 编译，且模型可见字段与协议一致（防 zod/DSL 双写漂移）', () => {
-    expect(() => parameterSchemaSpecToJsonSchema(TASK_UPDATE_TOOL_PARAMETERS)).not.toThrow()
-    // 模型只能看到 DSL 里的字段：header / questions / fail / schedules 分桶必须在其中
-    expect(Object.keys(TASK_UPDATE_TOOL_PARAMETERS)).toEqual(expect.arrayContaining(['status', 'header', 'progressNote', 'report', 'questions', 'fail', 'schedules']))
-    const report = TASK_UPDATE_TOOL_PARAMETERS.report as { properties: Record<string, unknown> }
-    expect(Object.keys(report.properties)).toEqual(expect.arrayContaining(['result', 'artifacts', 'card']))
-    // schedules 分桶：create.title / update.id 在 JSON Schema 层静态必填（模型漏填在平台侧就被拦）
-    const schema = parameterSchemaSpecToJsonSchema(TASK_UPDATE_TOOL_PARAMETERS as never) as any
-    const schedules = schema.properties.schedules
-    expect(schedules.properties.create.items.required).toContain('title')
-    expect(schedules.properties.update.items.required).toContain('id')
-    expect(schedules.properties.create.items.properties).not.toHaveProperty('id')
-    expect(schedules.properties.create.items.properties).not.toHaveProperty('status')
+  it('task_* 参数能通过 DSL 编译，模型可见字段与协议一致（防 zod/DSL 双写漂移）', () => {
+    for (const parameters of [TASK_RUNNING_TOOL_PARAMETERS, TASK_COMPLETED_TOOL_PARAMETERS, TASK_FAILED_TOOL_PARAMETERS, TASK_INPUT_REQUIRED_TOOL_PARAMETERS, TASK_SCHEDULE_TOOL_PARAMETERS]) {
+      expect(() => parameterSchemaSpecToJsonSchema(parameters)).not.toThrow()
+    }
+    expect(Object.keys(TASK_COMPLETED_TOOL_PARAMETERS)).toEqual(expect.arrayContaining(['header', 'progressNote', 'result', 'artifacts', 'card']))
+    expect(Object.keys(TASK_FAILED_TOOL_PARAMETERS)).toEqual(expect.arrayContaining(['header', 'progressNote', 'error', 'reasonCode']))
+    expect(Object.keys(TASK_INPUT_REQUIRED_TOOL_PARAMETERS)).toEqual(expect.arrayContaining(['header', 'progressNote', 'questions']))
+    // task_schedule：create.title / update.id 在 JSON Schema 层静态必填（模型漏填在平台侧就被拦）
+    const schema = parameterSchemaSpecToJsonSchema(TASK_SCHEDULE_TOOL_PARAMETERS as never) as any
+    expect(schema.properties.create.items.required).toContain('title')
+    expect(schema.properties.update.items.required).toContain('id')
+    expect(schema.properties.create.items.properties).not.toHaveProperty('id')
+    expect(schema.properties.create.items.properties).not.toHaveProperty('status')
   })
 
   it('平台 DSL 对未知关键字依旧抛错（锁定平台行为）', () => {

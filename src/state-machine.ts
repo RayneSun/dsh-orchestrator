@@ -1,5 +1,5 @@
-import type { BlockReasonCode, ConversationRecord, DeliveryToggles, QuestionAnswer, QuestionItem, TaskFail, TaskRecord, TaskReport, TaskStatus } from './types.ts'
-import { defaultDeliveryToggles, deliverableTaskStatuses, taskUpdateFieldAllowList, terminalTaskStatuses } from './types.ts'
+import type { BlockReasonCode, ConversationRecord, DeliveryToggles, QuestionAnswer, QuestionItem, TaskRecord, TaskStatus } from './types.ts'
+import { defaultDeliveryToggles, deliverableTaskStatuses, terminalTaskStatuses } from './types.ts'
 import { isUnfinishedTask } from './task-lifecycle.ts'
 
 export class StateError extends Error {
@@ -137,40 +137,22 @@ export function gateTaskDelivery(task: TaskRecord, toggles: DeliveryToggles | un
   return rest
 }
 
-/** task_update 成功后是否直接结束本轮推理：终态全部结束，仅 running 继续。 */
+/** 状态上报成功后是否直接结束本轮推理：终态（completed/failed）全部结束，其余继续。 */
 export function statusConcludesTurn(status: string | undefined): boolean {
-  return status !== undefined && status !== 'running'
+  return status === 'completed' || status === 'failed'
 }
 
-export interface TaskTransitionInput {
-  status: Extract<TaskStatus, 'running' | 'input_required' | 'completed' | 'failed'>
-  header?: string
-  progressNote?: string
-  report?: TaskReport
-  questions?: QuestionItem[]
-  fail?: TaskFail
-}
+/** 四个状态上报工具的输入（已拍平，与存储同形）：必填差异字段收敛到 1 个。 */
+export type TaskTransitionInput =
+  | { status: 'running', header?: string, progressNote?: string }
+  | { status: 'input_required', header?: string, progressNote?: string, questions: QuestionItem[] }
+  | { status: 'completed', header?: string, progressNote?: string, result: string, artifacts?: string[], card?: Record<string, unknown> }
+  | { status: 'failed', header?: string, progressNote?: string, error: string, reasonCode?: BlockReasonCode }
 
 export function transitionTask(task: TaskRecord, input: TaskTransitionInput, at = new Date().toISOString()): TaskRecord {
   if (!canTransition(task.status, input.status)) {
     throw new StateError('invalid_task_transition', `task cannot move from ${task.status} to ${input.status}`)
   }
-  if (input.status === 'completed' && !(input.report ?? task.report)?.result?.trim()) {
-    throw new StateError('missing_report', 'completed task_update requires report.result')
-  }
-  if (input.status === 'failed' && !(input.fail ?? task.fail)?.error?.trim()) {
-    throw new StateError('missing_error', 'failed task_update requires fail.error')
-  }
-  if (input.status === 'input_required' && !(input.questions?.length)) {
-    throw new StateError('missing_questions', 'input_required task_update requires questions')
-  }
-  const allowedFields = new Set(taskUpdateFieldAllowList[input.status])
-  for (const [field, value] of Object.entries(input) as Array<[string, unknown]>) {
-    if (field !== 'status' && value !== undefined && !allowedFields.has(field)) {
-      throw new StateError('invalid_task_update_fields', `${field} is not allowed on a ${input.status} task_update`)
-    }
-  }
-
   const isInputRequired = input.status === 'input_required'
   const isFailed = input.status === 'failed'
   const isCompleted = input.status === 'completed'
@@ -180,10 +162,14 @@ export function transitionTask(task: TaskRecord, input: TaskTransitionInput, at 
     status: input.status,
     header: input.header ?? task.header,
     progressNote: input.progressNote ?? task.progressNote,
-    report: isCompleted ? (input.report ?? task.report) : undefined,
+    // 拍平存储：终态字段整体重写，非对应终态字段清空（同一 TaskRun 只保留最后一份终态数据）。
+    result: isCompleted ? input.result : undefined,
+    artifacts: isCompleted ? input.artifacts : undefined,
+    card: isCompleted ? input.card : undefined,
     questions: isInputRequired ? input.questions : undefined,
     answers: isInputRequired ? task.answers : undefined,
-    fail: isFailed ? (input.fail ?? task.fail) : undefined,
+    error: isFailed ? input.error : undefined,
+    reasonCode: isFailed ? input.reasonCode : undefined,
     ...terminal
       ? { endedAt: at, delivery: withTerminalDelivery(task, input.status) }
       : { startedAt: task.startedAt ?? at },
@@ -223,7 +209,8 @@ export function failTask(
   return {
     ...touch(task, at),
     status: 'failed',
-    fail: { error, ...options.reasonCode ? { reasonCode: options.reasonCode } : {} },
+    error,
+    ...options.reasonCode ? { reasonCode: options.reasonCode } : {},
     endedAt: at,
     ...task.silent ? {} : { delivery: { state: 'pending' as const, attempts: 0 } },
   }
