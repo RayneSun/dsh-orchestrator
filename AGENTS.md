@@ -1,13 +1,13 @@
 # AGENTS.md — dsh-orchestrator 开发指引
 
-面向接管本仓库的 AI 编码助手。读完本文件再动手。当前仓库版本 0.3.18，已正式发版；文档入口见 [docs/README.md](docs/README.md)。
+面向接管本仓库的 AI 编码助手。读完本文件再动手。当前仓库版本 0.3.19；文档入口见 [docs/README.md](docs/README.md)。
 
 ## 项目是什么
 
-`@may/dsh-orchestrator`：DSH（DeepSeek Harness，基线 `0.2.1-rc.2`）的编排插件。
+`@cmjt/dsh-orchestrator`：DSH（DeepSeek Harness，基线 `0.2.1-rc.2`）的编排插件。
 
-- **Lead**（主会话，预设 `may-orchestrator-lead`）：理解需求、路由、派发任务、向用户转述结果。DSH 自带工具全部保留；第三方执行类工具走**黑名单**（lead-policy.ts LEAD_TOOL_DENY + leadToolDenyList：meow 记忆写/管理——只读 search/read 保留、qqmail 全家桶、桌面操控精确名、bsk_*/ego_* 前缀兜底）restrict 隐藏，自带工具升级新增对 Lead 自动可见。meow 记忆手册与 qqmail 公告提示段对 Lead 遮蔽（LEAD_SUPPRESSED_SECTIONS shadow-section 模式），Lead 会话的 meow per-session 开关 inject/write/dream 全关——自动注入、自动写回、空闲整理均停；影子 search/read 绕过 meow 读闸门。meow 缺失/导出变更 → 降级跳过（lead-memory.ts 缓存 null）。
-- **Worker**（持久**根会话**，预设 `may-orchestrator-worker`）：执行任务。不是 subagent——通过 `agents.create` 创建（无 origin/delegationDepth），与主会话同为一等会话，schedule 等仅 depth-0 可用的宿主能力对 Worker 开放。工具**黑名单**制（只禁编排循环/直接提问），其余宿主与用户安装的工具默认可用。
+- **Lead**（主会话，预设 `may-orchestrator-lead`）：理解需求、路由、派发、转发结果。保留 DSH 自带工具；第三方执行工具按 `LEAD_TOOL_DENY` 与浏览器前缀隐藏。记忆来自 `@cmjt/dsh-personal-memory@latest`，原生 `memory_search/read` 保留，其余记忆工具隐藏。写入手册对 Lead 遮蔽；`memory-policy.ts` 通过记忆插件原生 HTTP 接口设置会话门控：inject=false（允许读入与查询）、write=true/dream=true（停止写入、反思与自动整理）。不导入数据库 API，不解析记忆存储配置，不重建影子工具或工作区记忆链接。
+- **Worker**（持久**根会话**，预设 `may-orchestrator-worker`）：执行任务。不是 subagent——通过 `agents.create` 创建（无 origin/delegationDepth），与主会话同为一等会话，schedule 等仅 depth-0 可用的宿主能力对 Worker 开放。工具**黑名单**制（只禁编排循环/直接提问/直接 GenUI 渲染及验证），其余宿主与用户安装的工具默认可用。
 - 两层领域模型：**Conversation**（持久子会话/工作流）1—N **TaskRun**（一次派发）。
 - 技术栈：pnpm + TypeScript + Cordis + Zod + tsdown + vitest。4 个入口：主插件、client（看板 React）、typert host/remote（snapshot / setScheduleStatus / answerTaskQuestions RPC）。
 
@@ -16,8 +16,8 @@
 - DSH CLI 全局包：`@deepseek-ai/dsh@0.2.1-rc.2`（`/opt/homebrew/lib/node_modules`，读 API 定义从这里查）。**CLI 是 web 的运行时**，升级 CLI 用全局 npm；**GUI（`/Applications/DeepSeek Harness.app`）绝不能动**。
 - 真实 web profile：`~/.dsh/profiles/web`。
 - **重启 web 必须用脚本**：`/Users/lixuchuan/work/harness/start-dsh-web.sh`（设置 NODE_EXTRA_CA_CERTS、清代理，内部 `exec dsh web --host 127.0.0.1 --port 3080`）。不要直接 `dsh web`。脚本需用 `start_new_session` 方式彻底脱离当前会话启动，否则进程会被回收。
-- 访问/写入 `~/.dsh`、`dsh plugin`、kill 3080 端口、启动 dsh 都需要沙箱提权。GitHub 访问不稳定，push/release 失败时按用户约定请求开代理。
-- pnpm 供应链校验在沙箱无网时会挂起：typecheck/test/build 直接用 `./node_modules/.bin/tsc|vitest|tsdown`；`pnpm install` 需提权 + `CI=true npm_config_cache=/private/tmp/dsh-orchestrator-npm-cache`，改 manifest 后加 `--no-frozen-lockfile`。
+- 执行权限遵循当前环境；无需额外审批时直接操作。GitHub 访问不稳定，push/release 失败时按用户约定请求开代理。
+- pnpm 供应链校验在沙箱无网时会挂起：typecheck/test/build 直接用 `./node_modules/.bin/tsc|vitest|tsdown`；`pnpm install` 使用 `CI=true npm_config_cache=/private/tmp/dsh-orchestrator-npm-cache`，改 manifest 后加 `--no-frozen-lockfile`。
 - `npm pack`/缓存写 `~/.npm` 会 EPERM，必须：`export npm_config_cache=/private/tmp/dsh-orchestrator-npm-cache`。
 - 插件安装到 profile 必须用 **tgz 绝对路径**（相对路径会被 pnpm 误判为 GitHub 简写）；先 remove 再 add，仅重启不会更新 bundle。
 
@@ -28,19 +28,19 @@
 ```bash
 ./node_modules/.bin/tsc -p tsconfig.json --noEmit
 ./node_modules/.bin/tsc -p tsconfig.client.json --noEmit
-./node_modules/.bin/vitest run        # 当前 134 个用例
+./node_modules/.bin/vitest run        # 以当前全量用例为准
 ./node_modules/.bin/tsdown            # 应无弃用警告
 node scripts/copy-vendor.mjs          # tsdown 不复制 vendored 驱动
 export npm_config_cache=/private/tmp/dsh-orchestrator-npm-cache
 node scripts/verify-packaging.mjs     # 校验 tgz 只含运行所需 lib/、vendor/、cordis.patch.yml 等
-npm pack --pack-destination dist      # 产物 dist/may-dsh-orchestrator-<version>.tgz
+npm pack --pack-destination dist      # 产物 dist/cmjt-dsh-orchestrator-<version>.tgz
 ```
 
-安装到 web profile 并重启（需提权）：
+安装到 web profile 并重启：
 
 ```bash
 lsof -ti tcp:3080 | xargs kill
-dsh plugin --profile web remove @may/dsh-orchestrator
+dsh plugin --profile web remove @cmjt/dsh-orchestrator
 dsh plugin --profile web add <tgz 绝对路径>
 uv run --no-project --python /usr/bin/python3 python -c 'import subprocess; subprocess.Popen(["/Users/lixuchuan/work/harness/start-dsh-web.sh", "--no-open"], start_new_session=True, stdin=subprocess.DEVNULL, stdout=open("/private/tmp/dsh-web.log", "ab"), stderr=subprocess.STDOUT)'
 ```
@@ -60,17 +60,17 @@ uv run --no-project --python /usr/bin/python3 python -c 'import subprocess; subp
 
 ## 架构要点（改代码前必读）
 
-### 模块职责（0.3.18）
+### 模块职责（0.3.19）
 
 | 模块 | 职责 |
 |---|---|
-| `types.ts` / `schedule-time.ts` | Zod 数据与迁移契约 / 日程时间解析及一致性；types 保留时间函数重导出 |
+| `types.ts` / `schedule-time.ts` | Zod 数据契约 / 日程时间解析及一致性；types 保留时间函数重导出 |
 | `state-machine.ts` / `task-lifecycle.ts` | 纯状态迁移与投递开关 / 未完成任务判定（含 input_required） |
 | `service.ts` / `pending-answers.ts` | 宿主协调、串行写入、投递恢复 / 作答等待与取消清理 |
 | `schedule-changes.ts` | 日程整批规划、归属及合并校验，不执行持久化 |
 | `tool-parameters.ts` / `remote.ts` / `host-contracts.ts` | 模型参数 DSL / 三个 RPC 契约 / 宿主结构接口；service 保留 DSL 重导出 |
 | `messages.ts` / `presets.ts` / `lead-policy.ts` / `worker-policy.ts` | 提示词、预设与工具策略 |
-| `storage.ts` / `workspaces.ts` / `lead-memory.ts` | 存储域、工作区与共享记忆链接、Lead 影子只读记忆工具 |
+| `storage.ts` / `workspaces.ts` / `memory-policy.ts` | 存储域、子工作区路径、Lead 原生记忆只读策略 |
 | `client/Board.tsx` | 会话与日程页签、数据刷新和回调协调 |
 | `client/question-card.tsx` / `task-box.tsx` | 问题作答 / 任务时间线及详情 |
 | `client/schedule-list.tsx` / `schedule-pane.tsx` / `schedule-ordering.ts` | 两页共用日程行 / 月历 / 日程排序与日期辅助 |
@@ -79,15 +79,15 @@ uv run --no-project --python /usr/bin/python3 python -c 'import subprocess; subp
 ### 状态机（src/types.ts + src/state-machine.ts）
 
 - 新建 Conversation 必须在主会话 cwd 下创建唯一子目录（同名冲突递增 `-N` 后缀），`meta.cwd` 写入 session header，冷恢复后不变；复用 Conversation 不换目录。新建派发必须提供 `workspaceName`（`workspaceNameSchema` 强制英文小写 slug），经 `src/workspaces.ts` 清洗后落盘。
-- Task 状态：`queued / running / input_required / completed / failed / interrupted`（0.3.14 起删除 blocked；cancelled 从未产生过，旧记录加载时迁移为 interrupted）。
+- Task 状态：`queued / running / input_required / completed / failed / interrupted`（Worker 只主动上报 running/input_required/completed/failed）。
   - `input_required`：只表示 Worker 需要用户补充信息/选择，或需要用户接管浏览器、系统安全界面；必须有 `questions`。
   - `failed`：普通失败与系统阻碍统一；系统阻碍用顶层 `reasonCode`（permission_denied/configuration/dependency/network/resource/runtime）标记。
   - `interrupted`：被改单接管或用户手动停止。改单接管不投递；用户手动停止需要投递一条非失败通知，工作流回 `idle` 可继续派发。
-  - `input_required / completed / failed / interrupted` 都允许带 delivery；interrupted 是否挂起由具体路径决定（`deliverableTaskStatuses`）。Worker 主动 failed 后 Conversation 回 idle；只有 Host 级致命错误（如子会话启动失败/持久化记录缺失）才额外 failConversation。
+  - 只有 `completed / failed / interrupted` 允许带 delivery；interrupted 是否挂起由具体路径决定（`terminalTaskStatuses`）。Worker 主动 failed 后 Conversation 回 idle；只有 Host 级致命错误（如子会话启动失败/持久化记录缺失）才额外 failConversation。
 - Conversation 状态：`provisioning / running / idle / input_required / failed`。
 - 终态投递（delivery outbox）由状态机在迁移时统一挂起，**不要**在创建任务或别处预挂 `delivery: pending`（否则看板对运行中任务误报"同步中"）。
-- **终态投递开关**：`OrchestratorService.static Config`（schemastery）声明 3 个 volatile 布尔（deliverOnCompleted/Failed/Interrupted，默认全部 true；inputRequired 固定 false，无设置项）。volatile 改动经 loader `_commitVolatile` 即时生效、不重启 fiber；服务构造器第二参数接收 volatile 引用（`.get()` 实时读）。判定收敛在纯函数 `deliveryEnabledFor(toggles, status)` 与 `gateTaskDelivery(task, toggles)`（state-machine.ts），挂接点：reportFromWorker 两处 transitionTask 后、onWorkerTurnEnd（manual_stop/failed）、failLaunch、deliverPendingTask 兜底（关闭时清掉存量 pending，不补投）。语义分界：开关只影响"消息是否回投主会话"，上报的状态与进展总是持久化并更新 roster/看板——silent 是整会话不投，开关是按状态不投。
-- **设置页（客户端）**：`src/client/settings-card.tsx` 注册 `plugins.row.config` 槽（key `<包名>#<行id>` = `@may/dsh-orchestrator#may-dsh-orchestrator`），入口：插件管理 → 已安装 → 本包 → 行"配置"。SettingsFormModel+Switch 模式仿 dsh-ciri；`@deepseek-ai/dsh-client-ui-primitives`/`dsh-client-store` 是前端 ModuleLoader 运行时 external（package.json `dsh.client.external` + tsdown neverBundle + vitest alias 桩）；`dsh.client.immediately: true` 保证插件管理页打开时槽位已注册。
+- **终态投递开关**：`OrchestratorService.static Config`（schemastery）声明 3 个 volatile 布尔（deliverOnCompleted/Failed/Interrupted，默认全部 true；input_required 恒不投递，无对应开关或死字段）。volatile 改动经 loader `_commitVolatile` 即时生效、不重启 fiber；服务构造器第二参数接收 volatile 引用（`.get()` 实时读）。判定收敛在纯函数 `deliveryEnabledFor(toggles, status)` 与 `gateTaskDelivery(task, toggles)`（state-machine.ts），挂接点：reportFromWorker 两处 transitionTask 后、onWorkerTurnEnd（manual_stop/failed）、failLaunch、deliverPendingTask 兜底（关闭时清掉存量 pending，不补投）。语义分界：开关只影响"消息是否回投主会话"，上报的状态与进展总是持久化并更新 roster/看板——silent 是整会话不投，开关是按状态不投。
+- **设置页（客户端）**：`src/client/settings-card.tsx` 注册 `plugins.row.config` 槽（key `<包名>#<行id>` = `@cmjt/dsh-orchestrator#may-dsh-orchestrator`），入口：插件管理 → 已安装 → 本包 → 行"配置"。SettingsFormModel+Switch 模式仿 dsh-ciri；`@deepseek-ai/dsh-client-ui-primitives`/`dsh-client-store` 是前端 ModuleLoader 运行时 external（package.json `dsh.client.external` + tsdown neverBundle + vitest alias 桩）；`dsh.client.immediately: true` 保证插件管理页打开时槽位已注册。
 - 所有状态修改走 `service.serialize()` 串行链；涉及改单必须"旧任务 interrupted + reviseConversation 原子切 activeTaskId"先落盘，再做外部调用。
 
 ### Worker 会话生命周期（根会话，0.3.2 起）
@@ -111,7 +111,7 @@ uv run --no-project --python /usr/bin/python3 python -c 'import subprocess; subp
 ### 工具权限
 
 - Lead **预设挂载面**（presets.ts）：显式挂载自带插件 tool-web（web_search/web_fetch）、tool-fs-search（glob/grep，必配 `sampleOverCapGlobResults`）、tool-fs（read/write/edit/read_image）、tool-todo（必配 `allowParallelInProgress`）、tool-goal、tool-ask-user。0.2.7 起 tool-web 曾被误删，"一步查询"长期是空头承诺，0.3.16 补回。不挂 bash/terminal/jobs/schedule/session-query/present/skill/mcp-resources/subagent/teams/worktree——执行与编排都在 Worker 侧；缺必配 config 会新建会话即报 agent-preset/invalid。
-- Lead：**黑名单裁剪**（0.3.16 起。0.3.13 曾完全放开——浏览器/邮件/记忆写入等执行类工具与手册注入主控上下文，拖慢路由；0.3.15 改 allow 白名单——DSH 升级新增自带工具会被误藏；0.3.16 定稿 deny 第三方黑名单）。denylist 按精确名运行时匹配（工具不存在自动跳过，不会重演 0.3.12 的静默缺失——meow 只读走影子工具，不依赖全局名存在）。memory_search/read 的 meow 检索逻辑在 lead-memory.ts 复刻（getDb/search/readSeen/markSearched/markAccessed/projectCovers），tsdown neverBundle 'meow-memory' 保证与插件共用同一模块实例；剔除 meow 时只删 patch 行 + 依赖，代码自动降级。
+- Lead：**黑名单裁剪**，按注册表过滤已有第三方执行工具，自带工具升级新增不被误藏。记忆工具全部由 dsh-personal-memory 原生注册；仅保留 search/read，其余交给 Worker。orchestrator 不导入记忆插件实现，只通过原生会话门控接口设置策略。
 - Worker：按 `isWorkerToolForbidden`（worker-policy.ts）枚举工具并 `scoped.tools.restrict({ deny })`，失败时回退 `guard`。编排/派生类禁止项见 `workerForbiddenPatterns`（workflow/ralph/orchestrator），直接向用户提问类见 `workerQuestionPatterns`（ask_user 系，命中时引导改走 task_input_required）；新增"禁止类"工具只改这两张表。子智能体工具由 Worker 预设的 delegation 组显式组合（与平台 standard 预设同款，spawn/fork 后端驻留宿主平面）。
 - **工具清单巡检（每次相关改动必做）**：改 lead-policy/service 工具面相关代码、或 DSH/插件升级后，重新枚举全局工具（扫 DSH core + profile 插件的 defineTool 名字）与 `DSH_CORE_TOOL_BASELINE` 快照对比。运行时也有兜底：Lead 挂载时 `unrecognizedGlobalTools` 发现基线外且未命中 deny 的名字会打 warn。发现新工具 → 确认归属 → 自带的更新基线、第三方的评估加入 LEAD_TOOL_DENY（或确认放行）。用户主动装新插件同样适用。
 - 不要用白名单限制 Worker；仅禁止上述类别，用户后装工具（MCP/浏览器/技能）默认可用。
@@ -124,11 +124,15 @@ uv run --no-project --python /usr/bin/python3 python -c 'import subprocess; subp
 - 定时触发的轮次没有活动任务：只允许 `task_completed`，Host 生成 ad-hoc 已完成任务并经 outbox 投递给 Lead（service.ts reportFromWorker 的无 activeTaskId 分支）。
 - 定时标记：`schedule/changed` 事件 + Worker `turn/end` 双触发全量核对（500ms 防抖），`scheduleMarks` 内存 Map → snapshot 投影 `hasActiveSchedule`（看板 badge）。DSH 侧栏标题**不加**图标前缀（0.3.x 曾加 ⏰/🕐，已按用户要求移除，renameWorkerSession 只同步看板标题本身）。turn/end 双触发的原因：schedule/changed 的 cordis 传播链路未实测可靠，而轮次内创建的 schedule 在 turn/end 时必已提交。注意 Worker 经它自己的 subagent/job 创建的 schedule 绑定的是那个子会话，不在本机制覆盖内。
 
-### 记忆共享（0.3.4 起）
+### 全局个人记忆
 
-- meow-memory 的记忆库是 `<会话cwd>/.dsh-meow/memory.db`（per-workspace SQLite，WAL + busy_timeout=5000）。
-- 为让 Lead 与全部 Worker 共用一份记忆：`ensureSharedMemoryLink()`（workspaces.ts）把每个 Worker 工作区的 `.dsh-meow` **符号链接**到主工作区的 `.dsh-meow`（win32 用 junction，普通用户免管理员；目标必须绝对路径）。
-- 接入点：新建派发（mkdir 后）与 `recoverRuntimeState`（存量会话补建，dirname(workspaceDir) 即主工作区）。幂等；已存在真实目录（历史孤立记忆）时保留现状；失败仅 warn 降级为独立记忆。
+- 记忆使用私有 npm 源的 `@cmjt/dsh-personal-memory@latest` 普通依赖，随 orchestrator 自动安装；bundle 直接引用 scoped 包名，运行时代码仅调用其原生 HTTP 门控接口。安装指定 `--registry http://36.138.53.195:4873/` 或配置 `@cmjt:registry`，不需要提前安装记忆 tgz。插件内部的 section 名、数据目录与工具名仍为原有名称，不随 npm scope 改动。
+- 依赖使用 latest，目前解析为 0.4.5。该发布包仅更改了 package name：其客户端仍注册旧模块 ID，独立 bundle patch 也仍引用旧包名。Host 与自动安装已通过隔离 profile 验证；客户端缺陷已提 [issue #1](https://github.com/friendllcc/dsh-personal-memory/issues/1)，不在 orchestrator 加源码替换或前端别名适配。
+- 默认数据家：`$DSH_HOME/storages/dsh-personal-memory`，未设环境变量时为 `~/.dsh/storages/dsh-personal-memory`；SQLite 位于数据家下 `.dsh-personal-memory/memory.db`。遵从插件的 homeDir 设置，不再随工作区定位。
+- Lead 使用原生 search/read 与读入，禁写与自动反思/整理；Worker 使用完整原生能力和原生手册，不在 persona 重复写记忆纪律。
+- 门控使用短暂失败有界重试，并在推理前确认策略；复用 `POST /dsh-personal-memory/skip-dreams`（`sessionId / field / value`），地址来自宿主 `webServer.getOrigin()`；先 flush Lead 会话，再设置 write=true、dream=true、inject=false。数据库定位与配置解析由记忆插件负责，包括自定义 projectDir/homeDir；接口失败告警，推理前重试，仍失败则阻止该请求；不回退直接写库。测试使用上游原生路由与 SQLite，覆盖默认和自定义 projectDir。
+- 旧库的扫描与合并由插件原生迁移处理，保留旧文件；新建和恢复 Worker 不再创建记忆链接。
+- 可信插件通过 Node 文件 API 读写 `~/.dsh`；模型文件/命令工具另受会话沙箱约束。Worker 已持久化 danger-full-access（full + never），Lead 文件沙箱保持默认；rc.2 不支持额外增加单个可写根目录，不要通过 chmod 或符号链接绕过沙箱。
 
 ### 给模型的输入输出要精简（产品要求）
 
@@ -148,15 +152,15 @@ uv run --no-project --python /usr/bin/python3 python -c 'import subprocess; subp
 
 ### Worker 上报协议
 
-- **5 个独立工具（v0.3.19 起，单工具 `task_update` 已删除）**：`task_running` / `task_input_required` / `task_completed` / `task_failed` / `task_schedule`。每个工具的 zod input schema（`taskReportInputSchemas` / `taskScheduleInputSchema`）只含该工具合法字段，schema 结构即校验——不再有 allowlist / superRefine 交叉校验（单工具 + 条件必填被模型多次踩坑，拆分是根治）。全部可带 header（≤8 字极简状态标题）、progressNote（一句话进展，允许三分幽默）。
+- **5 个独立工具（v0.3.19 起，单工具 `task_update` 已删除）**：`task_running` / `task_input_required` / `task_completed` / `task_failed` / `task_schedule`。每个工具的 zod input schema（`taskReportInputSchemas` / `taskScheduleInputSchema`）只含该工具合法字段，schema 结构即校验——不再有 allowlist / superRefine 交叉校验（单工具 + 条件必填被模型多次踩坑，拆分是根治）。四个状态工具可带 header（≤8 字极简状态标题）和 progressNote（一句话进展）；task_schedule 不带进度字段。
   - `task_input_required`：必填 `questions[]`，结构化问卷 `{id?, question, header?, detail?, options?, multi_select?}`，Worker 的 id 可省略，Host 补 q1/q2/…，snapshot 与作答后的 answers 使用该 id。阻塞工具调用，返回值即用户答案。
   - `task_completed`：必填 `result`（权威结论）；可选 `artifacts`（子工作区相对路径，投递时自动加工作区前缀）与 `card`（dsh-ui 展示明细 JSON，Host 序列化围栏后由 Lead 原样转发）。
   - `task_failed`：必填 `error`，系统阻碍加 `reasonCode`。
   - `task_schedule`：日程 CRUD（`create`/`update` 分桶，create.title / update.id 在 DSL 层静态必填——分支规则必须由结构而非文案表达）；返回最新日程清单投影，与任务状态无关、不产生状态迁移。
-  - **存储拍平**：TaskRecord 顶层 `result/artifacts/card/error/reasonCode`，`report/fail` 包裹层删除；旧存储包裹数据由 migrateRecord 直接剥离（不兼容旧会话，已拍板）。transitionTask 输入是判别联合 `TaskTransitionInput`，按 status 收敛字段并在迁移时清空非对应终态字段。
+  - **存储拍平**：TaskRecord 顶层 `result/artifacts/card/error/reasonCode`，`report/fail` 包裹层删除；domain v3 隔离旧存储，不加载、不迁移旧记录。transitionTask 输入是判别联合 `TaskTransitionInput`，按 status 收敛字段并清空非对应终态字段；保留已回答的问题及答案。
 - 终态（completed/failed）提交成功后调 `exec.concludeTurn()` 直接结束本轮（statusConcludesTurn），省掉末次全上下文推理；running 不结束；input_required 为阻塞工具调用（不 concludeTurn，用户作答后同轮返回答案继续）。
 - **zod/DSL 双写**：模型可见的只有 defineTool 的 parameters DSL（`tool-parameters.ts` 的 `TASK_*_TOOL_PARAMETERS` 五个常量，service.ts 保留重导出），zod 是 Host 侧校验；两处必须同步——zod 加了字段而 DSL 没加，模型永远不知道（0.3.13 踩过）。tool-params.spec 锁定 5 个工具的 DSL 可编译且字段与 zod 契约一致。
-- header 的 8 字上限只在输入边界限制；baseTaskSchema 用 z.string() 不加 max，防止存储层解析拒绝旧记录。
+- header 的 8 字上限只在输入边界限制；baseTaskSchema 用 z.string() 不加 max，避免持久化层重复输入边界约束。
 - 日程时间逻辑位于 `schedule-time.ts`，types.ts 保留重导出：allDay=true 的 startAt/endAt 使用完整纯日期；普通日程必须带时刻，remindAt 使用 `normalizeTimePoint` 宽松解析，省略年份取最近未来、缺时区补本地；自然语言（"明天下午"）拒绝；priority(P0~P3 默认 P3)/links/attachments(相对路径)/contacts/location/remark（备注，排字段表末位诱导先填结构化字段）。
 - 双向知情通道：新任务投递附"会话日程现状"（scheduleStatusSection，pending 全列+用户已勾的防重复代办），task_schedule 与状态上报的返回值都带 `schedules` 投影（id/title/status/priority，scheduleProjection）。用户在看板画勾走 setScheduleStatus RPC（Host 持久化+看板刷新，Worker 不实时通知，靠上述两个通道知情）。
 - 用户日程（v2 独立表 schedules，主会话 scope；v0.3.17 起 conv.todos 字段删除、旧残留数据直接丢弃）：ScheduleRecord{id/title/startAt/endAt/remindAt/priority/links/attachments/contacts/location/remark/status: pending|done|cancelled/completedBy: user|worker + parentSessionId/conversationId 归属回链}，Worker 用 task_schedule 的 create 提出、update 标 done 或 cancelled 作废；用户在任务看板画勾/取消走 `setScheduleStatus` RPC（仅 pending/done）；日程框在"工作区"行上方，折叠也显示，cancelled 灰显划线带"已作废"胶囊且不可勾。派发与改单注入末尾附 `scheduleStatusSection`（会话日程现状：pending 全列含 id，用户自己勾掉的标注"不要重复代办"，cancelled 不提）。看板双页签：会话（会话页）+ 日程（月历页：周一起始、优先级色点、跨天逐日出现、过期未完成置顶、无时间字段只在会话页）；停留在日程页时任务更新会在会话页签显示未读点（颜色跟最新任务状态），切回即清除。Lead 把日程转述给用户；用户让代办/修改时复用原 conversationId 派发并要求 Worker task_schedule update。校验失败报错带全量路径（如 create[0].title: …），模型可一轮自愈。
@@ -167,10 +171,10 @@ uv run --no-project --python /usr/bin/python3 python -c 'import subprocess; subp
 
 ### 存储与兼容性
 
-- 0.3.18 保持 snapshot / RPC 请求响应、Task/Conversation 状态枚举、三张记录 schema 与 migrateRecord 不变；只把 Snapshot / RPC 请求类型收敛为既有 Zod schema 推导。snapshotResultSchema 移到 types.ts，remote.ts 保留重导出；下游无需适配。
-- 日程先由 `planScheduleChanges` 整批规划，全部归属与合并后时间校验成功再写入；同一 id 的 patch 按顺序合并。只能保证校验失败零写入，不能称为跨记录事务或保证 I/O 失败原子性。
-- 存储：`~/.dsh/storages/orchestrator.json`（旧 v1 单文件，兼容读取）；当前为 `~/.dsh/storages/orchestrator/`（domain v2，per-record，tables: conversations/tasks/schedules）。
-- 持久化 schema 用 zod；**改字段必须在 types.ts 的 `migrateRecord` 里做旧记录迁移**（0.3.14 先例：系统阻碍 blocked→failed.fail、remediation→error 尾注、title→header、question→questions；0.2.x 提问型 blocked→input_required）。client snapshot 走 z.preprocess，旧数据不能让看板炸掉。
+- **0.3.19 破坏性变更**：Task 顶层保存 result/artifacts/card/error/reasonCode，删除 report/fail。domain v3 不接纳旧域，已删除 migrateRecord 与 compatibleVersions；不要静默丢字段、搬旧包裹数据或修改旧域版本戳。升级前备份旧域，并停用旧 Worker 绑定的宿主定时任务；新建 Lead/Worker 会话。
+- `snapshotResultSchema` 与持久化 schema 同源；hasActiveSchedule 只在 snapshot 扩展，不落库。RPC 方法/请求不变，typert 包身份随 npm 包改为 @cmjt/dsh-orchestrator。
+- 日程由 planScheduleChanges 整批校验后写入，成功后广播一次变更；只保证校验失败零写入，不承诺 I/O 失败的跨记录原子性。
+- 存储仍位于 ~/.dsh/storages/orchestrator/（domain v3，per-record，conversations/tasks/schedules）；旧 orchestrator.json 同样需要备份移出。详见 docs/board-api-v0.3.19-changes.md。
 - 子会话 transcript：`~/.dsh/sessions/<workspace-encoded>/<childSessionId>/session.v4.jsonl.zstd`，用 `zstd -dc` 解压排查真实轮次；`turn/end` 的 reason 是判断手动停止/改单的依据。
 
 ### macOS 桌面驱动
@@ -182,7 +186,7 @@ uv run --no-project --python /usr/bin/python3 python -c 'import subprocess; subp
 
 - typecheck（host + client 两个 project）必须干净；提交前跑全量 vitest。
 - 新语义先在 state-machine/types 层落纯函数 + 单测，再接 service。
-- 状态字面量列表用 types.ts 的常量（activeTaskStatuses / deliverableTaskStatuses / terminalTaskStatuses / blockReasonCodes），不要再散落状态数组；仅内部使用的常量不要 export。
+- 状态字面量列表用 types.ts 的常量（activeTaskStatuses / terminalTaskStatuses / blockReasonCodes），不要再散落状态数组；仅内部使用的常量不要 export。
 - 日志用 `hostCtx.logger.info/warn`，英文即可；面向用户的文案一律中文。
 - 看板文案与状态标签中文；新增 TaskStatus/ConversationState 时同步 task-box.tsx 的标签、Board.tsx 的会话聚合与 styles.ts 的 badge 颜色。
 - 死代码及时删（已清理：scene 四模式、PLAN.md、subagent 时代 settled 双重拦截、{{cwd}} suffix 等），不要留兼容分支以外的旧代码。
@@ -193,14 +197,12 @@ uv run --no-project --python /usr/bin/python3 python -c 'import subprocess; subp
 - cancel 是 fire-and-return，旧轮次 turn/end 晚到；没有 revisionTurnEnds 守卫就会把旧任务误判 failed 或把新任务误标手动停止。
 - 向 failed 工作流派发会 throw，dispatch 已包 try/catch 返回结构化 error，新增的外部调用路径同样要兜住。
 - 快速 Worker 可能在 followup 接受与收尾之间已提交终态：只补 queued→running，不回滚终态。
-- 重启恢复：普通活动任务（含 input_required）统一转 interrupted（`interruptTaskAfterRestart`，不主动投递）；persistence stat 不确定时用 `failTask(..., {reasonCode:'runtime'})`；并恢复未投递 outbox 与补建记忆共享链接。
+- 重启恢复：普通活动任务（含 input_required）统一转 interrupted（`interruptTaskAfterRestart`，不主动投递）；persistence stat 不确定时用 `failTask(..., {reasonCode:'runtime'})`；并恢复未投递 outbox。
 - pnpm-lock 与 peerDeps 范围改动后必须 `--no-frozen-lockfile` 重装并核对 zod 解析到 4.4.3。
 - 存储 schema（baseTaskSchema/baseConversationSchema）收紧约束会让旧记录在重启后解析失败：新字段给 default、长度等限制只放输入边界 schema。
 
 ## 背景材料
 
 - README.md：用户面说明，发版时随版本号更新。
-- docs/README.md：当前文档与历史设计索引；docs/milestones/0.3.18.md：本轮变更、接口兼容、验证与未处理项。
-- 0.3.18 里程碑：A–D、B1–B5、两页优先级展示完成，134 个测试；仅本地 commit + tag，未推送、未发包。以下 git log 为历史记录，保留当时表述。
-- **正式发版清单（用户授权后）**：先更新版本与文档 → host/client typecheck + 全量测试 → build（含 copy-vendor）+ verify:packaging → `npm pack` → 中文 commit + annotated tag（若本地里程碑已存在且内容未变则复用）→ push dev 与对应 tag → `gh release create` 必须同时附两个资产：构建产物 tgz（**lib/ 已编译**，源码 tar.gz 装不了）与 `dsh-orchestrator-board-api-<版本>.md` 接口文档 → 正式版 tgz 装回 web profile 并通过指定脚本以 start_new_session 重启 3080。**GitHub release 之外必须同步发布私有 npm 源**（Verdaccio `http://36.138.53.195:4873/`，scope `@may` 已映射）：`npm publish --registry http://36.138.53.195:4873/` 后用 `npm view @may/dsh-orchestrator --registry http://36.138.53.195:4873/` 验证；两处包内容 shasum 应一致（同一次 `npm pack` 产物）。
-- git log：0.2.0（background/单 Worker 预设）→ 0.2.1（路由追问兜底/改单 steer/blocked 提问）→ 0.2.2（todo 进度桥接看板）→ 0.2.3（interrupted 改单语义）→ 0.2.4（手动停止捕获、看板与话术精简）→ 0.2.5（白名单、input_required、上下文瘦身、鲁棒性）→ 0.2.6（手动中断通知、状态配色、Worker 提示词瘦身）→ 0.2.7（子会话折叠、柔光动效、按钮突出、提示词/恢复加固）→ 0.3.0（个人助理能力 bundle）→ 0.3.2（Worker 根会话化、blocked 系统受阻语义、默认 Lead 预设免手改）→ 0.3.3（DSH 0.2.1-rc.2 适配、移除 dsh-market）→ 0.3.4（记忆共享、settled 死代码清理、文档重写）→ 0.3.5（Worker 放开子智能体与后台任务）→ 0.3.6（标题更新/同主题复用/定时编排/定时标记）→ 0.3.7（模型选择透传、打开子会话寻址修复）→ 0.3.8（看板重构、task_update v2：report/progressNote/summary）→ 0.3.9（workspaceName 英文 slug 必填、mock 对齐）→ 0.3.10（dispatch 工具参数 DSL pattern 崩溃修复）→ 0.3.11（死字段 userAnswer/resultSummary/outlinePatch/cancelled 清理与数据迁移、outline 摘要写入简化、看板 API 文档）→ 0.3.12（Lead 白名单补 memory_read/update/home）→ 未发布（Lead 移除工具白名单；一事一会拆分；task_update title（≤8 字）+ report.todos/todoUpdates 用户待办清单 + setTodoStatus RPC；Worker danger-full-access；定时标记 turn/end 双触发；终态 concludeTurn；task_update 参数 DSL 漂移修复与测试锁定；cordis 4 inject 陷阱修复（ctx.get 访问 permissionPresets/schedule）；待办 cancelled 作废 + 派发注入会话待办现状 + task_update 返回 todos 投影 + todoUpdates 收紧（failed/blocked 禁止）；待办 priority 四象限（P0~P3 默认 P3，看板彩色胶囊）；setTodoStatus markRemote 漏注册修复（独立 tsdown 无装饰器降级，每个 RPC 方法都必须手动 markRemote）；未使用导出类型清理（NewTodo/TodoUpdate/TodoPriority/Delivery/ConversationState）；终态投递开关与插件设置页（plugins.row.config）；DSH 侧栏定时图标前缀移除）→ 0.3.13（userTodos 分桶 create/update 取代 type 判别、create.title/update.id DSL 静态必填、待办新字段 remindAt/links/attachments/contacts/location、detail→remark 并置末位、completedAt 死字段删除、校验报错带全量路径、LEAD 待办节按操作类型重组、WORKER task_update 节嵌套化、看板详情区一切皆胶囊）→ 0.3.14（status 收缩为 4 态、blocked 并入 failed.fail、title→header、question→questions[]、summary 删除；QuestionItem 问题卡看板+子会话双入口、answerTaskQuestions 同源作答；看板改为问题卡/日程框/任务框三级；input_required 阻塞工具调用——返回值即用户答案 { answers }，主会话完全不参与投递（inputRequired 恒 false、deliverOnInputRequired 配置项删除）；userTodos 全状态开放）→ 0.3.15（用户待办升级为用户日程：schedules 独立表（domain v2 + per-record 布局 + 旧 todos 幂等迁移，迁移分配全新 sch_ id）、协议改名 userTodos→schedules 无别名、日程 scope=主会话跨子会话汇总（conversationTitle 回链）、看板双页签（会话页 + 日程月历页：周一起始/优先级色点/跨天逐日/过期置顶/无时间字段跳过）、日程页未读提醒点（会话页签，颜色跟最新任务状态）、setTodoStatus→setScheduleStatus、投递附言/返回值投影/Lead 编排全套日程化、头部任务看板按钮字号/配色对齐宿主、日程行来源回链独占第二行不折行、附件回调按日程归属解析）→ 0.3.16（issue #15：input_required 上报同步 Conversation.state=awaiting（保留 activeTaskId），下游按非 idle 读状态不漏待决策事项）→ 0.3.17（全天日程：schedules.allDay 布尔 + startAt/endAt 格式分叉（allDay=true 必填完整 YYYY-MM-DD 纯日期、endAt 尾日包含；allDay=false 必须带时刻、纯日期拒绝），update 改 allDay 必须同时带新格式 startAt（原子切换）、合并后整条一致性校验；看板/日程页纯日期免时区解析、过期按当日 23:59:59；会话内日程按 startAt 由近及远排序；死字段清理：outline 收敛为仅 summary（keyFacts/entities/tags/artifacts/openQuestions 删除）、conv.todos 彻底删除且旧残留数据直接丢弃不做搬迁）
+- docs/README.md：文档索引；docs/milestones/0.3.19.md：当前变更、验证与已知限制。
+- **正式发版清单（用户授权后）**：先更新版本与文档 → host/client typecheck + 全量测试 → build（含 copy-vendor）+ verify:packaging → `npm pack` → 中文 commit + annotated tag（若本地里程碑已存在且内容未变则复用）→ push dev 与对应 tag → `gh release create` 必须同时附三个资产：构建产物 tgz（**lib/ 已编译**，源码 tar.gz 装不了）、`board-api.md` 完整接口和 `board-api-v<版本>-changes.md` 差异说明 → 正式版 tgz 装回 web profile 并通过指定脚本以 start_new_session 重启 3080。**GitHub release 之外必须同步发布私有 npm 源**（Verdaccio `http://36.138.53.195:4873/`，scope `@cmjt` 已映射）：`npm publish --registry http://36.138.53.195:4873/` 后用 `npm view @cmjt/dsh-orchestrator --registry http://36.138.53.195:4873/` 验证；两处包内容 shasum 应一致（同一次 `npm pack` 产物）。

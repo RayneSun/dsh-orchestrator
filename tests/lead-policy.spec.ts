@@ -10,7 +10,7 @@ describe('Lead 工具黑名单与提示段抑制', () => {
     expect(leadToolDenyList(names)).toEqual(names)
     expect(unrecognizedGlobalTools(names)).toEqual([])
   })
-  it('deny 只含第三方执行类：meow 写/管理、qqmail 全家桶、桌面操控', () => {
+  it('deny 只含第三方执行类：个人记忆写/管理、qqmail 全家桶、桌面操控', () => {
     expect([...LEAD_TOOL_DENY].sort()).toEqual([
       'click', 'drag', 'get_app_state', 'list_apps', 'memory_dream', 'memory_find_similar', 'memory_home',
       'memory_project', 'memory_remember', 'memory_update', 'perform_secondary_action', 'press_key',
@@ -48,7 +48,7 @@ describe('Lead 工具黑名单与提示段抑制', () => {
   it('leadToolDenyList 按注册表过滤并按前缀兜底浏览器操控', () => {
     const registered = [
       'bash', 'read', 'web_search', // 自带：不 deny
-      'memory_search', 'memory_read', // meow 只读：保留
+      'memory_search', 'memory_read', // 个人记忆只读：保留
       'memory_remember', 'qqmail_send', 'click', // 第三方精确名
       'bsk_navigate', 'ego_click', // 前缀兜底
       'some_future_plugin_tool', // 陌生第三方：不拦（prompt 引导兜底）
@@ -58,8 +58,8 @@ describe('Lead 工具黑名单与提示段抑制', () => {
     ])
   })
 
-  it('遮蔽 meow 记忆手册与 qqmail 公告段', () => {
-    expect(LEAD_SUPPRESSED_SECTIONS).toContain('meow-memory:guide')
+  it('遮蔽 个人记忆写入手册与 qqmail 公告段', () => {
+    expect(LEAD_SUPPRESSED_SECTIONS).toContain('dsh-personal-memory:guide')
     expect(LEAD_SUPPRESSED_SECTIONS).toContain('plugin:dsh-qqmail')
   })
 })

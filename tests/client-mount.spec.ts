@@ -58,7 +58,7 @@ describe('client orchestrator mount', () => {
     expect(() => harness.root.remote.orchestrator).toThrow('without inject')
 
     const body = harness.entries.find(
-      entry => entry.name === 'sidebar.right.pane.tab' && entry.options.key === '@may/dsh-orchestrator/board',
+      entry => entry.name === 'sidebar.right.pane.tab' && entry.options.key === '@cmjt/dsh-orchestrator/board',
     )
     expect(body).toBeDefined()
     const props = body!.options.inject('parent-session')
@@ -67,7 +67,7 @@ describe('client orchestrator mount', () => {
     expect(props.remoteEvents.$on).toBe(harness.scoped.remote.$on)
     expect(props.uiWorkspace.openSession).toBe(harness.scoped.uiWorkspace.openSession)
 
-    const header = harness.entries.find(entry => entry.options.id === '@may/dsh-orchestrator/header')
+    const header = harness.entries.find(entry => entry.options.id === '@cmjt/dsh-orchestrator/header')
     header!.options.inject('parent-session').sidebarRight.openTab('orchestratorBoard', {
       params: { sessionId: 'parent-session' },
     })

@@ -2,11 +2,11 @@
 
 DSH 主控助理编排插件，也是一个开箱即用的个人助理能力包。Lead 主会话只负责理解需求、维护路由卡、派发任务和转述结果；持久子会话保存完整执行上下文，每次派发对应一条 TaskRun。
 
-当前仓库版本 **0.3.18**，已正式发版。本版完成等待任务生命周期、日程批量校验、工具策略与桌面会话隔离加固，并拆分看板组件；snapshot / RPC、状态枚举和持久化格式与 0.3.17 保持一致，下游无需适配。详见 [0.3.18 里程碑](docs/milestones/0.3.18.md)与[文档索引](docs/README.md)。
+当前版本 **0.3.19**，包名为 **`@cmjt/dsh-orchestrator`**。任务状态上报拆为四个工具，用户日程独立为 `task_schedule`；snapshot 的任务结果字段拍平，记忆迁移至 dsh-personal-memory。**不兼容旧会话与旧看板存储**：升级前备份旧域并停用旧 Worker 的定时任务，升级后新建会话。见[完整接口](docs/board-api.md)、[0.3.19 接口变更与升级步骤](docs/board-api-v0.3.19-changes.md)和[发布记录](docs/milestones/0.3.19.md)。
 
 ## 预设
 
-- `may-orchestrator-lead`：主控助理。DSH 自带工具全部可用（一步轻量查询、记忆查阅直接做）；第三方执行类工具（浏览器、邮件、桌面操控、记忆写入/管理）走黑名单对 Lead 隐藏，DSH 升级新增的自带能力不会被误伤。同时遮蔽 meow 记忆手册与 qqmail 公告提示段，并关闭 Lead 会话的记忆自动注入/写回/空闲整理——主控上下文只保留路由所需的最小面。记忆查询由影子只读工具承接；meow-memory 缺失或导出变更时整体降级，不影响其余功能。
+- `may-orchestrator-lead`：主控助理。DSH 自带工具全部可用（一步轻量查询、记忆查阅直接做）；浏览器、邮件、桌面操控、记忆写入/管理等第三方执行工具对 Lead 隐藏。长期记忆使用 dsh-personal-memory 的原生 `memory_search` / `memory_read`，不再复刻查询工具；Lead 停止自动反思、写入和空闲整理，保留原生记忆读入，写入手册只向 Worker 提供。
 - `may-orchestrator-worker`：统一执行 Worker，是与主会话同级的**一等根会话**（非子代理），因此定时任务（schedule）等平台能力对其开放。工具采用**黑名单**：文件、命令、网页、浏览器、技能、MCP、定时任务等宿主自带与用户安装的工具默认可用，可使用子智能体（subagent/fork）与后台任务（job）做并行、隔离或长耗时处理；仅禁止编排循环（workflow/ralph）、调用 orchestrator 编排工具和直接向用户提问。
 
 Worker 的任务上报协议、安全红线（支付/删除等不可逆操作先确认）、文件边界与整洁约束都固化在预设 persona 中，每次派发只传递任务本身（独立工作区由运行时自动绑定，不重复环境声明）。上报拆为 5 个独立工具，每个工具的 schema 只含该状态合法字段（v0.3.19 起，不兼容旧会话）：
@@ -24,12 +24,18 @@ Worker 的任务上报协议、安全红线（支付/删除等不可逆操作先
 
 ## 个人助理能力包
 
-安装本 bundle 会同时启用：
+安装本 bundle 会自动安装并启用以下能力：
 
-- `meow-memory`：跨会话长期记忆，是唯一长期记忆库。Lead 与所有 Worker 子会话通过共享链接（macOS/Linux 符号链接、Windows junction）指向主工作区下的同一份记忆库，任何一端写入、全端可查。
+- [dsh-personal-memory v0.4.5](https://github.com/friendllcc/dsh-personal-memory/releases/tag/v0.4.5)：通过私有 npm 源的 `@cmjt/dsh-personal-memory@latest` 普通依赖自动安装。Lead 与 Worker 原生共享用户全局记忆库，默认数据家在 `~/.dsh/storages/dsh-personal-memory`（设置了 `DSH_HOME` 时跟随该目录），SQLite 位于其中的 `.dsh-personal-memory/memory.db`。Worker 保留完整记忆能力；Lead 只查询。旧工作区库的发现与合并交由插件原生迁移，不再创建共享链接，也不删除旧记忆。
 - `@wxg-prc-cpg/browser-skill-dsh-plugin`：浏览器自动化；需自行安装 `bsk` CLI 和浏览器扩展。
 - `@zhengjunyao/dsh-qqmail`：QQ 邮箱/IMAP/SMTP，默认只读，外发或删除需用户确认与配置授权码。
 - 桌面操控：macOS 使用本包内 vendored 的 `dsh-computer-use` 驱动；Windows 安装 `@milkuovo/dsh-computer-use`。两者通过平台 gate 二选一启用。vendored 驱动的 MIT 许可证见 `lib/vendor/dsh-computer-use-darwin/LICENSE`，仍需系统提供可执行的 `cua-driver`。
+
+权限分两层：记忆等可信插件在宿主进程内通过 Node 文件 API 读写 `~/.dsh`，不受模型文件工具的工作区沙箱限制；Worker 使用 `danger-full-access`（审批策略为 never），可按需读写该目录。Lead 的文件工具仍遵守自己的沙箱，记忆工具的查询不受此限制。无需放宽目录的系统权限。
+
+记忆插件的“停止读入”同时会停用查询，因此 Lead 保留原生记忆快照。快照中的项目导引可能提及 `memory_project`，该工具仍对 Lead 隐藏，项目全景与记忆维护交给 Worker；不为此重建查询工具或改写插件消息。
+
+Lead 的只读策略通过记忆插件已有的会话门控接口设置，短暂失败时幂等重试，仍失败则在推理前再次确认，避免未建立策略就运行；记忆目录由该插件自行定位，支持其自定义 `projectDir` / `homeDir`。orchestrator 不直接打开记忆数据库，也不创建工作区记忆链接。
 
 这些能力插件的普通依赖不会把旧版 DSH runtime 提升到 profile 依赖树；macOS 驱动只通过宿主的 peer runtime 加载，避免覆盖 `@deepseek-ai/dsh-tools`。
 
@@ -44,7 +50,7 @@ Worker 的任务上报协议、安全红线（支付/删除等不可逆操作先
 - 新建 Worker 会在当前主工作区下获得独立工作目录：派发时必须提供 `workspaceName`（英文小写短横线 slug，如 `daily-news`，正则 `^[a-z0-9][a-z0-9-]{0,79}$`；同名冲突自动递增 `-2`、`-3`）。复用已有子会话时继续使用原目录，无需再传。
 - `dispatch` 一律后台派发，不阻塞主对话；需要了解进展时由 Lead 主动调用 `orchestrator_get` 查询。记忆整理等后台维护任务可设 `silent: true`：终态（含失败）完全不向主会话投递，Lead 不跟进，看板仍显示状态并带“静默”徽标。
 - 完成、失败或被用户手动停止后通过持久 outbox 唤醒 Lead；`input_required` 由看板 + 子会话双入口问题卡承载，不唤醒主会话；改单接管和普通重启中断的旧任务不产生通知。
-- **终态投递开关（设置页）**：插件管理 → 已安装 → `@may/dsh-orchestrator` → 行“配置”，可按状态（completed / failed / interrupted）勾选是否向主会话投递终态消息；默认全部开启。input_required 不参与投递（问题卡只在看板 + 子会话渲染）。改动即时生效。投递只决定“消息是否唤醒主会话回应”：上报的状态与进展总是持久化，roster 与看板照常实时更新——这与 `silent` 的分界一致（silent 是整个会话不投，开关是按状态不投）。关闭期间产生的终态不补投。
+- **终态投递开关（设置页）**：插件管理 → 已安装 → `@cmjt/dsh-orchestrator` → 行“配置”，可按状态（completed / failed / interrupted）勾选是否向主会话投递终态消息；默认全部开启。input_required 不参与投递（问题卡只在看板 + 子会话渲染）。改动即时生效。投递只决定“消息是否唤醒主会话回应”：上报的状态与进展总是持久化，roster 与看板照常实时更新——这与 `silent` 的分界一致（silent 是整个会话不投，开关是按状态不投）。关闭期间产生的终态不补投。
 - Lead 只以 Worker 的 `task.result` 和 `task.card` 为权威结果；`task.artifacts` 制品路径自动带工作区前缀。
 - 定时/周期任务由 Worker 的 schedule 工具创建并绑定其自身子会话；到点触发后 Worker 执行并上报，Lead 转述给用户。绑定了定时任务的会话在看板带定时时钟徽标（schedule/changed 事件与轮次结束双触发刷新；DSH 侧栏标题不加图标前缀）。若 Worker 发现同主题任务反复定期出现，会主动建议用户设为定时任务。
 - 等待用户作答期间，手动停止、改单、工具取消和服务卸载会清理等待与原生问题卡；已取消卡片晚到的答案不会答入后续提问。
@@ -56,7 +62,7 @@ Worker 的任务上报协议、安全红线（支付/删除等不可逆操作先
 在主会话 header 点击“任务看板”。右侧栏按子会话展示：
 
 - **会话卡片**：状态徽标、静默 / 定时 / dsh-ui 卡片徽标、独立工作区名、任务时间线；支持折叠；折叠态保留问题卡与日程，运行中的会话高亮并带柔光扫过动效。completed 任务可展开查看卡片 JSON 预览。看板提供**会话 / 日程**双页签：日程页为月历（周一起始、优先级色点、跨天事项逐日出现、过期未完成置顶、缺少 startAt 的日程只在会话页），停留在日程页时任务更新会在会话页签亮起未读点，切回即清除。
-- **用户日程框**：位于工作区行上方、折叠也显示；用户可画勾/取消（经 `setScheduleStatus` 持久化并同步给子会话），已完成灰显划线保留，Worker 作废的日程带"已作废"胶囊不可勾；每条日程带优先级胶囊（P0 红 / P1 橙 / P2 黄 / P3 绿，默认 P3），时间窗/提醒渲染为胶囊，点击日程行展开详情（备注/链接/附件/联系人/地点）。
+- **用户日程框**：位于工作区行上方、折叠也显示；用户可画勾/取消（经 `setScheduleStatus` 持久化并让子会话在后续派发/工具结果中知情），已完成灰显划线保留，Worker 作废的日程带"已作废"胶囊不可勾；每条日程带优先级胶囊（P0 红 / P1 橙 / P2 黄 / P3 绿，默认 P3），时间窗/提醒时间渲染为胶囊（`remindAt` 是供 App 使用的元数据，本插件不据此发到点通知），点击日程行展开详情（备注/链接/附件/联系人/地点）。
 - **任务框**：把多轮任务圈起来，默认只显示最新一轮，可展开全部。任务行含状态徽标、精简主题、实时步骤进度（✓/● 框选清单）、加粗 `header` + 一句话进展（运行中带扫光动效）、创建时间与实时耗时；“展开详情”含完整结果/错误、作答留痕、可点击打开的制品文件与同步状态。
 - 点击“打开子会话”可查看完整子会话（Worker 是与主会话同级的一等会话）。除日程画勾和问题卡作答外看板只读。
 
@@ -66,17 +72,21 @@ Worker 的任务上报协议、安全红线（支付/删除等不可逆操作先
 
 要求接收方已安装 DSH `0.2.1-rc.2` 或更高版本，并且使用 Web profile。
 
-正式发包后，把 `may-dsh-orchestrator-0.3.18.tgz` 发给对方再执行（安装后新会话自动进入主控助理预设，无需手改配置）：
+从私有源安装，记忆插件随依赖自动安装，无需单独添加：
 
 ```sh
-dsh plugin --profile web add /absolute/path/to/may-dsh-orchestrator-0.3.18.tgz
+dsh plugin --profile web add @cmjt/dsh-orchestrator --registry http://36.138.53.195:4873/
 ```
 
-新版本覆盖安装时，先移除旧版本再添加新 tarball：
+使用 GitHub Release tgz 安装时同样指定私有源，以便解析 `@cmjt` 依赖；若已有 `@cmjt:registry` 映射则可省略 `--registry`。普通 registry 依赖无需关闭 pnpm 安全校验。
+
+记忆依赖声明使用 `latest`；目前私有源 latest 指向 `0.4.5`，其后端可用，但其 `lib/client.js` 仍注册旧模块 ID `dsh-personal-memory`，与 scoped 包名不一致；记忆管理页面需上游同步模块 ID 并重新构建发布。其独立 bundle patch 也引用旧包名；本包直接引用 scoped 名称。[上游 issue #1](https://github.com/friendllcc/dsh-personal-memory/issues/1) 已反馈。此缺陷属于依赖客户端，重新安装可能覆盖本机临时修复；发布不包含第三方产物改写。
+
+从旧 scope 升级，先备份并清理旧域（详见升级文档），再移除旧包、安装新包；不要同时启用两个 scope：
 
 ```sh
 dsh plugin --profile web remove @may/dsh-orchestrator
-dsh plugin --profile web add /absolute/path/to/may-dsh-orchestrator-0.3.18.tgz
+dsh plugin --profile web add /absolute/path/to/cmjt-dsh-orchestrator-0.3.19.tgz --registry http://36.138.53.195:4873/
 ```
 
 重新生成分发包：
@@ -102,14 +112,14 @@ pnpm pack:dry
 正式构建分发包后安装到本地 Web profile（必须使用 tgz 绝对路径，覆盖安装先 remove）：
 
 ```sh
-dsh plugin --profile web remove @may/dsh-orchestrator
-dsh plugin --profile web add /absolute/path/to/may-dsh-orchestrator-0.3.18.tgz
+dsh plugin --profile web remove @cmjt/dsh-orchestrator
+dsh plugin --profile web add /absolute/path/to/cmjt-dsh-orchestrator-0.3.19.tgz
 ```
 
 移除：
 
 ```sh
-dsh plugin --profile web remove @may/dsh-orchestrator
+dsh plugin --profile web remove @cmjt/dsh-orchestrator
 ```
 
 本机启动使用指定脚本，并通过 `start_new_session` 脱离命令会话；普通前台调用或 `nohup` 可能被回收：
@@ -120,4 +130,4 @@ uv run --no-project --python /usr/bin/python3 python -c 'import subprocess; subp
 
 ## 存储
 
-插件使用 `storageDomain` 的 `orchestrator` v2 domain，采用 per-record 布局，位于 `~/.dsh/storages/orchestrator/`，包含 `conversations`、`tasks`、`schedules` 三张表。完整子会话 transcript 仍由 DSH Session 持久化保存，插件保存路由摘要、任务状态和日程。
+插件使用 `storageDomain` 的 `orchestrator` v3 domain，采用 per-record 布局，位于 `~/.dsh/storages/orchestrator/`，包含 `conversations`、`tasks`、`schedules` 三张表。完整子会话 transcript 仍由 DSH Session 持久化保存，插件保存路由摘要、任务状态和日程。

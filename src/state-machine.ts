@@ -1,5 +1,5 @@
-import type { BlockReasonCode, ConversationRecord, DeliveryToggles, QuestionAnswer, QuestionItem, TaskRecord, TaskStatus } from './types.ts'
-import { defaultDeliveryToggles, deliverableTaskStatuses, terminalTaskStatuses } from './types.ts'
+import type { BlockReasonCode, ConversationRecord, DeliveryToggles, QuestionAnswer, QuestionItem, TaskRecord, TaskStatus, TaskRunningInput, TaskCompletedInput, TaskFailedInput, TaskInputRequiredInput } from './types.ts'
+import { defaultDeliveryToggles, terminalTaskStatuses } from './types.ts'
 import { isUnfinishedTask } from './task-lifecycle.ts'
 
 export class StateError extends Error {
@@ -107,19 +107,19 @@ export function appendOutlineSubject(
 
 /** Worker 上报的终态自动挂起投递；静默任务与 interrupted 不投递。 */
 function withTerminalDelivery(task: TaskRecord, status: TaskStatus): TaskRecord['delivery'] {
-  return !task.silent && (deliverableTaskStatuses as readonly TaskStatus[]).includes(status)
+  return !task.silent && isTerminal(status)
     ? { state: 'pending', attempts: 0 }
     : undefined
 }
 
 /**
  * 投递开关判定（设置页，volatile 即时生效）：关闭的终态不投递。
- * toggles 缺失（未注入配置）时按默认值处理（inputRequired 默认关，其余开）。
+ * toggles 缺失（未注入配置）时按默认值处理（仅三种终态可投递）。
  */
 export function deliveryEnabledFor(toggles: DeliveryToggles | undefined, status: TaskStatus): boolean {
   const resolved = toggles ?? defaultDeliveryToggles
   switch (status) {
-    case 'input_required': return resolved.inputRequired
+    case 'input_required': return false
     case 'completed': return resolved.completed
     case 'failed': return resolved.failed
     case 'interrupted': return resolved.interrupted
@@ -144,10 +144,10 @@ export function statusConcludesTurn(status: string | undefined): boolean {
 
 /** 四个状态上报工具的输入（已拍平，与存储同形）：必填差异字段收敛到 1 个。 */
 export type TaskTransitionInput =
-  | { status: 'running', header?: string, progressNote?: string }
-  | { status: 'input_required', header?: string, progressNote?: string, questions: QuestionItem[] }
-  | { status: 'completed', header?: string, progressNote?: string, result: string, artifacts?: string[], card?: Record<string, unknown> }
-  | { status: 'failed', header?: string, progressNote?: string, error: string, reasonCode?: BlockReasonCode }
+  | ({ status: 'running' } & TaskRunningInput)
+  | ({ status: 'input_required', questions: QuestionItem[] } & Omit<TaskInputRequiredInput, 'questions'>)
+  | ({ status: 'completed' } & TaskCompletedInput)
+  | ({ status: 'failed' } & TaskFailedInput)
 
 export function transitionTask(task: TaskRecord, input: TaskTransitionInput, at = new Date().toISOString()): TaskRecord {
   if (!canTransition(task.status, input.status)) {
@@ -166,8 +166,8 @@ export function transitionTask(task: TaskRecord, input: TaskTransitionInput, at 
     result: isCompleted ? input.result : undefined,
     artifacts: isCompleted ? input.artifacts : undefined,
     card: isCompleted ? input.card : undefined,
-    questions: isInputRequired ? input.questions : undefined,
-    answers: isInputRequired ? task.answers : undefined,
+    questions: isInputRequired ? input.questions : task.answers?.length ? task.questions : undefined,
+    answers: isInputRequired ? undefined : task.answers,
     error: isFailed ? input.error : undefined,
     reasonCode: isFailed ? input.reasonCode : undefined,
     ...terminal

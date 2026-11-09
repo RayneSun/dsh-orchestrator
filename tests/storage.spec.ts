@@ -1,13 +1,11 @@
 import { describe, expect, it } from 'vitest'
 import { orchestratorDomain } from '../src/storage.ts'
 
-// v1→v2 迁移依赖平台 bootstrapLegacyUnit：它只在 per-record 布局下生效
-// （single 布局的 openUnit 严格匹配版本，会把 v1 单文件直接拒开）。
 describe('orchestrator 存储域', () => {
-  it('per-record 布局 + 兼容 v1（防迁移路径回归）', () => {
-    expect(orchestratorDomain.version).toBe(2)
+  it('v3 拍平存储不接纳旧版本，三张独立表保持 per-record 布局', () => {
+    expect(orchestratorDomain.version).toBe(3)
     expect(orchestratorDomain.layout).toBe('per-record')
-    expect(orchestratorDomain.compatibleVersions).toContain(1)
+    expect(orchestratorDomain).not.toHaveProperty('compatibleVersions')
     expect(Object.keys(orchestratorDomain.tables)).toEqual(['conversations', 'tasks', 'schedules'])
   })
 })

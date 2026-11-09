@@ -3,11 +3,8 @@ import { conversationSchema, scheduleObjectSchema, taskSchema } from './types.ts
 
 export const orchestratorDomain = defineDomain({
   name: 'orchestrator',
-  version: 2,
-  // v1 conversations/tasks 保持可读；旧 conv.todos 在 migrateRecord 中丢弃，不迁移进 schedules。
-  compatibleVersions: [1],
-  // per-record 布局：旧 v1 单文件（storages/orchestrator.json）经 bootstrapLegacyUnit 拷入
-  // per-record 树并盖 v2 版戳；single 布局的 openUnit 只接受精确版本匹配，会直接拒开。
+  // 拍平协议与旧记录不兼容：升级前备份旧域，新版本从空域开始。
+  version: 3,
   layout: 'per-record',
   tables: {
     conversations: domainTable<string, ReturnType<typeof conversationSchema.parse>>(conversationSchema),

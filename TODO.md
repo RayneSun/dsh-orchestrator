@@ -1,15 +1,8 @@
 # TODO
 
-## 当前状态（0.3.18，2026-11-06）
+## 当前状态（0.3.19，2026-11-09）
 
-本轮 A–D、B1–B5 和两页优先级展示已完成，保存为本地提交与 `v0.3.18` 标签；尚未推送或发包。当前实现与验证边界见 [0.3.18 里程碑](docs/milestones/0.3.18.md)，接口以 [board-api.md](docs/board-api.md) 为准。
-
-后续机会（本轮未实施）：
-
-- 日程跨记录事务与崩溃恢复：目前仅保证校验失败零写入，I/O 失败仍可能部分落盘。
-- 真实 macOS 驱动的多 Worker 并发验收，以及真实模型任务的停止、改单、重启回归。
-- 自进化技能库：以下保留的是历史提案，当前源码没有 `src/skills.ts`，需重新评估再实施。
-- 旧数据迁移与大服务进一步拆分：缺少淘汰旧记录的证据，保留迁移；后续按职责评估拆分。
+本版完成五工具拆分、结果拍平、记忆插件替换与 npm scope 迁移。当前契约见 [board-api.md](docs/board-api.md)，升级步骤见 [变更说明](docs/board-api-v0.3.19-changes.md)。历史方案仅作决策档案。
 
 ## 历史方案与验收记录
 
@@ -19,9 +12,9 @@
 
 参考 dsh-ciri 的 SkillProvider 模式（`/Users/lixuchuan/Documents/deepseek-harness/development/dsh-ciri`，只读参考、不改动它）。
 
-1. **技能库位置**：主工作区 `skills/`（与 `.dsh-meow` 记忆库同层），落盘即保存，无 git。结构：`skills/<名称>/SKILL.md`（frontmatter: name/description/whenToUse + 何时用/怎么用）+ 可选 `scripts/`（复杂步骤沉淀为可执行脚本，SKILL.md 只教调用）+ 根放 `README.md` 说明格式。
+1. **技能库位置**：主工作区 `skills/`，落盘即保存，无 git。结构：`skills/<名称>/SKILL.md`（frontmatter: name/description/whenToUse + 何时用/怎么用）+ 可选 `scripts/`（复杂步骤沉淀为可执行脚本，SKILL.md 只教调用）+ 根放 `README.md` 说明格式。
 2. **发现机制**（新模块 `src/skills.ts`）：服务激活时 `ctx.inject(['skills'])` 注册 SkillProvider（rank 300 与 CUSTOM_RANK 一致），扫描 `skills/*/SKILL.md` 解析 frontmatter；`fs.watch` 防抖 500ms invalidate，新技能落盘即生效；skills 服务缺失时降级无操作；启动幂等建目录 + 放 README.md（只补缺不覆盖）。
-3. **Worker 访问**：Worker 文件作用域在子工作区，复用 `ensureSharedMemoryLink()` 同款为每个 Worker 子工作区建 `skills` 符号链接（win32 用 junction）指向主工作区 `skills/`。
+3. **Worker 访问**：Worker 文件作用域在子工作区，为每个 Worker 子工作区建 `skills` 符号链接（win32 用 junction）指向主工作区 `skills/`。
 4. **工具面**：Worker 预设已有 `tool-skill`；Lead 预设补挂 `tool-skill`。
 5. **自进化协议（prompt）**：WORKER_PROMPT 加"技能沉淀"节——流程第二次出现或一次任务多步才走通的复杂操作，收尾时沉淀为技能；代码落 `scripts/` 不抄进文档；一次性的不沉淀，结论/事实仍写 memory 不双写。LEAD_PROMPT 加一句：用户说"以后都这样处理"时派发 Worker 沉淀技能。
 6. **种子技能**：不带，只放 README.md。

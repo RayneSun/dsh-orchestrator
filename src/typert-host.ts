@@ -2,7 +2,7 @@ import { TYPERT_REMOTE } from './remote.ts'
 
 /** 手写 Host FaceModel：供 typert-loader 在不修改官方 DSH 的前提下注册 strict descriptor。 */
 export const TYPERT = {
-  package: '@may/dsh-orchestrator',
+  package: '@cmjt/dsh-orchestrator',
   face: 'host' as const,
   schemas: [],
   model: {

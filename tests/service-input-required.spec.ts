@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { OrchestratorService } from '../src/service.ts'
 import { createConversation, createTask, type ConversationRecord, type TaskRecord } from '../src/types.ts'
 import { activateConversation } from '../src/state-machine.ts'
@@ -22,7 +22,7 @@ function harness() {
     conversationByChild: () => conv,
     taskById: (id: string) => id === 'task_1' ? task : undefined,
     schedulesOf: () => [],
-    deliveryToggles: () => ({ completed: true, failed: true, inputRequired: false, interrupted: true }),
+    deliveryToggles: () => ({ completed: true, failed: true, interrupted: true }),
     putPair: async (c: ConversationRecord, t?: TaskRecord) => { saved.push({ conv: c, task: t }) },
     blockAndWaitForAnswers: async () => [{ id: 'q1', selected: ['A'] }],
     deliverPendingTask: async () => {},
@@ -55,5 +55,25 @@ describe('reportFromWorker：活动任务上报后的 Conversation 状态同步'
     expect(saved[0].task?.status).toBe('completed')
     expect(saved[0].conv.state).toBe('idle')
     expect(saved[0].conv.activeTaskId).toBeNull()
+  })
+})
+
+
+describe('task_schedule 独立更新', () => {
+  it('创建日程写库后广播一次变更，校验失败不写库不广播', async () => {
+    const service = Object.create(OrchestratorService.prototype)
+    const conv = createConversation({ id: 'c', childSessionId: 'child', parentSessionId: 'p', title: '日程' })
+    const put = vi.fn()
+    const emitChanged = vi.fn()
+    Object.assign(service, {
+      serialize: (fn: () => Promise<unknown>) => fn(), conversationByChild: () => conv,
+      schedulesOf: () => [], schedules: () => ({ put }), emitChanged,
+    })
+    await service.scheduleFromWorker({ create: [{ title: '事项' }] }, 'child')
+    expect(put).toHaveBeenCalledOnce()
+    expect(emitChanged).toHaveBeenCalledOnce()
+    await expect(service.scheduleFromWorker({ update: [{ id: 'missing', status: 'done' }] }, 'child')).rejects.toThrow()
+    expect(put).toHaveBeenCalledOnce()
+    expect(emitChanged).toHaveBeenCalledOnce()
   })
 })

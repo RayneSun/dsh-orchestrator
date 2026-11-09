@@ -23,7 +23,7 @@ describe('统一 Worker 权限', () => {
   it('放行执行类、浏览器、MCP 和用户安装的工具', () => {
     for (const name of [
       'read', 'write', 'edit', 'str_replace_editor', 'bash', 'pwsh', 'run_code',
-      'glob', 'grep', 'web_search', 'web_fetch', 'task_update',
+      'glob', 'grep', 'web_search', 'web_fetch', 'task_running', 'task_completed', 'task_failed', 'task_input_required', 'task_schedule',
       'job_list', 'job_output', 'job_kill', 'todo_write', 'goal_create',
       'subagent', 'subagent_fork', 'interrupt_agent', 'send_message', 'list_subagent_models',
       'browser_session', 'browser_page', 'browser_interact',

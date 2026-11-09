@@ -3,7 +3,7 @@ import * as primitives from '@deepseek-ai/dsh-client-ui-primitives'
 import * as clientStore from '@deepseek-ai/dsh-client-store'
 
 /**
- * 终态投递开关的设置卡片（插件管理 → @may/dsh-orchestrator → 行"配置"）。
+ * 终态投递开关的设置卡片（插件管理 → @cmjt/dsh-orchestrator → 行"配置"）。
  * 结构沿用 dsh-ciri 的设置卡片模式：SettingsFormModel 暂存编辑，Switch 直写布尔。
  * runtime external：primitives/store 由前端 ModuleLoader 提供（dsh.client.external）。
  */
@@ -11,7 +11,7 @@ import * as clientStore from '@deepseek-ai/dsh-client-store'
 /** Host 设置命名空间（cordis.patch.yml 的 loader 行 id）。 */
 const HOST_NAMESPACE = 'may-dsh-orchestrator'
 /** plugins.row.config 槽 key：<包名>#<行 id>。 */
-const SLOT_KEY = '@may/dsh-orchestrator#may-dsh-orchestrator'
+const SLOT_KEY = '@cmjt/dsh-orchestrator#may-dsh-orchestrator'
 
 const SUMMARY = '子会话终态消息的投递开关：按状态勾选是否通知主会话。'
 const SECTION_HINT = '勾选子会话各终态（completed/failed/interrupted）是否投递消息给主会话。'

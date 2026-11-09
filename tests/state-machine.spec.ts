@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { createConversation, createTask, type QuestionAnswer } from '../src/types.ts'
 import {
-  StateError, activateConversation, statusConcludesTurn, appendOutlineSubject, classifyWorkerTurnEnd,
+  activateConversation, statusConcludesTurn, appendOutlineSubject, classifyWorkerTurnEnd,
   failConversation, interruptTaskForRevision, reviseConversation, canTransition, failTask, interruptTaskAfterRestart,
   isTerminal, resumeTaskWithAnswers, settleConversation, transitionTask,
 } from '../src/state-machine.ts'
@@ -142,7 +142,7 @@ describe('状态迁移和修订号', () => {
     expect(transitionTask(bgTask(), {
       status: 'input_required',
       questions: [{ id: 'q1', question: 'q?' }],
-    }).delivery).toEqual({ state: 'pending', attempts: 0 })
+    }).delivery).toBeUndefined()
     expect(transitionTask(bgTask(), {
       status: 'failed',
       error: '权限被拒绝',
@@ -194,6 +194,13 @@ describe('用户回答后重开任务', () => {
     expect(task.endedAt).toBeUndefined()
     expect(task.delivery).toBeUndefined()
     expect(task.progressNote).toContain('回答')
+    expect(isTerminal('input_required')).toBe(false)
+    expect(task.startedAt).toBeDefined()
+    task = transitionTask(task, { status: 'running', progressNote: '处理中' })
+    task = transitionTask(task, { status: 'completed', result: '完成' })
+    expect(task.answers).toEqual(answers)
+    expect(task.questions?.[0]?.question).toBe('选 A 还是 B？')
+
     expect(() => resumeTaskWithAnswers(transitionTask(bgTask(), {
       status: 'completed', result: 'done',
     }), answers)).toThrow(/not awaiting user input/)
@@ -245,7 +252,7 @@ describe('改单中断与 Worker 提问', () => {
       questions: [{ id: 'q1', question: '要做 PvP 还是 PvE？' }],
     })
     expect(waiting.questions?.[0]?.question).toBe('要做 PvP 还是 PvE？')
-    expect(waiting.delivery).toEqual({ state: 'pending', attempts: 0 })
+    expect(waiting.delivery).toBeUndefined()
     conv = settleConversation(conv, waiting)
     expect(conv.state).toBe('input_required')
   })
@@ -279,6 +286,7 @@ describe('card 字段', () => {
     expect(cardValidationError('string')).toContain('expected object')
     expect(cardValidationError([1])).toContain('expected object')
     expect(cardValidationError({ big: 'x'.repeat(16385) })).toContain('exceeds 16384')
+    expect(cardValidationError({ big: '中'.repeat(6000) })).toContain('exceeds 16384')
     expect(cardValidationError({ ok: true })).toBeUndefined()
     expect(cardValidationError({ fence: '```dsh-ui' })).toContain('fence marker')
   })

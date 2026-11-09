@@ -5,7 +5,7 @@ import { Board } from './Board.tsx'
 import { registerSettingsCard } from './settings-card.tsx'
 import { adoptStyles } from './styles.ts'
 
-const PLUGIN_ID = '@may/dsh-orchestrator'
+const PLUGIN_ID = '@cmjt/dsh-orchestrator'
 const TAB_ID = `${PLUGIN_ID}/board`
 const KIND = 'orchestratorBoard'
 

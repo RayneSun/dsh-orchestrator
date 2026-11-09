@@ -14,14 +14,13 @@ function bgTask() {
 }
 
 const allOff: DeliveryToggles = {
-  inputRequired: false,
   completed: false,
   failed: false,
   interrupted: false,
 }
 
 describe('终态投递开关', () => {
-  it('toggles 缺失（未注入配置）时 inputRequired 按新默认关闭，其余打开', () => {
+  it('toggles 缺失（未注入配置）时 问题卡恒不投递，其余打开', () => {
     expect(deliveryEnabledFor(undefined, 'input_required')).toBe(false)
     for (const status of ['completed', 'failed', 'interrupted'] as const) {
       expect(deliveryEnabledFor(undefined, status)).toBe(true)
@@ -29,8 +28,8 @@ describe('终态投递开关', () => {
   })
 
   it('按状态独立判定；非终态状态不受开关影响', () => {
-    expect(deliveryEnabledFor({ ...defaultDeliveryToggles, inputRequired: false }, 'input_required')).toBe(false)
-    expect(deliveryEnabledFor({ ...defaultDeliveryToggles, inputRequired: false }, 'completed')).toBe(true)
+    expect(deliveryEnabledFor({ ...defaultDeliveryToggles }, 'input_required')).toBe(false)
+    expect(deliveryEnabledFor({ ...defaultDeliveryToggles }, 'completed')).toBe(true)
     expect(deliveryEnabledFor({ ...defaultDeliveryToggles, failed: false }, 'failed')).toBe(false)
     expect(deliveryEnabledFor({ ...defaultDeliveryToggles, interrupted: false }, 'interrupted')).toBe(false)
     expect(deliveryEnabledFor(allOff, 'running')).toBe(true)

@@ -1,7 +1,7 @@
 import React, { useState } from 'react'
 import type { ScheduleSnapshot } from '../types.ts'
 
-/** ISO 8601 时间点或全天纯日期 → { date: 'MM-DD', time: ' HH:mm'（整点/23:59 省略）, t }。
+/** ISO 8601 时间点或全天纯日期 → { date: 'MM-DD', time: ' HH:mm'（纯日期为空）, t }。
  * endOfDay 用于全天 endAt 的过期判定（按当日 23:59:59.999，整日有效）。 */
 function parseTimePoint(raw: string, endOfDay = false): { date: string; time: string; t: number } | undefined {
   const dateOnly = raw.match(/^(\d{4})-(\d{2})-(\d{2})$/)
@@ -18,8 +18,7 @@ function parseTimePoint(raw: string, endOfDay = false): { date: string; time: st
   const pad = (n: number) => String(n).padStart(2, '0')
   const date = `${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
   const hh = d.getHours(), mm = d.getMinutes()
-  // 00:00 视为纯日期、23:59 视为"当日内"（旧 dueDate 迁移值），都不展示时刻
-  const time = (hh === 0 && mm === 0) || (hh === 23 && mm === 59) ? '' : ` ${pad(hh)}:${pad(mm)}`
+  const time = ` ${pad(hh)}:${pad(mm)}`
   return { date, time, t }
 }
 
@@ -45,7 +44,7 @@ function timeRange(schedule: ScheduleSnapshot): { text: string; tone: ScheduleTi
       ? `${start.date}${start.time}${end.time ? ` →${end.time}` : ''}`
       : `${start.date}${start.time} → ${end.date}${end.time}`
   } else if (end) {
-    text = tone === 'over' ? `已过期 ${end.date}` : `结束 ${end.date}${end.time}`
+    text = `${tone === 'over' ? '已过期' : '结束'} ${end.date}${end.time}`
   } else {
     text = `${start!.date}${start!.time} 起`
   }

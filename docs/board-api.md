@@ -1,18 +1,20 @@
-# dsh-orchestrator 任务看板数据接口（v0.3.19-dev）
+# dsh-orchestrator 任务看板数据接口（v0.3.19）
 
 > 面向下游（移动端 App）开发者。本文档描述 DSH Orchestrator 插件在 DSH Web（默认 `http://127.0.0.1:3080`）中暴露的任务看板数据结构、状态定义、同步机制与展示建议。
-> 内部资料，请勿公开分发。
+> 完整契约；相比 0.3.18 的适配步骤见 [变更说明](board-api-v0.3.19-changes.md)。
 
 **⚠️ v0.3.18 → v0.3.19 破坏性变化（下游必读）**：
 1. **Task 字段拍平**：`task.report = { result, artifacts?, card? }` 拆为顶层 `task.result / task.artifacts / task.card`；`task.fail = { error, reasonCode? }` 拆为顶层 `task.error / task.reasonCode`。旧包裹字段不再输出。
 2. **Worker 上报协议拆分**：单工具 `task_update` 拆为 5 个工具——`task_running / task_input_required / task_completed / task_failed / task_schedule`；`schedules` 不再挂在状态上报上，改为独立 `task_schedule` 工具。状态枚举与 snapshot 结构除上述拍平外不变。
-3. **不兼容旧会话**：升级后旧存储里的 `report/fail` 包裹数据直接丢弃、不迁移；升级前产生的历史 completed/failed 任务在 snapshot 中丢失 result/error 内容。RPC（snapshot / setScheduleStatus / answerTaskQuestions）名称与请求响应结构不变。
+3. **不兼容旧会话**：升级后domain v3 不加载旧域的 Conversation/Task/Schedule；旧 ID 不可复用，升级前备份旧域并停用旧 Worker 定时任务。三个 RPC 方法名与请求不变，snapshot 的 Task 字段结构已变化。
 
 ## 1. 接入方式
 
 ### 1.1 数据源
 
 看板数据由插件的 Cordis/typert 远程服务提供，与 Web 前端看板同源。所有数据按主会话隔离：请求携带 `parentSessionId`，只返回该主会话下的子会话与任务。
+
+包身份为 `@cmjt/dsh-orchestrator`，typert descriptor 前缀为 `@cmjt/dsh-orchestrator#orchestrator/`；DSH 暴露的方法路径仍为 `orchestrator/<method>`。
 
 ### 1.2 远程方法
 
@@ -99,7 +101,7 @@ Task 是子会话内的一次任务执行记录（一次 dispatch / 一次定时
 | revision | number | 任务版本号，每次更新 +1 |
 | createdAt / updatedAt | string(ISO 8601) | 创建/更新时间 |
 | startedAt | string(ISO 8601)? | 第一次进入 running 的时间 |
-| endedAt | string(ISO 8601)? | 终态结束时间；input_required 被回答恢复 running 后清除，最终终态再写入 |
+| endedAt | string(ISO 8601)? | completed/failed/interrupted 的结束时间；input_required 等待期间不设置 |
 
 ## 4. QuestionItem 与 QuestionAnswer
 
@@ -123,7 +125,7 @@ QuestionAnswer = {
 
 ## 5. Schedule（用户日程）
 
-主会话 scope 的独立表（v2 存储）。一次任务可创建多条；App 可按会话（归属回链）或按时间（日程页）两个维度展示。没有 startAt 的日程只在会话页出现，即使有 endAt，日程页也跳过。
+主会话 scope 的独立表（domain v3 存储）。一次任务可创建多条；App 可按会话（归属回链）或按时间（日程页）两个维度展示。没有 startAt 的日程只在会话页出现，即使有 endAt，日程页也跳过。
 
 | 字段 | 类型 | 说明 |
 |---|---|---|
@@ -239,11 +241,11 @@ App 渲染建议：列表 + 勾（completed）/ 转（in_progress）/ 空（pend
 
 ## 11. 同步与兼容性注意
 
-- snapshot 读取时经 schema 迁移，输出永远是最新结构。
+- snapshot 使用当前严格 schema；不做旧版本记录迁移。
 - **v0.3.18 → v0.3.19（破坏性）**：
   - `task.report` / `task.fail` 包裹层删除：`report.result / report.artifacts / report.card` → `task.result / task.artifacts / task.card`；`fail.error / fail.reasonCode` → `task.error / task.reasonCode`。
   - Worker 协议：单工具 `task_update` 拆为 `task_running / task_input_required / task_completed / task_failed / task_schedule`；状态上报不再携带 `schedules`。
-  - 旧存储的 `report/fail` 数据直接丢弃（不兼容旧会话），升级前的历史终态内容不可恢复。
+  - domain v3 不接纳 v1/v2 数据，升级前备份并移出旧域；保留备份及原 DSH transcript，新版需新建会话。
 - **v0.3.17 → v0.3.18**：snapshot / RPC 和存储格式不变，无新增 status，无 schema 迁移。`Snapshot` 与 RPC 请求类型从原有 Zod schema 推导；`snapshotResultSchema` 移至 types.ts，remote.ts 保留重导出。生命周期修复会使遗留等待任务在重启后进入已有 interrupted 状态。
 - 以下为历史变更记录，包含当时的方案用语；当前问题卡只有看板与 Worker 原生卡两个入口，以 §4 为准。
 - **v0.3.13 → v0.3.14 破坏性变化**：
@@ -267,3 +269,7 @@ App 渲染建议：列表 + 勾（completed）/ 转（in_progress）/ 空（pend
   - 新增看板「日程」页签（月历）；日程无时间字段时不进日程页。
 - 下游不应持久化 snapshot 作为长期数据；以 `revision`/`updatedAt` 做增量判断，重拉即可。
 - App 按当前主会话取数，切换主会话必须重新拉取。
+
+## 12. 提醒时间的执行边界
+
+`Schedule.remindAt` 是供 App 通知使用的提醒时间元数据；本插件仅校验、持久化与展示，不会据此启动到点消息。需要 Agent 到点执行并回报时，使用 DSH 原生定时任务；它与用户日程是不同机制。

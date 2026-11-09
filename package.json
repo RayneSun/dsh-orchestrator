@@ -1,6 +1,6 @@
 {
-  "name": "@may/dsh-orchestrator",
-  "version": "0.3.18",
+  "name": "@cmjt/dsh-orchestrator",
+  "version": "0.3.19",
   "description": "DSH 主控助理编排插件：Lead 通过持久子会话和 TaskRun 分发后台任务",
   "type": "module",
   "main": "./lib/index.js",
@@ -30,10 +30,10 @@
     "verify:packaging": "node scripts/verify-packaging.mjs"
   },
   "dependencies": {
+    "@cmjt/dsh-personal-memory": "latest",
     "@milkuovo/dsh-computer-use": "0.3.1",
     "@wxg-prc-cpg/browser-skill-dsh-plugin": "0.3.2",
     "@zhengjunyao/dsh-qqmail": "0.1.1",
-    "meow-memory": "0.31.0",
     "zod": "^4.4.3"
   },
   "peerDependencies": {
@@ -63,6 +63,7 @@
     "@deepseek-ai/dsh-session-title": "0.2.1-rc.2",
     "@deepseek-ai/dsh-storage-domain": "0.2.1-rc.2",
     "@deepseek-ai/dsh-subagent": "0.2.1-rc.2",
+    "@deepseek-ai/dsh-system-prompt": "0.2.1-rc.2",
     "@deepseek-ai/dsh-tools": "0.2.1-rc.2",
     "@deepseek-ai/dsh-typert-protocol": "0.2.1-rc.2",
     "@deepseek-ai/schemastery": "3.18.5",
@@ -144,5 +145,8 @@
     "orchestrator",
     "subagent",
     "task-runner"
-  ]
+  ],
+  "publishConfig": {
+    "registry": "http://36.138.53.195:4873/"
+  }
 }

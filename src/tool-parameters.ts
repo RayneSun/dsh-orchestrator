@@ -1,4 +1,4 @@
-import { blockReasonCodes, todoPriorities } from './types.ts'
+import { blockReasonCodes, schedulePriorities } from './types.ts'
 
 /**
  * orchestrator_dispatch 的参数描述。注意：dsh-tools 的参数 DSL 只支持
@@ -9,7 +9,7 @@ import { blockReasonCodes, todoPriorities } from './types.ts'
 export const DISPATCH_TOOL_PARAMETERS = {
   subject: { type: 'string', required: true, description: '短主题' },
   workspaceName: { type: 'string', description: '新建子会话必填：子工作区目录名，必须匹配 ^[a-z0-9][a-z0-9-]{0,79}$（英文小写短横线 slug，如 daily-news、plane-war）；复用已有子会话时忽略' },
-  prompt: { type: 'string', required: true, description: '需求本身和验收点。Worker 与你共享同一工作区，不要重复工作目录、路径等环境声明，不要粘贴内部 ID' },
+  prompt: { type: 'string', required: true, description: '需求本身和验收点。Worker 已绑定独立子工作区，不要重复工作目录等环境声明，不要粘贴内部 ID' },
   conversationId: { type: 'string', description: '复用已有工作流时提供' },
   acceptanceCriteria: { type: 'string', description: '可选验收标准' },
   silent: { type: 'boolean', description: '静默模式：记忆整理等后台维护任务使用；终态不会向主会话投递任何消息，看板仍可见状态' },
@@ -24,8 +24,8 @@ const SCHEDULE_ITEM_PROPERTIES = {
   allDay: { type: 'boolean', description: '全天日程：true 时 startAt 必填完整纯日期（如 2026-11-04），endAt 可选且尾日包含（11-04 到 11-06 填 2026-11-06），均不带时刻' },
   startAt: { type: 'string', description: '开始时间；普通日程如 10-28 09:00（可带年份，无年份按未来就近解析）；全天日程用完整纯日期' },
   endAt: { type: 'string', description: '结束时间；普通日程如 10-28 22:00；全天日程用完整纯日期，尾日包含当天' },
-  remindAt: { type: 'string', description: '提醒时间，如 10-28 17:30（到点提醒用户，与时间窗分开；全天日程也可设置）' },
-  priority: { type: 'string', enum: [...todoPriorities], description: 'P0 紧急且重要 / P1 重要不紧急 / P2 紧急不重要 / P3 有空再做（默认 P3）' },
+  remindAt: { type: 'string', description: '提醒时间元数据，如 10-28 17:30（供 App 通知使用；本插件不会据此自动触发提醒）' },
+  priority: { type: 'string', enum: [...schedulePriorities], description: 'P0 紧急且重要 / P1 重要不紧急 / P2 紧急不重要 / P3 有空再做（默认 P3）' },
   links: {
     type: 'array',
     items: { type: 'object', additionalProperties: false, properties: {

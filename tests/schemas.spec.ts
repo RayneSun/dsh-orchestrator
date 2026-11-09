@@ -7,6 +7,7 @@ import {
   conversationIdInputSchema,
   dispatchInputSchema,
   taskSchema,
+  snapshotResultSchema,
   taskCompletedInputSchema,
   taskFailedInputSchema,
   taskInputRequiredInputSchema,
@@ -132,8 +133,9 @@ describe('工具输入 Zod 校验', () => {
 
   it('conversation 记录允许可选 hasActiveSchedule 快照标记', () => {
     const conv = createConversation({ id: 'c1', childSessionId: 's1', parentSessionId: 'p1', title: 't' })
-    expect(conversationSchema.parse(conv).hasActiveSchedule).toBeUndefined()
-    expect(conversationSchema.parse({ ...conv, hasActiveSchedule: true }).hasActiveSchedule).toBe(true)
+    expect(conversationSchema.safeParse({ ...conv, hasActiveSchedule: true }).success).toBe(false)
+    const snapshot = snapshotResultSchema.parse({ conversations: [{ ...conv, hasActiveSchedule: true }], tasks: [], schedules: [] })
+    expect(snapshot.conversations[0].hasActiveSchedule).toBe(true)
   })
 
   it('conversationId 查询拒绝空值和多余字段', () => {
@@ -319,81 +321,28 @@ describe('task_* header 与 task_schedule 协议', () => {
     expect(allDay.startAt).toBe('2026-11-04')
   })
 
-  it('v2 起 conv.todos 与大纲死字段直接删除（旧数据不做搬迁）', () => {
-    const parsed = conversationSchema.parse({
-      id: 'c1', childSessionId: 's1', parentSessionId: 'p1', title: 't',
-      outline: { summary: '查天气', keyFacts: ['旧事实'], entities: [], tags: [], artifacts: [], openQuestions: [] },
-      todos: [{ id: 'todo_1', title: '旧待办', status: 'done', priority: 'P3', createdAt: '2026-10-23T00:00:00Z', updatedAt: '2026-10-23T00:00:00Z' }],
-      activeTaskId: null, lastTaskId: null, revision: 0,
-      createdAt: '2026-10-23T00:00:00Z', updatedAt: '2026-10-23T00:00:00Z',
-    })
-    expect('todos' in parsed).toBe(false)
-    expect(parsed.outline).toEqual({ summary: '查天气' })
-  })
 })
 
-describe('旧版本存储记录迁移', () => {
-  const baseTask = {
-    id: 'task_1', parentSessionId: 'p', conversationId: 'c', predecessorTaskId: null,
-    subject: 's', prompt: 'p', responseMode: 'background',
-    revision: 0, createdAt: '2026-10-14T00:00:00.000Z', updatedAt: '2026-10-14T00:00:00.000Z',
-    progressSteps: [],
-  }
-  const baseConv = {
-    id: 'c', childSessionId: 'child', parentSessionId: 'p', title: 't',
-    outline: { summary: '', keyFacts: [], entities: [], tags: [], artifacts: [], openQuestions: [] },
-    activeTaskId: null, lastTaskId: null,
-    revision: 0, createdAt: '2026-10-14T00:00:00.000Z', updatedAt: '2026-10-14T00:00:00.000Z',
+describe('拍平存储契约', () => {
+  const task = {
+    id: 't', parentSessionId: 'p', conversationId: 'c', subject: 's', prompt: 'p',
+    status: 'completed', result: '新结果', createdAt: '2026-11-09T00:00:00Z', updatedAt: '2026-11-09T00:00:00Z',
   }
 
-  it('blocked 提问迁移为 input_required，blockedQuestion 迁移为 questions', () => {
-    const task = taskSchema.parse({ ...baseTask, status: 'blocked', blockedQuestion: '选哪个？', scene: 'code' })
-    expect(task.status).toBe('input_required')
-    expect(task.questions).toEqual([{ id: 'q1', question: '选哪个？' }])
-    expect('blockedQuestion' in task).toBe(false)
-    expect('scene' in task).toBe(false)
-    expect('responseMode' in task).toBe(false)
+  it('snapshot 保留顶层结果与 card，拒绝旧包裹而不是静默丢弃内容', () => {
+    const card = { type: 'stat', value: 1 }
+    expect(taskSchema.parse({ ...task, card })).toMatchObject({ result: '新结果', card })
+    expect(taskSchema.safeParse({ ...task, report: { result: '旧结果' } }).success).toBe(false)
+    expect(taskSchema.safeParse({ ...task, fail: { error: '旧错误' } }).success).toBe(false)
   })
 
-  it('v0.3.19 起 report/fail 包裹层数据直接剥离（拍平存储不迁移旧包裹）', () => {
-    const task = taskSchema.parse({
-      ...baseTask, status: 'completed',
-      report: { result: 'r', todos: [{ title: 'x' }] },
-      fail: { error: '旧错误' },
-    })
-    expect('report' in task).toBe(false)
-    expect('fail' in task).toBe(false)
-  })
-
-  it('会话 blocked 状态迁移为 input_required', () => {
-    const conv = conversationSchema.parse({ ...baseConv, state: 'blocked', scene: 'worker' })
-    expect(conv.state).toBe('input_required')
-    expect('scene' in conv).toBe(false)
-  })
-
-  it('≤0.3.10 的 userAnswer/resultSummary 直接剥离（不迁移）', () => {
-    const task = taskSchema.parse({ ...baseTask, status: 'completed', userAnswer: '旧答案', resultSummary: '旧摘要' })
-    expect('userAnswer' in task).toBe(false)
-    expect('resultSummary' in task).toBe(false)
-    expect('result' in task).toBe(false)
-  })
-
-  it('≤0.3.10 的 outlinePatch 剥离、cancelled 并入 interrupted', () => {
-    const task = taskSchema.parse({ ...baseTask, status: 'cancelled', outlinePatch: { tags: ['t'] } })
-    expect(task.status).toBe('interrupted')
-    expect('outlinePatch' in task).toBe(false)
-  })
-
-  it('0.3.13 的系统阻碍 blocked 记录迁移为 failed；旧 fail/error 包裹数据剥离', () => {
-    const task = taskSchema.parse({
-      ...baseTask,
-      status: 'blocked',
-      error: '缺少 bsk CLI',
-      reasonCode: 'dependency',
-      remediation: '请安装 bsk 后继续',
-    })
-    expect(task.status).toBe('failed')
-    expect('remediation' in task).toBe(false)
-    expect(task.reasonCode).toBe('dependency')
+  it('会话仅接受当前字段，不再迁移历史 todos 与大纲死字段', () => {
+    const conv = {
+      id: 'c', childSessionId: 's', parentSessionId: 'p', title: 't', outline: { summary: '' },
+      createdAt: task.createdAt, updatedAt: task.updatedAt,
+    }
+    expect(conversationSchema.safeParse(conv).success).toBe(true)
+    expect(conversationSchema.safeParse({ ...conv, todos: [] }).success).toBe(false)
+    expect(conversationSchema.safeParse({ ...conv, outline: { summary: '', tags: [] } }).success).toBe(false)
   })
 })

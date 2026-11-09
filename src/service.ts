@@ -1,6 +1,5 @@
 import { randomUUID } from 'node:crypto'
 import { mkdir, rmdir } from 'node:fs/promises'
-import { dirname } from 'node:path'
 import { Context, Service } from '@deepseek-ai/cordis'
 import sz from '@deepseek-ai/schemastery'
 import { createUserMessage, type ContextFormed } from '@deepseek-ai/dsh-llm'
@@ -13,6 +12,7 @@ import type { SessionId } from '@deepseek-ai/dsh-session'
 import type {} from '@deepseek-ai/dsh-agent-preset-registry'
 import type {} from '@deepseek-ai/dsh-api-session-controller'
 import type {} from '@deepseek-ai/dsh-session-persistence'
+import type {} from '@deepseek-ai/dsh-system-prompt'
 import { deliveryNotice, revisionPrompt, rosterSummarySegment, scheduleProjection, scheduleStatusSection, workerPrompt } from './messages.ts'
 import { type ScheduleServiceLike, type SessionActivityGroup } from './host-contracts.ts'
 import { DISPATCH_TOOL_PARAMETERS, TASK_COMPLETED_TOOL_PARAMETERS, TASK_FAILED_TOOL_PARAMETERS, TASK_INPUT_REQUIRED_TOOL_PARAMETERS, TASK_RUNNING_TOOL_PARAMETERS, TASK_SCHEDULE_TOOL_PARAMETERS } from './tool-parameters.ts'
@@ -24,9 +24,9 @@ import { planScheduleChanges } from './schedule-changes.ts'
 import { isWorkerToolForbidden } from './worker-policy.ts'
 import { GENUI_CARD_SKILL_CONTENT, GENUI_CARD_SKILL_DESCRIPTION } from './genui-card-skill.ts'
 import { LEAD_SUPPRESSED_SECTIONS, leadToolDenyList, unrecognizedGlobalTools } from './lead-policy.ts'
-import { buildLeadMemoryTools, disableLeadMemoryInjection } from './lead-memory.ts'
+import { configureLeadMemory } from './memory-policy.ts'
 import { normalizeProgressSteps } from './progress.ts'
-import { buildChildWorkspace, ensureSharedMemoryLink } from './workspaces.ts'
+import { buildChildWorkspace } from './workspaces.ts'
 import { orchestratorDomain } from './storage.ts'
 import { buildPresetDefinitions, LEAD_PRESET, WORKER_PRESET } from './presets.ts'
 import {
@@ -47,6 +47,7 @@ import {
   statusConcludesTurn,
   transitionTask,
   type WorkerTurnEndCause,
+  type TaskTransitionInput,
 } from './state-machine.ts'
 import {
   createConversation,
@@ -60,7 +61,7 @@ import {
   type ScheduleRecord,
   type TaskRecord,
   activeTaskStatuses,
-  deliverableTaskStatuses,
+  terminalTaskStatuses,
   type DeliveryToggles,
   dispatchInputSchema,
   conversationIdInputSchema,
@@ -212,8 +213,6 @@ export class OrchestratorService extends TypertRemoteService {
     return {
       completed: read(refs?.deliverOnCompleted),
       failed: read(refs?.deliverOnFailed),
-      // inputRequired 恒为 false：问题卡只在子会话 + 看板渲染，主会话不参与投递。
-      inputRequired: false,
       interrupted: read(refs?.deliverOnInterrupted),
     }
   }
@@ -448,25 +447,31 @@ export class OrchestratorService extends TypertRemoteService {
       order: 610,
       text: () => this.renderRoster(String(agent.session.id)),
     }))
-    // 遮蔽与主控无关的全局提示段（meow 记忆手册、qqmail 公告）：这些能力的使用方是 Worker。
+    // 遮蔽与主控无关的全局提示段（记忆写入手册、qqmail 公告）：这些能力的使用方是 Worker。
     for (const sectionName of LEAD_SUPPRESSED_SECTIONS) {
       this.keep(agent, scoped.systemPrompt.section({ name: sectionName, order: 0, text: '', interpolate: false }))
     }
-    this.applyLeadToolDenylist(agent, scoped)
+    this.applyLeadToolDenylist(agent)
     // Lead 侧覆盖 genui skill：Lead 不生成卡片，即使 invoke 也读到 card 通道而非围栏教学。
     this.registerGenuiCardSkill(agent, scoped)
-    // 记忆只读层：关自动注入/写回/整理，再挂影子 search/read（meow 缺失时自动跳过）。
-    const header = agent.session.header as { id?: unknown; cwd?: unknown }
-    const workspace = typeof header.cwd === 'string' && header.cwd.length > 0 ? header.cwd : null
-    const sessionId = typeof header.id === 'string' && header.id.length > 0 ? header.id : String(agent.session.id)
-    if (workspace !== null) {
-      const memoryTarget = { workspace, sessionId }
-      await disableLeadMemoryInjection(memoryTarget, this.hostCtx.logger)
-      for (const tool of await buildLeadMemoryTools(memoryTarget, this.hostCtx.logger)) {
-        this.keep(agent, scoped.tools.register(tool as any))
-      }
-    } else {
-      this.hostCtx.logger.warn('orchestrator: lead session has no cwd; memory shadow tools skipped')
+    let memoryReady = false
+    const ensureMemory = async () => {
+      if (memoryReady) return
+      const webServer = this.hostCtx.get('webServer') as { getOrigin(): string } | undefined
+      if (!webServer) throw new Error('记忆会话门控需要 webServer 服务')
+      // 原生接口通过持久化会话定位配置，新建会话先落盘。
+      await this.hostCtx.sessions.flush(agent.session)
+      await configureLeadMemory(String(agent.session.id), webServer.getOrigin())
+      memoryReady = true
+    }
+    this.keep(agent, scoped.on('llm/stream', async function* (_options, next) {
+      // 初始化失败时在真正推理前重试；策略未建立则拒绝请求，不能默默开放记忆写入。
+      await ensureMemory()
+      yield* next()
+    }))
+    try { await ensureMemory() }
+    catch (error) {
+      this.hostCtx.logger.warn(`orchestrator: Lead 只读记忆策略未建立，推理前将重试：${String(error)}`)
     }
     for (const tool of this.leadTools(agent)) this.keep(agent, scoped.tools.register(tool as any))
   }
@@ -493,19 +498,40 @@ export class OrchestratorService extends TypertRemoteService {
     }
   }
 
-  private applyLeadToolDenylist(agent: Agent, scoped: Agent['ctx']): void {
+  /** 全局工具可能晚注册；按变化刷新 agent 限制，作用域自身变动不重复挂载。 */
+  private watchToolPolicy(agent: Agent, select: (names: string[]) => string[]): void {
+    let signature = ''
+    let updating = false
+    let release: (() => unknown) | undefined
+    const refresh = () => {
+      if (updating) return
+      const names = [...new Set(this.hostCtx.get('tools')!.schemas().map(schema => schema.name))]
+      const deny = select(names)
+      const next = JSON.stringify(deny.sort())
+      if (next === signature) return
+      updating = true
+      try {
+        const replacement = deny.length > 0 ? agent.ctx.tools.restrict({ deny }) : undefined
+        release?.()
+        release = replacement
+        signature = next
+      } finally { updating = false }
+    }
+    refresh()
+    this.keep(agent, this.hostCtx.on('tools/change', refresh))
+    this.keep(agent, () => { updating = true; return release?.() })
+  }
+
+  private applyLeadToolDenylist(agent: Agent): void {
     try {
-      // deny 只作用于全局层：scope 内注册的 orchestrator_* 与影子记忆工具不受影响。
-      const globalNames = [...new Set(scoped.tools.schemas().map(schema => schema.name))]
-      const deny = leadToolDenyList(globalNames)
-      if (deny.length > 0) this.keep(agent, scoped.tools.restrict({ deny }))
-      // 工具清单巡检：陌生名字（非自带基线、未命中 deny）主动提醒复查名单。
-      const unrecognized = unrecognizedGlobalTools(globalNames)
-      if (unrecognized.length > 0) {
-        this.hostCtx.logger.warn(`orchestrator: unrecognized global tools visible to Lead: ${unrecognized.join(', ')} — review LEAD_TOOL_DENY in lead-policy.ts`)
-      }
+      this.watchToolPolicy(agent, names => {
+        const unrecognized = unrecognizedGlobalTools(names)
+        if (unrecognized.length > 0) {
+          this.hostCtx.logger.warn(`orchestrator: unrecognized global tools visible to Lead: ${unrecognized.join(', ')} — review LEAD_TOOL_DENY in lead-policy.ts`)
+        }
+        return leadToolDenyList(names)
+      })
     } catch (error) {
-      // 枚举失败时退回无限制，避免主控完全失去工具。
       this.hostCtx.logger.warn(`orchestrator: lead tool denylist failed: ${String(error)}`)
     }
   }
@@ -542,9 +568,7 @@ export class OrchestratorService extends TypertRemoteService {
     // 通用行为约束和 task_* 上报协议已固化在 WORKER_PRESET 的 persona 中。
     // restrict 从工具清单里直接移除（模型看不到），比 guard（可见但调用报错）更干净。
     try {
-      const globalNames = [...new Set(scoped.tools.schemas().map(schema => schema.name))]
-      const deny = globalNames.filter(name => isWorkerToolForbidden(name) !== undefined)
-      if (deny.length > 0) this.keep(agent, scoped.tools.restrict({ deny }))
+      this.watchToolPolicy(agent, names => names.filter(name => isWorkerToolForbidden(name) !== undefined))
     } catch (error) {
       this.hostCtx.logger.warn(`orchestrator: worker tool restrict failed, fallback to guard: ${String(error)}`)
       this.keep(agent, scoped.tools.guard(exec => isWorkerToolForbidden(exec.name)))
@@ -863,7 +887,6 @@ export class OrchestratorService extends TypertRemoteService {
       if (!args.workspaceName) throw new Error('新建子会话缺少 workspaceName（英文小写 slug）')
       const workspace = await buildChildWorkspace(parentCwd, args.workspaceName)
       await mkdir(workspace.dir, { recursive: true })
-      await this.shareMemoryWithRoot(workspace.dir, parentCwd)
       const provisional = createConversation({
         id: conversationId,
         childSessionId,
@@ -906,18 +929,6 @@ export class OrchestratorService extends TypertRemoteService {
       if ('error' in resolved) throw resolved.error
       return work(resolved.agent)
     })
-  }
-
-  /**
-   * 记忆库共享：把 Worker 工作区的 .dsh-meow 链接到主工作区，Lead 与全部 Worker 共用
-   * 同一份 meow-memory 长期记忆。失败（如 Windows 无 symlink 权限）降级为独立记忆，仅告警。
-   */
-  private async shareMemoryWithRoot(workspaceDir: string, rootCwd: string): Promise<void> {
-    try {
-      await ensureSharedMemoryLink(workspaceDir, rootCwd)
-    } catch (error) {
-      this.hostCtx.logger.warn(`orchestrator: shared memory link failed for ${workspaceDir}: ${String(error)}`)
-    }
   }
 
   /** 宿主 schedule 服务（本地结构化类型，组合未挂载时整体降级为无标记）。 */
@@ -1093,6 +1104,7 @@ export class OrchestratorService extends TypertRemoteService {
       for (const item of changes) {
         await this.schedules().put(item.id, item)
       }
+      if (changes.length > 0) this.emitChanged()
       return { ok: true as const, schedules: scheduleProjection(this.schedulesOf(conv.id)) }
     })
   }
@@ -1111,18 +1123,13 @@ export class OrchestratorService extends TypertRemoteService {
         .join('; ')
       throw new Error(`invalid task_${status} arguments: ${detail}`)
     }
-    let args: { header?: string, progressNote?: string } & Record<string, unknown> = parsed.data
-    // card 校验（Host 侧）：JSON object、≤16KB、禁三反引号。
-    if (status === 'completed' && args.card !== undefined) {
-      const cardError = cardValidationError(args.card)
+    let input = { ...parsed.data, status } as TaskTransitionInput
+    if (input.status === 'completed' && input.card !== undefined) {
+      const cardError = cardValidationError(input.card)
       if (cardError) throw new Error(`invalid task_completed arguments: ${cardError}`)
     }
-    // input_required：Host 补齐问题 id（q1..qn，缺省才补），用户作答后在 answers 中返回给 Worker。
-    if (status === 'input_required') {
-      args = {
-        ...args,
-        questions: (args.questions as Array<{ id?: string, question: string }>).map((item, index) => ({ id: item.id ?? `q${index + 1}`, ...item })),
-      }
+    if (input.status === 'input_required') {
+      input = { ...input, questions: input.questions.map((item, index) => ({ ...item, id: item.id ?? `q${index + 1}` })) }
     }
     let shouldDeliver = false
     let terminalTaskId: string | undefined
@@ -1132,10 +1139,10 @@ export class OrchestratorService extends TypertRemoteService {
       if (!conv.activeTaskId) {
         // 定时提醒触发等无活动任务的轮次：只允许 task_completed 上报，
         // 生成一条 ad-hoc 已完成任务并照常经 outbox 投递给主会话。
-        if (status !== 'completed') {
+        if (input.status !== 'completed') {
           throw new Error(`no active task: only task_completed is allowed (e.g. schedule-fired reporting)`)
         }
-        const subject = ((args.result as string | undefined)?.trim().split('\n')[0] || '定时触发上报').slice(0, 60)
+        const subject = (input.result.trim().split('\n')[0] || '定时触发上报').slice(0, 60)
         const seeded = createTask({
           id: createId('task'),
           parentSessionId: conv.parentSessionId,
@@ -1147,7 +1154,7 @@ export class OrchestratorService extends TypertRemoteService {
         // 定时触发的入站消息带 source.kind='schedule'，据此给上报任务打定时标记（仅显示用）。
         const marked = this.lastInboundSource.get(childSessionId) === 'schedule'
         const task = gateTaskDelivery(
-          transitionTask({ ...seeded, status: 'running', startedAt: seeded.createdAt, ...marked ? { scheduled: true } : {} }, { status, ...args } as never),
+          transitionTask({ ...seeded, status: 'running', startedAt: seeded.createdAt, ...marked ? { scheduled: true } : {} }, input),
           this.deliveryToggles(),
         )
         await this.putPair(settleConversation(conv, task), task)
@@ -1158,16 +1165,16 @@ export class OrchestratorService extends TypertRemoteService {
       const previous = this.taskById(conv.activeTaskId)
       if (!previous) throw new Error('active task record is missing')
 
-      const task = gateTaskDelivery(transitionTask(previous, { status, ...args } as never), this.deliveryToggles())
-      const terminal = (deliverableTaskStatuses as readonly string[]).includes(task.status)
+      const task = gateTaskDelivery(transitionTask(previous, input), this.deliveryToggles())
+      const terminal = (terminalTaskStatuses as readonly string[]).includes(task.status)
       const isInputRequired = task.status === 'input_required'
       // input_required 不 settle（activeTaskId 保留、轮次未结束），但聚合状态要同步为待决策；
       // 其余终态照常 settle 回 idle。
-      const nextConv = terminal && !isInputRequired
+      const nextConv = terminal
         ? settleConversation(conv, task)
         : isInputRequired ? awaitingConversation(conv) : conv
       await this.putPair(nextConv, task)
-      if (terminal && !isInputRequired) {
+      if (terminal) {
         terminalTaskId = task.id
         shouldDeliver = task.delivery?.state === 'pending'
       }
@@ -1253,7 +1260,7 @@ export class OrchestratorService extends TypertRemoteService {
     if (this.delivering.has(taskId)) return
     const task = this.taskById(taskId)
     if (!task || task.silent || task.delivery?.state !== 'pending') return
-    if (!(deliverableTaskStatuses as readonly string[]).includes(task.status)) return
+    if (!(terminalTaskStatuses as readonly string[]).includes(task.status)) return
     if (!deliveryEnabledFor(this.deliveryToggles(), task.status)) {
       // 设置页已关闭该状态的投递：清掉存量 pending（不补投），状态本身已持久化、roster/看板照常可见。
       await this.patchDelivery(taskId, () => undefined)
@@ -1372,7 +1379,7 @@ export class OrchestratorService extends TypertRemoteService {
         .map(([, task]) => task)
         .filter(task => !task.silent
           && task.delivery?.state === 'pending'
-          && (deliverableTaskStatuses as readonly string[]).includes(task.status))
+          && (terminalTaskStatuses as readonly string[]).includes(task.status))
       for (const task of pending) await this.deliverPendingTask(task.id)
     } catch (error) {
       this.hostCtx.logger.warn(`orchestrator: recover deliveries failed: ${String(error)}`)
@@ -1384,8 +1391,6 @@ export class OrchestratorService extends TypertRemoteService {
     await this.serialize(async () => {
       const now = timestamp()
       for (const [, conv] of this.conversations().entries()) {
-        // 存量会话补建共享记忆链接（workspaceDir 是主工作区的直接子目录，dirname 即主工作区）。
-        if (conv.workspaceDir) await this.shareMemoryWithRoot(conv.workspaceDir, dirname(conv.workspaceDir))
         const active = conv.activeTaskId ? this.taskById(conv.activeTaskId) : conv.lastTaskId ? this.taskById(conv.lastTaskId) : undefined
         if (!conv.activeTaskId && active?.status !== 'input_required') continue
         if (!active) {

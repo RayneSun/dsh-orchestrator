@@ -2,13 +2,13 @@
  * 主控（Lead）工具黑名单与提示段抑制策略。
  *
  * 主控保留 DSH 自带的全局工具（自带工具升级新增对 Lead 自动可见），只屏蔽
- * 第三方执行类工具：meow 记忆写/管理（只读 search/read 保留）、qqmail 全家桶、
+ * 第三方执行类工具：个人记忆写/管理（只读 search/read 保留）、qqmail 全家桶、
  * 桌面/浏览器操控。执行能力全部在 Worker 侧。deny 按精确名运行时匹配
  * （未注册的自动跳过），另按前缀兜底浏览器操控类（bsk_* / ego_*）。
  */
 
 export const LEAD_TOOL_DENY = [
-  // meow-memory：只保留 search / read，写与管理全部 Worker 侧
+  // dsh-personal-memory：只保留 search / read，写与管理全部 Worker 侧
   'memory_remember',
   'memory_update',
   'memory_home',
@@ -82,7 +82,7 @@ export const DSH_CORE_TOOL_BASELINE: readonly string[] = [
   'web_search', 'working_directory', 'write',
 ]
 
-/** 基线外的有意保留项：meow 影子只读（Lead 侧复刻实现，不依赖全局注册）。 */
+/** 基线外的有意保留项：dsh-personal-memory 原生查询工具。 */
 export const LEAD_TOOL_KEEP: readonly string[] = ['memory_search', 'memory_read']
 
 /** 浏览器操控类前缀兜底（browser-skill / ego-browser，未激活也不怕将来出现）。 */
@@ -115,7 +115,7 @@ export function unrecognizedGlobalTools(registeredNames: readonly string[]): str
  * 对只做路由的主控是纯上下文负担。
  */
 export const LEAD_SUPPRESSED_SECTIONS = [
-  'meow-memory:guide',
+  'dsh-personal-memory:guide',
   'plugin:dsh-qqmail',
   'genui:fence',
   'harness:source',

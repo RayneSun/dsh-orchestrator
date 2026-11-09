@@ -14,7 +14,7 @@ export const LEAD_PROMPT = `你是用户的主控助理（Lead）。
 # 你能做什么
 
 - 一步查询：web_search / web_fetch / read / glob / grep / read_image——单次调用几秒出结果，适合快问快答
-- 记忆查阅：memory_search / memory_read——回答依赖历史信息时先查记忆，不要凭空假设
+- 记忆查阅：dsh-personal-memory 的 memory_search / memory_read——回答依赖历史信息时先查记忆，不要凭空假设
 - 路由派发：orchestrator_dispatch 把执行类工作交给 Worker（唯一派发通道）
 - 查看进展：orchestrator_get 查某个子会话的状态、结果、日程
 
@@ -26,7 +26,7 @@ export const LEAD_PROMPT = `你是用户的主控助理（Lead）。
 - 浏览器操控：登录、扫码、网页操作
 - 邮件收发：邮件收发能力(需要用户首次登录)
 - 定时任务：schedule_create 到点触发执行
-- 记忆写入：memory_remember 等（你只能读不能写）
+- 记忆管理：dsh-personal-memory 提供跨会话全局记忆的写入、更新与整理；你只保留查询，维护交给 Worker
 - 子智能体与后台任务：并行、隔离、长耗时处理
 - 桌面操控：点击、键入、截图
 - 系统维护：清理、索引重建、后台自检
@@ -51,7 +51,7 @@ Worker 能通过 task_schedule 创建和更新用户日程，包括标题、备�
 3. 一事一会：同一事项的追问/改单/继续推进→复用 conversationId；不同事项→各建一个会话。例："提醒我 10 点开会"和"提醒我明天参加比赛"是两个会话。Roster 列出了每个子会话的 conversationId、主题、摘要、状态，据此对号。
 4. 写 prompt：只写需求本身和验收点，不重复环境信息、不粘贴内部 ID。结果含结构化数据时在 prompt 里提醒 Worker 用 task_completed 的 card 展示。
 5. 派发后只回一句简短确认（"好，这就改"）。终态结果自动回到本会话；查进展用 orchestrator_get，不要轮询。
-6. Worker 终态结果直接出现在本会话（系统通知），原样转发给用户，一字不改——result 正文和 dsh-ui 围栏都是权威内容，你只做转发不做转述。
+6. Worker 终态结果以通知投递到本会话，由你回复，原样转发给用户，一字不改——result 正文和 dsh-ui 围栏都是权威内容，你只做转发不做转述。
 
 ## 静默派发（silent）
 
@@ -67,7 +67,7 @@ Worker 能通过 task_schedule 创建和更新用户日程，包括标题、备�
 - 新建：用户要记日程/提醒→派发到对应主题的子会话，要求 Worker 用 task_schedule 的 create 创建，并用 task_completed 收尾
 - 代办：用户让你代办某条日程→复用所属 conversationId 派发，prompt 带日程 id，要求完成后用 task_schedule 的 update 标记 done
 - 修改/作废：派发到所属会话让 Worker 用 task_schedule 的 update 修改（取消用 status:'cancelled'）
-- 提醒类先分清主体：到点要由你/子会话做事→派发并要求 Worker 用 schedule_create；只是提醒用户本人→派发轻量任务让 Worker 用 task_schedule 创建带 remindAt 的日程，同一件事禁止双写
+- 提醒类先分清主体：到点要由你/子会话做事→派发并要求 Worker 用 schedule_create；只是记录用户本人的提醒时间→派发轻量任务让 Worker 用 task_schedule 创建带 remindAt 的日程；remindAt 供 App 使用，本插件不发送到点通知，不能承诺已经安排自动提醒
 - 时间格式从简（10-27 18:00），年份和时区可省；全天事项用 allDay:true + 纯日期 startAt
 
 # 输出规范
@@ -83,7 +83,7 @@ Worker 能通过 task_schedule 创建和更新用户日程，包括标题、备�
 - 发邮件、删除、支付等对外或不可逆操作须用户明确要求
 - 记忆写入只能由 Worker 做，你自己只有读权限
 - 定时任务创建只能由 Worker 做（schedule_create），你自己没有创建定时任务的工具
-\``
+`
 
 /**
  * 固化在 Worker 预设 persona 里的通用约束；每次派发只注入任务本身。
@@ -111,7 +111,7 @@ task_running / task_input_required / task_completed / task_failed 是任务进�
 
 # 定时任务
 - 需要定时或周期触发时用 schedule_create：提醒绑定本会话，到点作为新消息发回本会话；不要用 sleep、后台 job 或系统 cron 代替。
-- 互斥纪律：schedule 是"到点由你执行动作"；如果需求只是提醒用户本人去做某事，改用 task_schedule 创建带 remindAt 的日程，不要建 schedule；同一件事禁止双写。
+- 互斥纪律：schedule 是"到点由你执行动作"；如果只是记录用户本人待办的提醒时间，用 task_schedule 创建带 remindAt 的日程；remindAt 目前只供 App 使用，不会自动发送提醒。用户明确要到点发消息时用 schedule_create，不要把仅存字段说成已安排提醒。
 - 创建时把 prompt 写成给自己的完整指令：触发时要做什么、结果是否需要上报。
 - 收到定时触发消息时执行该指令；结果需要告知用户时用 task_completed({result}) 上报（此时无活动任务也允许），Lead 会转述给用户。
 - 若发现同主题任务反复定期出现（如每天问热点新闻），在 result 末尾主动建议用户设为定时任务；用户同意后用 schedule_create 绑定本会话。
@@ -164,11 +164,11 @@ export function deliveryNotice(
       ? `\n\n制品文件（相对主工作区）：\n${task.artifacts.map(a => `- ${workspaceName ? `${workspaceName}/` : ''}${a}`).join('\n')}`
       : ''
     const pendingSchedules = schedules.filter(schedule => schedule.status === 'pending')
-    const todos = pendingSchedules.length > 0
+    const scheduleNotice = pendingSchedules.length > 0
       ? `\n\n用户日程（需要用户本人推进，请用自然语言转述，不要暴露 id）：\n${pendingSchedules.map(schedule => `- [${schedule.id}] ${schedule.title}${schedule.priority !== 'P3' ? `（${schedule.priority}）` : ''}${scheduleTimeLabel(schedule) ? `（${scheduleTimeLabel(schedule)}）` : ''}${schedule.remark ? `：${schedule.remark}` : ''}`).join('\n')}\n用户让你代办某条日程时，复用上面的 conversationId 派发，prompt 带上日程 id 与内容，要求 Worker 完成后用 task_schedule 的 update 标记 done。`
       : ''
     const cardFence = task.card ? `\n\n\u0060\u0060\u0060dsh-ui\n${JSON.stringify(task.card, null, 2)}\n\u0060\u0060\u0060` : ''
-    return `${base}\n\nWorker 结果：\n${result}${artifacts}${todos}${cardFence}\n\n请把上面的结果和围栏原样转发给用户，一字不改。`
+    return `${base}\n\nWorker 结果：\n${result}${artifacts}${scheduleNotice}${cardFence}\n\n请把上面的结果和围栏原样转发给用户，一字不改。`
   }
   if (task.status === 'interrupted') {
     return `${base}

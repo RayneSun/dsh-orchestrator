@@ -40,26 +40,27 @@ export function SchedulePane({ schedules, onToggle, onOpenAttachment, showToast 
   const [view, setView] = useState(() => ({ y: now.getFullYear(), m: now.getMonth() }))
   const [selected, setSelected] = useState<string>(() => dateKey(now))
 
-  // 按天索引：无时间字段的日程不进日程页（只留在会话页）；跨天条目逐日出现。
+  // 只索引当前月，长日程按月裁剪；无开始时间的日程只留在会话页。
   const byDay = useMemo(() => {
     const map = new Map<string, ScheduleSnapshot[]>()
+    const monthStart = dateKey(new Date(view.y, view.m, 1))
+    const monthEnd = dateKey(new Date(view.y, view.m + 1, 0))
     for (const schedule of schedules) {
       if (!schedule.startAt || schedule.status === 'cancelled') continue
       const start = dayKeyOf(schedule.startAt)
       if (!start) continue
       const end = (schedule.endAt ? dayKeyOf(schedule.endAt) : undefined) ?? start
-      // 跨度保护：脏数据（endAt 在几年后）最多铺 62 天，避免死循环。
-      const cursor = new Date(`${start}T00:00:00`)
-      for (let i = 0; i < 62; i++) {
+      const cursor = new Date(`${start > monthStart ? start : monthStart}T00:00:00`)
+      const last = end < monthEnd ? end : monthEnd
+      while (dateKey(cursor) <= last) {
         const key = dateKey(cursor)
-        if (key > end) break
         map.set(key, [...(map.get(key) ?? []), schedule])
         cursor.setDate(cursor.getDate() + 1)
       }
     }
     for (const [key, list] of map) map.set(key, sortSchedules(list))
     return map
-  }, [schedules])
+  }, [schedules, view.y, view.m])
 
   const firstDow = (new Date(view.y, view.m, 1).getDay() + 6) % 7 // 周一起始
   const daysInMonth = new Date(view.y, view.m + 1, 0).getDate()
@@ -71,10 +72,11 @@ export function SchedulePane({ schedules, onToggle, onOpenAttachment, showToast 
   const current = daySchedules.filter(schedule => !overdue.includes(schedule))
   const selDate = new Date(`${selected}T00:00:00`)
 
-  const shiftMonth = (delta: number): void => setView(prev => {
-    const d = new Date(prev.y, prev.m + delta, 1)
-    return { y: d.getFullYear(), m: d.getMonth() }
-  })
+  const shiftMonth = (delta: number): void => {
+    const d = new Date(view.y, view.m + delta, 1)
+    setView({ y: d.getFullYear(), m: d.getMonth() })
+    setSelected(dateKey(d))
+  }
   const gotoToday = (): void => {
     setView({ y: now.getFullYear(), m: now.getMonth() })
     setSelected(todayKey)
@@ -116,7 +118,7 @@ export function SchedulePane({ schedules, onToggle, onOpenAttachment, showToast 
       </div>
     </div>
     <div className="dsho-dayTitle">
-      {`${view.m + 1} 月 ${selDate.getDate()} 日 周${WEEKDAYS[selDate.getDay()]}`}
+      {`${selDate.getMonth() + 1} 月 ${selDate.getDate()} 日 周${WEEKDAYS[selDate.getDay()]}`}
       {daySchedules.length > 0 && <span className="cnt">· {daySchedules.length} 条</span>}
     </div>
     {daySchedules.length === 0 && <p className="dsho-empty" style={{ padding: 12 }}>这一天没有日程。</p>}

@@ -42,7 +42,7 @@ export interface OrchestratorClient {
   answerTaskQuestions(request: AnswerQuestionsRequest): Promise<AnswerQuestionsResult>
 }
 
-const PACKAGE = '@may/dsh-orchestrator'
+const PACKAGE = '@cmjt/dsh-orchestrator'
 
 /** 手写 typert descriptor 的公共骨架：方法之间只有 id/method 名与请求/结果 schema 不同。
  * id 必须保持完整字符串字面量（verify-packaging 在产物里检索它做 strict descriptor 校验）。 */
@@ -75,9 +75,9 @@ function buildDescriptor(id: string, method: string, requestType: string, reques
 export const TYPERT_REMOTE = {
   package: PACKAGE,
   descriptors: [
-    buildDescriptor('@may/dsh-orchestrator#orchestrator/snapshot', 'snapshot', 'SnapshotRequest', snapshotRequestSchema, snapshotResultSchema),
-    buildDescriptor('@may/dsh-orchestrator#orchestrator/setScheduleStatus', 'setScheduleStatus', 'SetScheduleStatusRequest', setScheduleStatusRequestSchema, setScheduleStatusResultSchema),
-    buildDescriptor('@may/dsh-orchestrator#orchestrator/answerTaskQuestions', 'answerTaskQuestions', 'AnswerQuestionsRequest', answerQuestionsRequestSchema, answerQuestionsResultSchema),
+    buildDescriptor('@cmjt/dsh-orchestrator#orchestrator/snapshot', 'snapshot', 'SnapshotRequest', snapshotRequestSchema, snapshotResultSchema),
+    buildDescriptor('@cmjt/dsh-orchestrator#orchestrator/setScheduleStatus', 'setScheduleStatus', 'SetScheduleStatusRequest', setScheduleStatusRequestSchema, setScheduleStatusResultSchema),
+    buildDescriptor('@cmjt/dsh-orchestrator#orchestrator/answerTaskQuestions', 'answerTaskQuestions', 'AnswerQuestionsRequest', answerQuestionsRequestSchema, answerQuestionsResultSchema),
   ],
 }
 

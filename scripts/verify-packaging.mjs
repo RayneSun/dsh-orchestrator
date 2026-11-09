@@ -37,13 +37,33 @@ for (const forbiddenDependency of ['dsh-computer-use', '@deepseek-ai/dsh-tools']
 
 const client = read('lib/client.js').trimStart()
 if (!client.startsWith('window.__ModuleLoader__.load({')) fail('client artifact is not a ModuleLoader closure')
+const clientId = client.match(/^window\.__ModuleLoader__\.load\(\{\s*id:\s*(["'])([^"']+)\1\s*,/)?.[2]
+if (clientId !== pkg.name) fail(`client module id must be ${pkg.name}, got ${String(clientId)}`)
 if (!client.includes('exports.apply = apply')) fail('client closure does not export apply')
 if (!client.includes('require("react")') && !client.includes("require('react')")) fail('client must receive react from ModuleLoader')
 
-const host = read('lib/typert.host.js')
-if (!host.includes('face: "host"') && !host.includes("face: 'host'")) fail('host typert face missing')
-const remote = read('lib/typert.remote-client.js')
-if (!remote.includes('@may/dsh-orchestrator#orchestrator/snapshot')) fail('strict remote descriptor id missing')
+const { TYPERT: host } = await import(new URL('../lib/typert.host.js', import.meta.url))
+const { TYPERT_REMOTE: remote } = await import(new URL('../lib/typert.remote-client.js', import.meta.url))
+if (host?.face !== 'host') fail('host typert face missing')
+const expectedIds = ['snapshot', 'setScheduleStatus', 'answerTaskQuestions']
+  .map(method => `${pkg.name}#orchestrator/${method}`).sort()
+for (const [label, manifest, descriptors] of [
+  ['host', host, host?.invocations],
+  ['remote', remote, remote?.descriptors],
+]) {
+  if (manifest?.package !== pkg.name) fail(`${label} typert package must be ${pkg.name}, got ${String(manifest?.package)}`)
+  const ids = descriptors?.map(descriptor => descriptor.id).sort()
+  if (JSON.stringify(ids) !== JSON.stringify(expectedIds)) fail(`${label} strict remote descriptor ids must be ${expectedIds.join(', ')}`)
+}
+
+const bundleRows = [...read('cordis.patch.yml').matchAll(/^\s*- id: ([^\s]+)\r?\n\s+name: (["'])([^"'\r\n]+)\2[ \t]*$/gm)]
+for (const [id, expected] of [
+  ['may-dsh-orchestrator', pkg.name],
+  ['computer-use-darwin', `${pkg.name}/dsh-computer-use-darwin`],
+]) {
+  const rows = bundleRows.filter(row => row[1] === id)
+  if (rows.length !== 1 || rows[0][3] !== expected) fail(`bundle row ${id} must reference ${expected} exactly once`)
+}
 
 const [report] = JSON.parse(execFileSync('npm', ['pack', '--dry-run', '--json'], {
   cwd: root,
