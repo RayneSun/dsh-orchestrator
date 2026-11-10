@@ -30,7 +30,7 @@
     "verify:packaging": "node scripts/verify-packaging.mjs"
   },
   "dependencies": {
-    "@cmjt/dsh-personal-memory": "latest",
+    "@cmjt/dsh-personal-memory": "0.4.6",
     "@milkuovo/dsh-computer-use": "0.3.1",
     "@wxg-prc-cpg/browser-skill-dsh-plugin": "0.3.2",
     "@zhengjunyao/dsh-qqmail": "0.1.1",

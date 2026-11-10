@@ -26,7 +26,7 @@ Worker 的任务上报协议、安全红线（支付/删除等不可逆操作先
 
 安装本 bundle 会自动安装并启用以下能力：
 
-- [dsh-personal-memory v0.4.6](https://github.com/friendllcc/dsh-personal-memory/releases/tag/v0.4.6)：通过私有 npm 源的 `@cmjt/dsh-personal-memory@latest` 普通依赖自动安装。Lead 与 Worker 原生共享用户全局记忆库，默认数据家在 `~/.dsh/storages/dsh-personal-memory`（设置了 `DSH_HOME` 时跟随该目录），SQLite 位于其中的 `.dsh-personal-memory/memory.db`。Worker 保留完整记忆能力；Lead 只查询。旧工作区库的发现与合并交由插件原生迁移，不再创建共享链接，也不删除旧记忆。
+- [dsh-personal-memory v0.4.6](https://github.com/friendllcc/dsh-personal-memory/releases/tag/v0.4.6)：通过私有 npm 源的 `@cmjt/dsh-personal-memory@0.4.6` 普通依赖自动安装。Lead 与 Worker 原生共享用户全局记忆库，默认数据家在 `~/.dsh/storages/dsh-personal-memory`（设置了 `DSH_HOME` 时跟随该目录），SQLite 位于其中的 `.dsh-personal-memory/memory.db`。Worker 保留完整记忆能力；Lead 只查询。旧工作区库的发现与合并交由插件原生迁移，不再创建共享链接，也不删除旧记忆。
 - `@wxg-prc-cpg/browser-skill-dsh-plugin`：浏览器自动化；需自行安装 `bsk` CLI 和浏览器扩展。
 - `@zhengjunyao/dsh-qqmail`：QQ 邮箱/IMAP/SMTP，默认只读，外发或删除需用户确认与配置授权码。
 - 桌面操控：macOS 使用本包内 vendored 的 `dsh-computer-use` 驱动；Windows 安装 `@milkuovo/dsh-computer-use`。两者通过平台 gate 二选一启用。vendored 驱动的 MIT 许可证见 `lib/vendor/dsh-computer-use-darwin/LICENSE`，仍需系统提供可执行的 `cua-driver`。
@@ -80,7 +80,7 @@ dsh plugin --profile web add @cmjt/dsh-orchestrator --registry http://36.138.53.
 
 使用 GitHub Release tgz 安装时同样指定私有源，以便解析 `@cmjt` 依赖；若已有 `@cmjt:registry` 映射则可省略 `--registry`。普通 registry 依赖无需关闭 pnpm 安全校验。
 
-记忆依赖声明使用 `latest`；目前私有源 latest 指向 `0.4.6`，已修正 scoped 包的客户端注册与 bundle 引用，无需本机补丁。
+记忆依赖固定为 `0.4.6`，该版本已修正 scoped 包的客户端注册与 bundle 引用，无需本机补丁，也不会再受 latest 或旧 lockfile 漂移影响。
 
 从旧 scope 升级，先备份并清理旧域（详见升级文档），再移除旧包、安装新包；不要同时启用两个 scope：
 

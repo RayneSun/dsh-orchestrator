@@ -6,7 +6,7 @@
 
 `@cmjt/dsh-orchestrator`：DSH（DeepSeek Harness，基线 `0.2.1-rc.2`）的编排插件。
 
-- **Lead**（主会话，预设 `may-orchestrator-lead`）：理解需求、路由、派发、转发结果。保留 DSH 自带工具；第三方执行工具按 `LEAD_TOOL_DENY` 与浏览器前缀隐藏。记忆来自 `@cmjt/dsh-personal-memory@latest`，原生 `memory_search/read` 保留，其余记忆工具隐藏。写入手册对 Lead 遮蔽；`memory-policy.ts` 通过记忆插件原生 HTTP 接口设置会话门控：inject=false（允许读入与查询）、write=true/dream=true（停止写入、反思与自动整理）。不导入数据库 API，不解析记忆存储配置，不重建影子工具或工作区记忆链接。
+- **Lead**（主会话，预设 `may-orchestrator-lead`）：理解需求、路由、派发、转发结果。保留 DSH 自带工具；第三方执行工具按 `LEAD_TOOL_DENY` 与浏览器前缀隐藏。记忆来自 `@cmjt/dsh-personal-memory@0.4.6`，原生 `memory_search/read` 保留，其余记忆工具隐藏。写入手册对 Lead 遮蔽；`memory-policy.ts` 通过记忆插件原生 HTTP 接口设置会话门控：inject=false（允许读入与查询）、write=true/dream=true（停止写入、反思与自动整理）。不导入数据库 API，不解析记忆存储配置，不重建影子工具或工作区记忆链接。
 - **Worker**（持久**根会话**，预设 `may-orchestrator-worker`）：执行任务。不是 subagent——通过 `agents.create` 创建（无 origin/delegationDepth），与主会话同为一等会话，schedule 等仅 depth-0 可用的宿主能力对 Worker 开放。工具**黑名单**制（只禁编排循环/直接提问/直接 GenUI 渲染及验证），其余宿主与用户安装的工具默认可用。
 - 两层领域模型：**Conversation**（持久子会话/工作流）1—N **TaskRun**（一次派发）。
 - 技术栈：pnpm + TypeScript + Cordis + Zod + tsdown + vitest。4 个入口：主插件、client（看板 React）、typert host/remote（snapshot / setScheduleStatus / answerTaskQuestions RPC）。
@@ -126,8 +126,8 @@ uv run --no-project --python /usr/bin/python3 python -c 'import subprocess; subp
 
 ### 全局个人记忆
 
-- 记忆使用私有 npm 源的 `@cmjt/dsh-personal-memory@latest` 普通依赖，随 orchestrator 自动安装；bundle 直接引用 scoped 包名，运行时代码仅调用其原生 HTTP 门控接口。安装指定 `--registry http://36.138.53.195:4873/` 或配置 `@cmjt:registry`，不需要提前安装记忆 tgz。插件内部的 section 名、数据目录与工具名仍为原有名称，不随 npm scope 改动。
-- 依赖使用 latest，目前解析为 0.4.6；scoped 包的客户端注册与 bundle 引用已由上游修正，orchestrator 不包含第三方产物补丁。
+- 记忆使用私有 npm 源的 `@cmjt/dsh-personal-memory@0.4.6` 普通依赖，随 orchestrator 自动安装；bundle 直接引用 scoped 包名，运行时代码仅调用其原生 HTTP 门控接口。安装指定 `--registry http://36.138.53.195:4873/` 或配置 `@cmjt:registry`，不需要提前安装记忆 tgz。插件内部的 section 名、数据目录与工具名仍为原有名称，不随 npm scope 改动。
+- 依赖固定为 0.4.6，禁止恢复 latest，避免旧 profile lockfile 继续复用有缺陷的 0.4.5；scoped 包的客户端注册与 bundle 引用已由上游修正，orchestrator 不包含第三方产物补丁。
 - 默认数据家：`$DSH_HOME/storages/dsh-personal-memory`，未设环境变量时为 `~/.dsh/storages/dsh-personal-memory`；SQLite 位于数据家下 `.dsh-personal-memory/memory.db`。遵从插件的 homeDir 设置，不再随工作区定位。
 - Lead 使用原生 search/read 与读入，禁写与自动反思/整理；Worker 使用完整原生能力和原生手册，不在 persona 重复写记忆纪律。
 - 门控使用短暂失败有界重试，并在推理前确认策略；复用 `POST /dsh-personal-memory/skip-dreams`（`sessionId / field / value`），地址来自宿主 `webServer.getOrigin()`；先 flush Lead 会话，再设置 write=true、dream=true、inject=false。数据库定位与配置解析由记忆插件负责，包括自定义 projectDir/homeDir；接口失败告警，推理前重试，仍失败则阻止该请求；不回退直接写库。测试使用上游原生路由与 SQLite，覆盖默认和自定义 projectDir。
