@@ -59,6 +59,9 @@ describe('工具参数描述可被 dsh-tools DSL 编译', () => {
       expect(() => parameterSchemaSpecToJsonSchema(parameters)).not.toThrow()
     }
     expect(Object.keys(TASK_COMPLETED_TOOL_PARAMETERS)).toEqual(expect.arrayContaining(['header', 'progressNote', 'result', 'artifacts', 'card']))
+    expect(TASK_COMPLETED_TOOL_PARAMETERS.result.description).toContain('不写文件路径和实现细节')
+    expect(TASK_COMPLETED_TOOL_PARAMETERS.card.description).toContain('不复制 result 或制品正文')
+    expect(TASK_COMPLETED_TOOL_PARAMETERS.artifacts.description).toContain('仅限用户需要打开的关键制品')
     expect(Object.keys(TASK_FAILED_TOOL_PARAMETERS)).toEqual(expect.arrayContaining(['header', 'progressNote', 'error', 'reasonCode']))
     expect(Object.keys(TASK_INPUT_REQUIRED_TOOL_PARAMETERS)).toEqual(expect.arrayContaining(['header', 'progressNote', 'questions']))
     // task_schedule：create.title / update.id 在 JSON Schema 层静态必填（模型漏填在平台侧就被拦）

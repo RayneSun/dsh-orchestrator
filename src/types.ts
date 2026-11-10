@@ -238,7 +238,7 @@ const baseTaskSchema = z.object({
   questions: z.array(questionItemObjectSchema).max(10).optional(),
   /** 看板与 Worker 原生卡的作答留痕。 */
   answers: z.array(questionAnswerSchema).max(10).optional(),
-  /** completed 终态：result 是用户最终看到的权威答案；card 是 dsh-ui 展示卡片（card 放明细，result 只写结论）。 */
+  /** completed 终态：result 是无路径的简短结论，card 放结构化明细，artifacts 提供关键文件入口，三者不重复。 */
   result: z.string().optional(),
   artifacts: z.array(relativePathSchema).optional(),
   card: z.record(z.string(), z.unknown()).optional(),

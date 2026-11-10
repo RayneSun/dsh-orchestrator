@@ -1,6 +1,6 @@
 # AGENTS.md — dsh-orchestrator 开发指引
 
-面向接管本仓库的 AI 编码助手。读完本文件再动手。当前仓库版本 0.3.19；文档入口见 [docs/README.md](docs/README.md)。
+面向接管本仓库的 AI 编码助手。读完本文件再动手。当前仓库版本 0.3.20；文档入口见 [docs/README.md](docs/README.md)。
 
 ## 项目是什么
 
@@ -110,7 +110,7 @@ uv run --no-project --python /usr/bin/python3 python -c 'import subprocess; subp
 
 ### 工具权限
 
-- Lead **预设挂载面**（presets.ts）：显式挂载自带插件 tool-web（web_search/web_fetch）、tool-fs-search（glob/grep，必配 `sampleOverCapGlobResults`）、tool-fs（read/write/edit/read_image）、tool-todo（必配 `allowParallelInProgress`）、tool-goal、tool-ask-user。0.2.7 起 tool-web 曾被误删，"一步查询"长期是空头承诺，0.3.16 补回。不挂 bash/terminal/jobs/schedule/session-query/present/skill/mcp-resources/subagent/teams/worktree——执行与编排都在 Worker 侧；缺必配 config 会新建会话即报 agent-preset/invalid。
+- Lead **预设挂载面**（presets.ts）：显式挂载自带插件 tool-web（web_search/web_fetch）、tool-fs-search（glob/grep，必配 `sampleOverCapGlobResults`）、tool-fs（read/write/edit/read_image）、tool-present（Worker artifacts 的主会话制品卡交付）、tool-todo（必配 `allowParallelInProgress`）、tool-goal、tool-ask-user。0.2.7 起 tool-web 曾被误删，"一步查询"长期是空头承诺，0.3.16 补回。不挂 bash/terminal/jobs/schedule/session-query/skill/mcp-resources/subagent/teams/worktree——执行与编排都在 Worker 侧；缺必配 config 会新建会话即报 agent-preset/invalid。
 - Lead：**黑名单裁剪**，按注册表过滤已有第三方执行工具，自带工具升级新增不被误藏。记忆工具全部由 dsh-personal-memory 原生注册；仅保留 search/read，其余交给 Worker。orchestrator 不导入记忆插件实现，只通过原生会话门控接口设置策略。
 - Worker：按 `isWorkerToolForbidden`（worker-policy.ts）枚举工具并 `scoped.tools.restrict({ deny })`，失败时回退 `guard`。编排/派生类禁止项见 `workerForbiddenPatterns`（workflow/ralph/orchestrator），直接向用户提问类见 `workerQuestionPatterns`（ask_user 系，命中时引导改走 task_input_required）；新增"禁止类"工具只改这两张表。子智能体工具由 Worker 预设的 delegation 组显式组合（与平台 standard 预设同款，spawn/fork 后端驻留宿主平面）。
 - **工具清单巡检（每次相关改动必做）**：改 lead-policy/service 工具面相关代码、或 DSH/插件升级后，重新枚举全局工具（扫 DSH core + profile 插件的 defineTool 名字）与 `DSH_CORE_TOOL_BASELINE` 快照对比。运行时也有兜底：Lead 挂载时 `unrecognizedGlobalTools` 发现基线外且未命中 deny 的名字会打 warn。发现新工具 → 确认归属 → 自带的更新基线、第三方的评估加入 LEAD_TOOL_DENY（或确认放行）。用户主动装新插件同样适用。
@@ -127,7 +127,7 @@ uv run --no-project --python /usr/bin/python3 python -c 'import subprocess; subp
 ### 全局个人记忆
 
 - 记忆使用私有 npm 源的 `@cmjt/dsh-personal-memory@latest` 普通依赖，随 orchestrator 自动安装；bundle 直接引用 scoped 包名，运行时代码仅调用其原生 HTTP 门控接口。安装指定 `--registry http://36.138.53.195:4873/` 或配置 `@cmjt:registry`，不需要提前安装记忆 tgz。插件内部的 section 名、数据目录与工具名仍为原有名称，不随 npm scope 改动。
-- 依赖使用 latest，目前解析为 0.4.5。该发布包仅更改了 package name：其客户端仍注册旧模块 ID，独立 bundle patch 也仍引用旧包名。Host 与自动安装已通过隔离 profile 验证；客户端缺陷已提 [issue #1](https://github.com/friendllcc/dsh-personal-memory/issues/1)，不在 orchestrator 加源码替换或前端别名适配。
+- 依赖使用 latest，目前解析为 0.4.6；scoped 包的客户端注册与 bundle 引用已由上游修正，orchestrator 不包含第三方产物补丁。
 - 默认数据家：`$DSH_HOME/storages/dsh-personal-memory`，未设环境变量时为 `~/.dsh/storages/dsh-personal-memory`；SQLite 位于数据家下 `.dsh-personal-memory/memory.db`。遵从插件的 homeDir 设置，不再随工作区定位。
 - Lead 使用原生 search/read 与读入，禁写与自动反思/整理；Worker 使用完整原生能力和原生手册，不在 persona 重复写记忆纪律。
 - 门控使用短暂失败有界重试，并在推理前确认策略；复用 `POST /dsh-personal-memory/skip-dreams`（`sessionId / field / value`），地址来自宿主 `webServer.getOrigin()`；先 flush Lead 会话，再设置 write=true、dream=true、inject=false。数据库定位与配置解析由记忆插件负责，包括自定义 projectDir/homeDir；接口失败告警，推理前重试，仍失败则阻止该请求；不回退直接写库。测试使用上游原生路由与 SQLite，覆盖默认和自定义 projectDir。
@@ -154,7 +154,7 @@ uv run --no-project --python /usr/bin/python3 python -c 'import subprocess; subp
 
 - **5 个独立工具（v0.3.19 起，单工具 `task_update` 已删除）**：`task_running` / `task_input_required` / `task_completed` / `task_failed` / `task_schedule`。每个工具的 zod input schema（`taskReportInputSchemas` / `taskScheduleInputSchema`）只含该工具合法字段，schema 结构即校验——不再有 allowlist / superRefine 交叉校验（单工具 + 条件必填被模型多次踩坑，拆分是根治）。四个状态工具可带 header（≤8 字极简状态标题）和 progressNote（一句话进展）；task_schedule 不带进度字段。
   - `task_input_required`：必填 `questions[]`，结构化问卷 `{id?, question, header?, detail?, options?, multi_select?}`，Worker 的 id 可省略，Host 补 q1/q2/…，snapshot 与作答后的 answers 使用该 id。阻塞工具调用，返回值即用户答案。
-  - `task_completed`：必填 `result`（权威结论）；可选 `artifacts`（子工作区相对路径，投递时自动加工作区前缀）与 `card`（dsh-ui 展示明细 JSON，Host 序列化围栏后由 Lead 原样转发）。
+  - `task_completed`：必填 `result`（无文件路径的简短结论）；可选 `artifacts`（关键制品的子工作区相对路径，投递时自动加工作区前缀，仅供 Lead 调用 present）与 `card`（dsh-ui 结构化明细 JSON，Host 序列化围栏后由 Lead 原封不动输出）；正文、卡片和制品不重复。
   - `task_failed`：必填 `error`，系统阻碍加 `reasonCode`。
   - `task_schedule`：日程 CRUD（`create`/`update` 分桶，create.title / update.id 在 DSL 层静态必填——分支规则必须由结构而非文案表达）；返回最新日程清单投影，与任务状态无关、不产生状态迁移。
   - **存储拍平**：TaskRecord 顶层 `result/artifacts/card/error/reasonCode`，`report/fail` 包裹层删除；domain v3 隔离旧存储，不加载、不迁移旧记录。transitionTask 输入是判别联合 `TaskTransitionInput`，按 status 收敛字段并清空非对应终态字段；保留已回答的问题及答案。
@@ -204,5 +204,5 @@ uv run --no-project --python /usr/bin/python3 python -c 'import subprocess; subp
 ## 背景材料
 
 - README.md：用户面说明，发版时随版本号更新。
-- docs/README.md：文档索引；docs/milestones/0.3.19.md：当前变更、验证与已知限制。
+- docs/README.md：文档索引；docs/milestones/0.3.20.md：当前变更、验证与已知限制。
 - **正式发版清单（用户授权后）**：先更新版本与文档 → host/client typecheck + 全量测试 → build（含 copy-vendor）+ verify:packaging → `npm pack` → 中文 commit + annotated tag（若本地里程碑已存在且内容未变则复用）→ push dev 与对应 tag → `gh release create` 必须同时附三个资产：构建产物 tgz（**lib/ 已编译**，源码 tar.gz 装不了）、`board-api.md` 完整接口和 `board-api-v<版本>-changes.md` 差异说明 → 正式版 tgz 装回 web profile 并通过指定脚本以 start_new_session 重启 3080。**GitHub release 之外必须同步发布私有 npm 源**（Verdaccio `http://36.138.53.195:4873/`，scope `@cmjt` 已映射）：`npm publish --registry http://36.138.53.195:4873/` 后用 `npm view @cmjt/dsh-orchestrator --registry http://36.138.53.195:4873/` 验证；两处包内容 shasum 应一致（同一次 `npm pack` 产物）。

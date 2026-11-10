@@ -93,9 +93,9 @@ export const TASK_RUNNING_TOOL_PARAMETERS = {
 export const TASK_COMPLETED_TOOL_PARAMETERS = {
   header: HEADER_PARAM,
   progressNote: PROGRESS_NOTE_PARAM,
-  result: { type: 'string', required: true, description: '用户最终看到的完整结果文案；card 已放明细时只写结论，不重复' },
-  card: { type: 'object', additionalProperties: true, description: 'dsh-ui 展示卡片 JSON；组件规范用 genui skill，放完整明细' },
-  artifacts: { type: 'array', items: { type: 'string' }, description: '用户会要看的产物文件，子工作区相对路径（禁止绝对路径和 ..）' },
+  result: { type: 'string', required: true, description: '面向用户的简短结论；不写文件路径和实现细节，不重复 card 或制品已表达的内容' },
+  card: { type: 'object', additionalProperties: true, description: 'dsh-ui 展示卡片 JSON；组件规范用 genui skill，只放结构化明细，不复制 result 或制品正文' },
+  artifacts: { type: 'array', items: { type: 'string' }, description: '仅限用户需要打开的关键制品，子工作区相对路径（禁止绝对路径和 ..）；制品正文不要复制到 result/card' },
 } as const
 
 export const TASK_FAILED_TOOL_PARAMETERS = {

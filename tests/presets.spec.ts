@@ -80,6 +80,13 @@ describe('Orchestrator agent presets', () => {
     expect(prefix).not.toContain('禁止再派生')
   })
 
+  it('Lead 只增加制品交付能力，不因此挂载 Worker 执行工具', () => {
+    const names = new Set(byId.get(LEAD_PRESET)!.plugins.map(row => row.name))
+    expect(names.has('@deepseek-ai/dsh-tool-present')).toBe(true)
+    expect(names.has('@deepseek-ai/dsh-tool-bash')).toBe(false)
+    expect(names.has('@deepseek-ai/dsh-tool-schedule')).toBe(false)
+  })
+
   it('bundle patch 自动把 Lead 预设设为默认，无需用户手改配置文件', () => {
     const patch = readFileSync(new URL('../cordis.patch.yml', import.meta.url), 'utf8')
     expect(patch).toContain('id: agent-preset-registry')

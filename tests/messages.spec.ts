@@ -48,6 +48,23 @@ describe('deliveryNotice 用户日程段', () => {
   })
 })
 
+describe('deliveryNotice 制品交付', () => {
+  it('要求 Lead 先用 present 交付，再按输出规范精简正文并保留卡片', () => {
+    const task: TaskRecord = {
+      ...createTask({ id: 't1', parentSessionId: 'p1', conversationId: 'c1', predecessorTaskId: null, subject: '写诗', prompt: 'p' }),
+      status: 'completed',
+      result: '诗已写好',
+      artifacts: ['poem.md'],
+    }
+    const conv = createConversation({ id: 'c1', childSessionId: 's1', parentSessionId: 'p1', title: '写诗', workspaceName: 'poem-markdown' })
+    const text = deliveryNotice(task, conv)
+    expect(text).toContain('poem-markdown/poem.md')
+    expect(text).toContain('回复前必须调用 present 交付')
+    expect(text).toContain('路径仅供 present 使用，不要写进正文')
+    expect(text).toContain('正文只保留必要结论，dsh-ui 围栏原封不动')
+  })
+})
+
 describe('scheduleStatusSection 投递附言', () => {
   const base = {
     createdAt: '2026-10-23T00:00:00Z', updatedAt: '2026-10-23T00:00:00Z',
@@ -88,7 +105,18 @@ describe('prompt 编排约定', () => {
     expect(LEAD_PROMPT).toContain('用户日程管理')
     expect(LEAD_PROMPT).toContain('task_schedule')
     expect(LEAD_PROMPT).not.toMatch(/schedules\.(create|update)/)
-    expect(LEAD_PROMPT).toContain('原样转发给用户，一字不改')
+    expect(LEAD_PROMPT).toContain('按照下方的输出规范回复用户')
+    expect(LEAD_PROMPT).toContain('dsh-ui 围栏')
+    expect(LEAD_PROMPT).toContain('原封不动')
+    expect(LEAD_PROMPT).toContain('同一信息只在一个载体出现')
+    expect(LEAD_PROMPT).not.toContain('result 正文和 dsh-ui 围栏都是权威内容')
+  })
+
+  it('Worker prompt 约定 result/card/artifacts 分工、去重且 result 不含路径', () => {
+    expect(WORKER_PROMPT).toContain('禁止出现任何文件路径')
+    expect(WORKER_PROMPT).toContain('忽略具体实现细节')
+    expect(WORKER_PROMPT).toContain('只放用户需要打开的关键产物文件')
+    expect(WORKER_PROMPT).toContain('制品正文内容不要复制进 result 或 card')
   })
 
   it('Worker prompt 约定 progressNote 拟人化幽默风格', () => {

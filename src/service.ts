@@ -633,7 +633,7 @@ export class OrchestratorService extends TypertRemoteService {
         name: 'task_completed',
         status: 'completed',
         parameters: TASK_COMPLETED_TOOL_PARAMETERS,
-        description: '任务成功收尾：result 是用户最终看到的权威答案，产物放 artifacts，结构化数据用 card 展示。提交后本轮立即结束。定时触发轮次无活动任务时也只允许本工具上报结果。',
+        description: '任务成功收尾：result 只写无路径的简短结论，card 承载结构化明细，artifacts 只交付关键文件，三者不重复。提交后本轮立即结束。定时触发轮次无活动任务时也只允许本工具上报结果。',
       },
       {
         name: 'task_failed',

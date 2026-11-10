@@ -61,5 +61,7 @@ describe('Lead 工具黑名单与提示段抑制', () => {
   it('遮蔽 个人记忆写入手册与 qqmail 公告段', () => {
     expect(LEAD_SUPPRESSED_SECTIONS).toContain('dsh-personal-memory:guide')
     expect(LEAD_SUPPRESSED_SECTIONS).toContain('plugin:dsh-qqmail')
+    expect(LEAD_SUPPRESSED_SECTIONS).not.toContain('ui:deliverable-file-references')
+    expect(LEAD_TOOL_DENY).not.toContain('present')
   })
 })

@@ -2,7 +2,7 @@
 
 DSH 主控助理编排插件，也是一个开箱即用的个人助理能力包。Lead 主会话只负责理解需求、维护路由卡、派发任务和转述结果；持久子会话保存完整执行上下文，每次派发对应一条 TaskRun。
 
-当前版本 **0.3.19**，包名为 **`@cmjt/dsh-orchestrator`**。任务状态上报拆为四个工具，用户日程独立为 `task_schedule`；snapshot 的任务结果字段拍平，记忆迁移至 dsh-personal-memory。**不兼容旧会话与旧看板存储**：升级前备份旧域并停用旧 Worker 的定时任务，升级后新建会话。见[完整接口](docs/board-api.md)、[0.3.19 接口变更与升级步骤](docs/board-api-v0.3.19-changes.md)和[发布记录](docs/milestones/0.3.19.md)。
+当前版本 **0.3.20**，包名为 **`@cmjt/dsh-orchestrator`**。任务状态上报拆为四个工具，用户日程独立为 `task_schedule`；snapshot 的任务结果字段拍平，记忆迁移至 dsh-personal-memory。**不兼容旧会话与旧看板存储**：升级前备份旧域并停用旧 Worker 的定时任务，升级后新建会话。见[完整接口](docs/board-api.md)、[0.3.20 接口变化说明](docs/board-api-v0.3.20-changes.md)和[发布记录](docs/milestones/0.3.20.md)。
 
 ## 预设
 
@@ -13,7 +13,7 @@ Worker 的任务上报协议、安全红线（支付/删除等不可逆操作先
 
 - `task_running`：进行中上报，可带 `header`（最多 8 个字的状态标题）与 `progressNote`（一句话进展）
 - `task_input_required`：必带结构化 `questions`，在看板和子会话渲染同源问题卡；阻塞工具调用，任一入口作答后工具直接返回用户答案，Worker 同轮继续
-- `task_completed`：终态，必带 `result`（用户最终看到的权威答案）；结构化结果可再传 `card`（dsh-ui 展示卡片 JSON，card 放完整明细、result 只写结论）与 `artifacts`（产物文件）；提交后本轮立即结束
+- `task_completed`：终态，必带 `result`（无文件路径的简短结论，不写实现细节）；结构化明细可传 `card`（dsh-ui 展示卡片 JSON），关键文件可传 `artifacts`；三者分工且不重复，提交后本轮立即结束
 - `task_failed`：终态，必带 `error`，系统阻碍另加 `reasonCode`；提交后本轮立即结束
 - `task_schedule`：**用户日程**维护（需要用户本人推进的事），与任务状态无关、随时可调用——新的放 `create`（title 必填，可加 startAt/endAt / remindAt / priority / links / attachments / contacts / location / remark），改的放 `update`（抄 id 标 done 或 cancelled 作废）；日程主会话 scope 独立成表，`conversationId` 归属回链，代办/修改都派回所属子会话处理。看板会话卡片上以日程框展示、用户可画勾。
 
@@ -26,7 +26,7 @@ Worker 的任务上报协议、安全红线（支付/删除等不可逆操作先
 
 安装本 bundle 会自动安装并启用以下能力：
 
-- [dsh-personal-memory v0.4.5](https://github.com/friendllcc/dsh-personal-memory/releases/tag/v0.4.5)：通过私有 npm 源的 `@cmjt/dsh-personal-memory@latest` 普通依赖自动安装。Lead 与 Worker 原生共享用户全局记忆库，默认数据家在 `~/.dsh/storages/dsh-personal-memory`（设置了 `DSH_HOME` 时跟随该目录），SQLite 位于其中的 `.dsh-personal-memory/memory.db`。Worker 保留完整记忆能力；Lead 只查询。旧工作区库的发现与合并交由插件原生迁移，不再创建共享链接，也不删除旧记忆。
+- [dsh-personal-memory v0.4.6](https://github.com/friendllcc/dsh-personal-memory/releases/tag/v0.4.6)：通过私有 npm 源的 `@cmjt/dsh-personal-memory@latest` 普通依赖自动安装。Lead 与 Worker 原生共享用户全局记忆库，默认数据家在 `~/.dsh/storages/dsh-personal-memory`（设置了 `DSH_HOME` 时跟随该目录），SQLite 位于其中的 `.dsh-personal-memory/memory.db`。Worker 保留完整记忆能力；Lead 只查询。旧工作区库的发现与合并交由插件原生迁移，不再创建共享链接，也不删除旧记忆。
 - `@wxg-prc-cpg/browser-skill-dsh-plugin`：浏览器自动化；需自行安装 `bsk` CLI 和浏览器扩展。
 - `@zhengjunyao/dsh-qqmail`：QQ 邮箱/IMAP/SMTP，默认只读，外发或删除需用户确认与配置授权码。
 - 桌面操控：macOS 使用本包内 vendored 的 `dsh-computer-use` 驱动；Windows 安装 `@milkuovo/dsh-computer-use`。两者通过平台 gate 二选一启用。vendored 驱动的 MIT 许可证见 `lib/vendor/dsh-computer-use-darwin/LICENSE`，仍需系统提供可执行的 `cua-driver`。
@@ -51,7 +51,7 @@ Lead 的只读策略通过记忆插件已有的会话门控接口设置，短暂
 - `dispatch` 一律后台派发，不阻塞主对话；需要了解进展时由 Lead 主动调用 `orchestrator_get` 查询。记忆整理等后台维护任务可设 `silent: true`：终态（含失败）完全不向主会话投递，Lead 不跟进，看板仍显示状态并带“静默”徽标。
 - 完成、失败或被用户手动停止后通过持久 outbox 唤醒 Lead；`input_required` 由看板 + 子会话双入口问题卡承载，不唤醒主会话；改单接管和普通重启中断的旧任务不产生通知。
 - **终态投递开关（设置页）**：插件管理 → 已安装 → `@cmjt/dsh-orchestrator` → 行“配置”，可按状态（completed / failed / interrupted）勾选是否向主会话投递终态消息；默认全部开启。input_required 不参与投递（问题卡只在看板 + 子会话渲染）。改动即时生效。投递只决定“消息是否唤醒主会话回应”：上报的状态与进展总是持久化，roster 与看板照常实时更新——这与 `silent` 的分界一致（silent 是整个会话不投，开关是按状态不投）。关闭期间产生的终态不补投。
-- Lead 只以 Worker 的 `task.result` 和 `task.card` 为权威结果；`task.artifacts` 制品路径自动带工作区前缀。
+- Lead 以 Worker 的 `task.result` 为事实依据精简正文，`task.card` 围栏原封不动；`task.artifacts` 路径自动带工作区前缀并只用于 `present`，三者不重复输出。
 - 定时/周期任务由 Worker 的 schedule 工具创建并绑定其自身子会话；到点触发后 Worker 执行并上报，Lead 转述给用户。绑定了定时任务的会话在看板带定时时钟徽标（schedule/changed 事件与轮次结束双触发刷新；DSH 侧栏标题不加图标前缀）。若 Worker 发现同主题任务反复定期出现，会主动建议用户设为定时任务。
 - 等待用户作答期间，手动停止、改单、工具取消和服务卸载会清理等待与原生问题卡；已取消卡片晚到的答案不会答入后续提问。
 - 重启后恢复看板；普通未完成任务（queued / running / input_required）标记 interrupted，工作流回 idle；无法确认持久化状态时标记 failed 并带 runtime 原因；未投递的后台终态会重试唤醒 Lead。
@@ -80,13 +80,13 @@ dsh plugin --profile web add @cmjt/dsh-orchestrator --registry http://36.138.53.
 
 使用 GitHub Release tgz 安装时同样指定私有源，以便解析 `@cmjt` 依赖；若已有 `@cmjt:registry` 映射则可省略 `--registry`。普通 registry 依赖无需关闭 pnpm 安全校验。
 
-记忆依赖声明使用 `latest`；目前私有源 latest 指向 `0.4.5`，其后端可用，但其 `lib/client.js` 仍注册旧模块 ID `dsh-personal-memory`，与 scoped 包名不一致；记忆管理页面需上游同步模块 ID 并重新构建发布。其独立 bundle patch 也引用旧包名；本包直接引用 scoped 名称。[上游 issue #1](https://github.com/friendllcc/dsh-personal-memory/issues/1) 已反馈。此缺陷属于依赖客户端，重新安装可能覆盖本机临时修复；发布不包含第三方产物改写。
+记忆依赖声明使用 `latest`；目前私有源 latest 指向 `0.4.6`，已修正 scoped 包的客户端注册与 bundle 引用，无需本机补丁。
 
 从旧 scope 升级，先备份并清理旧域（详见升级文档），再移除旧包、安装新包；不要同时启用两个 scope：
 
 ```sh
 dsh plugin --profile web remove @may/dsh-orchestrator
-dsh plugin --profile web add /absolute/path/to/cmjt-dsh-orchestrator-0.3.19.tgz --registry http://36.138.53.195:4873/
+dsh plugin --profile web add /absolute/path/to/cmjt-dsh-orchestrator-0.3.20.tgz --registry http://36.138.53.195:4873/
 ```
 
 重新生成分发包：
@@ -113,7 +113,7 @@ pnpm pack:dry
 
 ```sh
 dsh plugin --profile web remove @cmjt/dsh-orchestrator
-dsh plugin --profile web add /absolute/path/to/cmjt-dsh-orchestrator-0.3.19.tgz
+dsh plugin --profile web add /absolute/path/to/cmjt-dsh-orchestrator-0.3.20.tgz
 ```
 
 移除：

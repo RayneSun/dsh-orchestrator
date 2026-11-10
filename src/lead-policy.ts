@@ -120,5 +120,4 @@ export const LEAD_SUPPRESSED_SECTIONS = [
   'genui:fence',
   'harness:source',
   'app:web-surface',
-  'ui:deliverable-file-references',
 ] as const

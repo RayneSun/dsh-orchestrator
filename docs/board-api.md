@@ -1,7 +1,7 @@
-# dsh-orchestrator 任务看板数据接口（v0.3.19）
+# dsh-orchestrator 任务看板数据接口（v0.3.20）
 
 > 面向下游（移动端 App）开发者。本文档描述 DSH Orchestrator 插件在 DSH Web（默认 `http://127.0.0.1:3080`）中暴露的任务看板数据结构、状态定义、同步机制与展示建议。
-> 完整契约；相比 0.3.18 的适配步骤见 [变更说明](board-api-v0.3.19-changes.md)。
+> 完整契约；相比 0.3.19 的无字段变化说明见[变更说明](board-api-v0.3.20-changes.md)；0.3.18 升级仍需阅读[破坏性变更与迁移步骤](board-api-v0.3.19-changes.md)。
 
 **⚠️ v0.3.18 → v0.3.19 破坏性变化（下游必读）**：
 1. **Task 字段拍平**：`task.report = { result, artifacts?, card? }` 拆为顶层 `task.result / task.artifacts / task.card`；`task.fail = { error, reasonCode? }` 拆为顶层 `task.error / task.reasonCode`。旧包裹字段不再输出。
@@ -88,8 +88,8 @@ Task 是子会话内的一次任务执行记录（一次 dispatch / 一次定时
 | progressNote | string? | 一句话进展汇报（拟人风格，实时刷新） |
 | questions | QuestionItem[]? | `input_required` 时必填，结构化问题，见 §4 |
 | answers | QuestionAnswer[]? | 问题卡作答留痕；Host 恢复 running 前写入，同轮继续 |
-| result | string? | `completed` 时必填：用户最终看到的权威答案文本 |
-| artifacts | string[]? | completed 产物文件（子工作区相对路径） |
+| result | string? | `completed` 时必填：面向用户的简短结论，不含文件路径或实现细节，不重复 card/制品内容 |
+| artifacts | string[]? | completed 关键制品文件（子工作区相对路径），由 Lead 通过 present 交付 |
 | card | Record<string, unknown>? | completed 的 dsh-ui 展示卡片 JSON（≤16KB，禁围栏嵌套） |
 | error | string? | `failed` 时必填：失败原因 |
 | reasonCode | BlockReasonCode? | failed 的系统阻碍类别；普通失败不填 |
