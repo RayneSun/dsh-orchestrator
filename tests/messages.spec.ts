@@ -98,9 +98,13 @@ describe('scheduleStatusSection 投递附言', () => {
 })
 
 describe('prompt 编排约定', () => {
-  it('Lead prompt 约定一事一会、subject 精简与 Worker 能力清单', () => {
-    expect(LEAD_PROMPT).toContain('一事一会')
-    expect(LEAD_PROMPT).toContain('复用 conversationId')
+  it('Lead prompt 约定连续新增需求复用会话、subject 宽泛稳定与 Worker 能力清单', () => {
+    expect(LEAD_PROMPT).toContain('## 任务派发指南')
+    expect(LEAD_PROMPT).toContain('同一事项连续新增')
+    expect(LEAD_PROMPT).toContain('复用它的 conversationId')
+    expect(LEAD_PROMPT).toContain('subject 要宽泛、稳定')
+    expect(LEAD_PROMPT).not.toContain('## 静默派发（silent）')
+    expect(LEAD_PROMPT).toContain('4. 静默派发（silent）')
     expect(LEAD_PROMPT).toContain('Worker 能做什么')
     expect(LEAD_PROMPT).toContain('dsh-ui 卡片能力')
     expect(LEAD_PROMPT).toContain('用户日程管理')
@@ -109,6 +113,8 @@ describe('prompt 编排约定', () => {
     expect(LEAD_PROMPT).toContain('按照下方的输出规范回复用户')
     expect(LEAD_PROMPT).toContain('dsh-ui 围栏')
     expect(LEAD_PROMPT).toContain('原封不动')
+    expect(LEAD_PROMPT).toContain('以 ```dsh-ui 开头、以单独的 ``` 结尾')
+    expect(LEAD_PROMPT).toContain('两个标记都不能漏')
     expect(LEAD_PROMPT).toContain('同一信息只在一个载体出现')
     expect(LEAD_PROMPT).toContain('紧扣用户原始需求')
     expect(LEAD_PROMPT).toContain('只说结果')
