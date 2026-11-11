@@ -446,6 +446,7 @@ export class OrchestratorService extends TypertRemoteService {
       name: 'orchestrator:roster',
       order: 610,
       text: () => this.renderRoster(String(agent.session.id)),
+      interpolate: false,
     }))
     // 遮蔽与主控无关的全局提示段（记忆写入手册、qqmail 公告）：这些能力的使用方是 Worker。
     for (const sectionName of LEAD_SUPPRESSED_SECTIONS) {

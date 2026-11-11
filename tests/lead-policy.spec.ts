@@ -1,5 +1,7 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { readFileSync } from 'node:fs'
+import { renderPrompt } from '@deepseek-ai/dsh-system-prompt'
+import { OrchestratorService } from '../src/service.ts'
 import { DSH_CORE_TOOL_BASELINE, LEAD_SUPPRESSED_SECTIONS, LEAD_TOOL_DENY, LEAD_TOOL_KEEP, leadToolDenyList, unrecognizedGlobalTools } from '../src/lead-policy.ts'
 
 describe('Lead 工具黑名单与提示段抑制', () => {
@@ -65,3 +67,49 @@ describe('Lead 工具黑名单与提示段抑制', () => {
     expect(LEAD_TOOL_DENY).not.toContain('present')
   })
 })
+
+describe('Lead roster 提示词', () => {
+  it('任务结果等动态文本中的模板花括号按字面渲染', async () => {
+    const sections = new Map<string, { name: string, text: () => string, interpolate?: boolean }>()
+    const service = Object.create(OrchestratorService.prototype)
+    Object.assign(service, {
+      installed: new Map(),
+      resetInstalled: async () => {},
+      applyLeadToolDenylist: () => {},
+      registerGenuiCardSkill: () => {},
+      leadTools: () => [],
+      snapshotFor: () => ({ conversations: [{
+        id: 'conv', state: 'idle', title: '标题 {{ }}', outline: { summary: '摘要 {{unknown}}' },
+        createdAt: '2026-11-11T00:00:00.000Z', updatedAt: '2026-11-11T00:00:00.000Z',
+        activeTaskId: null, lastTaskId: 'task',
+      }] }),
+      taskById: () => ({ subject: '任务', result: '结果 {{ }} 与 {{unknown}}' }),
+      schedulesOf: () => [{ status: 'pending', title: '日程 {{ }}' }],
+      hostCtx: {
+        sessions: { flush: async () => {} },
+        get: () => ({ getOrigin: () => 'http://localhost' }),
+        logger: { warn: vi.fn() },
+      },
+    })
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('{"ok":true}')))
+    const agent = { session: { id: 'lead' }, ctx: {
+      systemPrompt: { section: (section: { name: string, text: () => string, interpolate?: boolean }) => {
+        sections.set(section.name, section)
+        return () => {}
+      } },
+      on: () => () => {},
+    } }
+
+    await service.configureLead(agent)
+    const roster = sections.get('orchestrator:roster')!
+    const rendered = renderPrompt({
+      sections: [{ name: roster.name, text: roster.text(), interpolate: roster.interpolate }],
+      contexts: [], tools: [], variables: {},
+    })
+    expect(rendered).toContain('结果 {{ }} 与 {{unknown}}')
+    expect(rendered).toContain('标题 {{ }}')
+    expect(rendered).toContain('日程 {{ }}')
+  })
+})
+
+afterEach(() => vi.unstubAllGlobals())

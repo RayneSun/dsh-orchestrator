@@ -13,7 +13,7 @@ Worker 的任务上报协议、安全红线（支付/删除等不可逆操作先
 
 - `task_running`：进行中上报，可带 `header`（最多 8 个字的状态标题）与 `progressNote`（一句话进展）
 - `task_input_required`：必带结构化 `questions`，在看板和子会话渲染同源问题卡；阻塞工具调用，任一入口作答后工具直接返回用户答案，Worker 同轮继续
-- `task_completed`：终态，必带 `result`（无文件路径的简短结论，不写实现细节）；结构化明细可传 `card`（dsh-ui 展示卡片 JSON），关键文件可传 `artifacts`；三者分工且不重复，提交后本轮立即结束
+- `task_completed`：终态，必带 `result`（只阐述用户需求的最终结果，不写怎么做，不含过程性内容或文件路径）；结构化明细可传 `card`（dsh-ui 展示卡片 JSON），关键文件可传 `artifacts`；三者分工且不重复，提交后本轮立即结束
 - `task_failed`：终态，必带 `error`，系统阻碍另加 `reasonCode`；提交后本轮立即结束
 - `task_schedule`：**用户日程**维护（需要用户本人推进的事），与任务状态无关、随时可调用——新的放 `create`（title 必填，可加 startAt/endAt / remindAt / priority / links / attachments / contacts / location / remark），改的放 `update`（抄 id 标 done 或 cancelled 作废）；日程主会话 scope 独立成表，`conversationId` 归属回链，代办/修改都派回所属子会话处理。看板会话卡片上以日程框展示、用户可画勾。
 
@@ -51,7 +51,7 @@ Lead 的只读策略通过记忆插件已有的会话门控接口设置，短暂
 - `dispatch` 一律后台派发，不阻塞主对话；需要了解进展时由 Lead 主动调用 `orchestrator_get` 查询。记忆整理等后台维护任务可设 `silent: true`：终态（含失败）完全不向主会话投递，Lead 不跟进，看板仍显示状态并带“静默”徽标。
 - 完成、失败或被用户手动停止后通过持久 outbox 唤醒 Lead；`input_required` 由看板 + 子会话双入口问题卡承载，不唤醒主会话；改单接管和普通重启中断的旧任务不产生通知。
 - **终态投递开关（设置页）**：插件管理 → 已安装 → `@cmjt/dsh-orchestrator` → 行“配置”，可按状态（completed / failed / interrupted）勾选是否向主会话投递终态消息；默认全部开启。input_required 不参与投递（问题卡只在看板 + 子会话渲染）。改动即时生效。投递只决定“消息是否唤醒主会话回应”：上报的状态与进展总是持久化，roster 与看板照常实时更新——这与 `silent` 的分界一致（silent 是整个会话不投，开关是按状态不投）。关闭期间产生的终态不补投。
-- Lead 以 Worker 的 `task.result` 为事实依据精简正文，`task.card` 围栏原封不动；`task.artifacts` 路径自动带工作区前缀并只用于 `present`，三者不重复输出。
+- Lead 紧扣用户原始需求，以 Worker 的 `task.result` 为事实依据只输出结果，不补充子会话执行过程；`task.card` 围栏原封不动；`task.artifacts` 路径自动带工作区前缀并只用于 `present`，三者不重复输出。
 - 定时/周期任务由 Worker 的 schedule 工具创建并绑定其自身子会话；到点触发后 Worker 执行并上报，Lead 转述给用户。绑定了定时任务的会话在看板带定时时钟徽标（schedule/changed 事件与轮次结束双触发刷新；DSH 侧栏标题不加图标前缀）。若 Worker 发现同主题任务反复定期出现，会主动建议用户设为定时任务。
 - 等待用户作答期间，手动停止、改单、工具取消和服务卸载会清理等待与原生问题卡；已取消卡片晚到的答案不会答入后续提问。
 - 重启后恢复看板；普通未完成任务（queued / running / input_required）标记 interrupted，工作流回 idle；无法确认持久化状态时标记 failed 并带 runtime 原因；未投递的后台终态会重试唤醒 Lead。

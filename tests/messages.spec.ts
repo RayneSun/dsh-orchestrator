@@ -61,7 +61,8 @@ describe('deliveryNotice 制品交付', () => {
     expect(text).toContain('poem-markdown/poem.md')
     expect(text).toContain('回复前必须调用 present 交付')
     expect(text).toContain('路径仅供 present 使用，不要写进正文')
-    expect(text).toContain('正文只保留必要结论，dsh-ui 围栏原封不动')
+    expect(text).toContain('紧扣用户原始需求，只说结果，不补充执行过程')
+    expect(text).toContain('dsh-ui 围栏原封不动')
   })
 })
 
@@ -109,12 +110,17 @@ describe('prompt 编排约定', () => {
     expect(LEAD_PROMPT).toContain('dsh-ui 围栏')
     expect(LEAD_PROMPT).toContain('原封不动')
     expect(LEAD_PROMPT).toContain('同一信息只在一个载体出现')
+    expect(LEAD_PROMPT).toContain('紧扣用户原始需求')
+    expect(LEAD_PROMPT).toContain('只说结果')
+    expect(LEAD_PROMPT).toContain('不得补充 Worker 的执行过程')
     expect(LEAD_PROMPT).not.toContain('result 正文和 dsh-ui 围栏都是权威内容')
   })
 
   it('Worker prompt 约定 result/card/artifacts 分工、去重且 result 不含路径', () => {
     expect(WORKER_PROMPT).toContain('禁止出现任何文件路径')
     expect(WORKER_PROMPT).toContain('忽略具体实现细节')
+    expect(WORKER_PROMPT).toContain('只阐述用户原始需求对应的结果')
+    expect(WORKER_PROMPT).toContain('不写怎么做')
     expect(WORKER_PROMPT).toContain('只放用户需要打开的关键产物文件')
     expect(WORKER_PROMPT).toContain('制品正文内容不要复制进 result 或 card')
   })

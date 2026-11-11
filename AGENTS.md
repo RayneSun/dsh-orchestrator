@@ -146,6 +146,7 @@ uv run --no-project --python /usr/bin/python3 python -c 'import subprocess; subp
 
 - 闲聊、概念解释、当前对话内可答的问题**直接回答，不调任何工具**；需要实际执行（联网/文件/命令/浏览器）才派发。
 - background 派发后只回一句简短自然确认（"好，这就改"）；禁止"任务正在后台进行/Worker 完成后我会发给你"等系统腔；不暴露 Worker/Conversation/TaskRun 等词；不提前承诺交付物。
+- 输出正文必须紧扣用户原始需求，只说结果，不补充 Worker 的执行过程、方法、步骤或工具调用等过程性内容。
 - 一事一会：同一事项的追问、改单、继续推进必须由 Lead 按 roster 复用原 conversationId；只是"同类"的两件事（两个不同提醒、两次不同购物）必须分别新建会话。subject 要非常精简（约 10 字以内、手机端一行可读）。
 - 记忆维护类任务必须 `silent: true` 派发（终态不投递）；用户常在手机端，failed + reasonCode 时也不得指导用户手改文件/命令/配置。
 - 记忆写入全部由 Worker 完成：Lead 发现值得记的信息派 silent 轻量任务让 Worker 写入（任务里给出写好的条目内容），任务中产生的记忆由执行它的 Worker 顺手记；写入前先查重。
@@ -154,7 +155,7 @@ uv run --no-project --python /usr/bin/python3 python -c 'import subprocess; subp
 
 - **5 个独立工具（v0.3.19 起，单工具 `task_update` 已删除）**：`task_running` / `task_input_required` / `task_completed` / `task_failed` / `task_schedule`。每个工具的 zod input schema（`taskReportInputSchemas` / `taskScheduleInputSchema`）只含该工具合法字段，schema 结构即校验——不再有 allowlist / superRefine 交叉校验（单工具 + 条件必填被模型多次踩坑，拆分是根治）。四个状态工具可带 header（≤8 字极简状态标题）和 progressNote（一句话进展）；task_schedule 不带进度字段。
   - `task_input_required`：必填 `questions[]`，结构化问卷 `{id?, question, header?, detail?, options?, multi_select?}`，Worker 的 id 可省略，Host 补 q1/q2/…，snapshot 与作答后的 answers 使用该 id。阻塞工具调用，返回值即用户答案。
-  - `task_completed`：必填 `result`（无文件路径的简短结论）；可选 `artifacts`（关键制品的子工作区相对路径，投递时自动加工作区前缀，仅供 Lead 调用 present）与 `card`（dsh-ui 结构化明细 JSON，Host 序列化围栏后由 Lead 原封不动输出）；正文、卡片和制品不重复。
+  - `task_completed`：必填 `result`（只阐述用户需求的最终结果，不写怎么做，不含过程性内容或文件路径）；可选 `artifacts`（关键制品的子工作区相对路径，投递时自动加工作区前缀，仅供 Lead 调用 present）与 `card`（dsh-ui 结构化明细 JSON，Host 序列化围栏后由 Lead 原封不动输出）；正文、卡片和制品不重复。
   - `task_failed`：必填 `error`，系统阻碍加 `reasonCode`。
   - `task_schedule`：日程 CRUD（`create`/`update` 分桶，create.title / update.id 在 DSL 层静态必填——分支规则必须由结构而非文案表达）；返回最新日程清单投影，与任务状态无关、不产生状态迁移。
   - **存储拍平**：TaskRecord 顶层 `result/artifacts/card/error/reasonCode`，`report/fail` 包裹层删除；domain v3 隔离旧存储，不加载、不迁移旧记录。transitionTask 输入是判别联合 `TaskTransitionInput`，按 status 收敛字段并清空非对应终态字段；保留已回答的问题及答案。

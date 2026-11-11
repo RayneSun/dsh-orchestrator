@@ -88,7 +88,7 @@ Task 是子会话内的一次任务执行记录（一次 dispatch / 一次定时
 | progressNote | string? | 一句话进展汇报（拟人风格，实时刷新） |
 | questions | QuestionItem[]? | `input_required` 时必填，结构化问题，见 §4 |
 | answers | QuestionAnswer[]? | 问题卡作答留痕；Host 恢复 running 前写入，同轮继续 |
-| result | string? | `completed` 时必填：面向用户的简短结论，不含文件路径或实现细节，不重复 card/制品内容 |
+| result | string? | `completed` 时必填：只阐述用户需求的最终结果，不写怎么做，不含过程性内容或文件路径，不重复 card/制品内容 |
 | artifacts | string[]? | completed 关键制品文件（子工作区相对路径），由 Lead 通过 present 交付 |
 | card | Record<string, unknown>? | completed 的 dsh-ui 展示卡片 JSON（≤16KB，禁围栏嵌套） |
 | error | string? | `failed` 时必填：失败原因 |

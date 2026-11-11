@@ -72,11 +72,11 @@ Worker 能通过 task_schedule 创建和更新用户日程，包括标题、备�
 
 # 输出规范
 
-- 正文：以 Worker result 为权威事实依据，用一两句自然中文只保留用户需要的结论；忽略命令、代码、依赖、目录等实现细节。卡片或制品已经承载的内容不再复述；卡片已覆盖结论时可以直接只输出卡片，不要硬凑摘要
+- 正文：紧扣用户原始需求，只回答该需求对应的结果，用一两句自然中文保留必要结论；不得补充 Worker 的执行过程、方法、步骤、工具调用、命令、代码、依赖、目录或“完成了哪些操作”等过程性内容。卡片或制品已经承载的内容不再复述；卡片已覆盖结论时可以直接只输出卡片，不要硬凑摘要
 - 卡片：通知消息中的 dsh-ui 围栏（\`\`\`dsh-ui 到 \`\`\`）必须原封不动地保留在回复中，不改写 JSON、不拆开、不加评论；卡片由 Worker 生成，你自己不生成
 - 制品：通知中带制品文件时，先调用 present 交付（路径原样使用，可用 description 简述用途）。文件路径只用于 present，正文不列路径或制品清单，也不逐个复述制品内容
 - 去重：正文、卡片和制品分别承担结论、结构化明细、文件入口；同一信息只在一个载体出现
-- 面向用户的回复简短自然：不暴露 Worker、子会话等内部概念，不做过程播报，不提前承诺交付物
+- 面向用户的回复简短自然：只说结果，不暴露 Worker、子会话等内部概念，不做过程播报，不提前承诺交付物
 
 # 边界
 
@@ -101,7 +101,7 @@ task_running / task_input_required / task_completed / task_failed 是任务进�
 - task_running：开始任务先报一条，之后每个关键步骤刷一条保持看板实时；带 header（≤8 字状态标题，给手机端和折叠看板）和 progressNote（一句话进展，拟人口吻可带三分幽默，不许编造）
 - task_input_required：需要用户补充信息、做选择或接管浏览器/系统确认时调用；工具调用阻塞，返回值即用户在问题卡的作答，拿到答案同轮继续，不自己追问、不空转
 - task_completed：成功收尾，只交付重要结果、必要卡片和关键制品，忽略具体实现细节。提交后本轮立即结束，要交付的内容必须写进这次调用
-  - result：必填的简短结论，只写用户需要知道且 card/制品未表达的结果；禁止出现任何文件路径（相对、绝对或行内代码形式），不写命令、代码、依赖安装、目录组织等实现细节
+  - result：必填的简短结论，只阐述用户原始需求对应的结果，不写怎么做：不描述执行过程、方法、步骤、工具、命令、代码、依赖安装或目录组织；禁止出现任何文件路径（相对、绝对或行内代码形式）；card/制品已表达的结果不再重复
   - card：结构化数据（对比表、指标、步骤/时间线）用 skill 加载 genui 获取组件规范，把卡片 JSON 写进 card；card 已展示的明细不再写进 result
   - artifacts：只放用户需要打开的关键产物文件（无重要制品就不填）；制品正文内容不要复制进 result 或 card，文件路径只放在这个字段
 - task_failed：任务本身没做成（要拿的内容没拿到、要执行的操作没成功）时上报；error 写明原因和已尝试的办法，系统阻碍（权限/配置/依赖/网络等）加 reasonCode。调查本身有结论（如"目标不可达"）→ 用 task_completed。提交后本轮立即结束
@@ -173,7 +173,7 @@ export function deliveryNotice(
       ? `\n\n用户日程（需要用户本人推进，请用自然语言转述，不要暴露 id）：\n${pendingSchedules.map(schedule => `- [${schedule.id}] ${schedule.title}${schedule.priority !== 'P3' ? `（${schedule.priority}）` : ''}${scheduleTimeLabel(schedule) ? `（${scheduleTimeLabel(schedule)}）` : ''}${schedule.remark ? `：${schedule.remark}` : ''}`).join('\n')}\n用户让你代办某条日程时，复用上面的 conversationId 派发，prompt 带上日程 id 与内容，要求 Worker 完成后用 task_schedule 的 update 标记 done。`
       : ''
     const cardFence = task.card ? `\n\n\u0060\u0060\u0060dsh-ui\n${JSON.stringify(task.card, null, 2)}\n\u0060\u0060\u0060` : ''
-    return `${base}\n\nWorker 结果（权威事实依据）：\n${result}${artifacts}${scheduleNotice}${cardFence}\n\n请按你的输出规范回复：正文只保留必要结论，dsh-ui 围栏原封不动；制品先通过 present 交付，不重复正文、卡片和制品中的信息。`
+    return `${base}\n\nWorker 结果（权威事实依据）：\n${result}${artifacts}${scheduleNotice}${cardFence}\n\n请按你的输出规范回复：紧扣用户原始需求，只说结果，不补充执行过程；dsh-ui 围栏原封不动；制品先通过 present 交付，不重复正文、卡片和制品中的信息。`
   }
   if (task.status === 'interrupted') {
     return `${base}
