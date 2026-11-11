@@ -53,8 +53,9 @@ describe('client orchestrator mount', () => {
     await apply(harness.root as any)
 
     expect(harness.root.remote.$mount).toHaveBeenCalledOnce()
-    expect(harness.root.inject).toHaveBeenCalledOnce()
-    expect(harness.root.inject.mock.calls[0]![0]).toContain('remote.orchestrator')
+    expect(harness.root.inject).toHaveBeenCalledTimes(2)
+    expect(harness.root.inject.mock.calls[0]![0]).toEqual(['remote.session'])
+    expect(harness.root.inject.mock.calls[1]![0]).toContain('remote.orchestrator')
     expect(() => harness.root.remote.orchestrator).toThrow('without inject')
 
     const body = harness.entries.find(

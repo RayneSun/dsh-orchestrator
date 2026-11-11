@@ -90,11 +90,15 @@ export async function apply(ctx: Context): Promise<() => Promise<void>> {
     throw error
   }
 
-  // 设置卡片（终态投递开关）挂载失败不拖垮看板。
+  let settings: { dispose(): Promise<void> } | undefined
+  // 设置卡片挂载失败不拖垮看板；remote.session 必须在显式 inject 子作用域读取。
   try {
-    registerSettingsCard(client)
+    settings = client.inject(['remote.session'], registerSettingsCard)
+    await settings
   } catch (error) {
     console.error('orchestrator settings card mount failed', error)
+    await settings?.dispose()
+    settings = undefined
   }
 
   const ui = client.inject(
@@ -105,12 +109,14 @@ export async function apply(ctx: Context): Promise<() => Promise<void>> {
     await ui
   } catch (error) {
     await ui.dispose()
+    await settings?.dispose()
     await disposeRemote()
     throw error
   }
 
   return async () => {
     await ui.dispose()
+    await settings?.dispose()
     await disposeRemote()
   }
 }

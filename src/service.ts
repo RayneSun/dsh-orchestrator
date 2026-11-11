@@ -103,11 +103,19 @@ interface ModelSelectionLike {
   model?: string
   reasoningEffort?: ReasoningEffort
 }
+type ExactModelSelection = ModelSelectionLike & { provider: string, model: string }
+function hasExactModel(selection: ModelSelectionLike | null | undefined): selection is ExactModelSelection {
+  return Boolean(selection?.provider && selection.model)
+}
 interface SessionProjectionsLike {
   stateOf(session: unknown, key: string): { pending?: ModelSelectionLike | null } | undefined
 }
 interface AgentDefaultModelLike {
   currentSelection(): ModelSelectionLike
+}
+interface AgentModelSelectionRegistryLike {
+  selectionFor(agent: Agent): { current: ModelSelectionLike }
+  selectForNextRequest(agent: Agent, selection: ExactModelSelection): void
 }
 /** Worker 子会话用空 section 遮蔽的全局系统提示段（同名 scoped section shadow 全局）。 */
 const WORKER_SUPPRESSED_SECTIONS = ['harness:source', 'app:web-surface', 'ui:deliverable-file-references', 'genui:fence'] as const
@@ -178,10 +186,14 @@ function rosterTaskSegment(active: TaskRecord | undefined, last: TaskRecord | un
 }
 
 /** 设置页（插件管理 → 本包行配置）的 volatile 配置引用：.get() 读实时值，改动即时生效不重启。 */
+interface ConfigRef<T> { get(): T | undefined }
 interface OrchestratorConfigRefs {
-  deliverOnCompleted?: { get(): boolean }
-  deliverOnFailed?: { get(): boolean }
-  deliverOnInterrupted?: { get(): boolean }
+  deliverOnCompleted?: ConfigRef<boolean>
+  deliverOnFailed?: ConfigRef<boolean>
+  deliverOnInterrupted?: ConfigRef<boolean>
+  workerProvider?: ConfigRef<string>
+  workerModel?: ConfigRef<string>
+  workerReasoningEffort?: ConfigRef<string>
 }
 
 export class OrchestratorService extends TypertRemoteService {
@@ -200,6 +212,9 @@ export class OrchestratorService extends TypertRemoteService {
     deliverOnCompleted: sz.boolean().default(true).volatile(),
     deliverOnFailed: sz.boolean().default(true).volatile(),
     deliverOnInterrupted: sz.boolean().default(true).volatile(),
+    workerProvider: sz.string().default('').volatile(),
+    workerModel: sz.string().default('').volatile(),
+    workerReasoningEffort: sz.string().default('').volatile(),
   })
 
   private ready: Promise<void>
@@ -233,7 +248,7 @@ export class OrchestratorService extends TypertRemoteService {
   /** 从 volatile 引用实时解析投递开关（设置页改动立即反映到下一次判定）。 */
   private deliveryToggles(): DeliveryToggles {
     const refs = this.configRefs
-    const read = (ref?: { get(): boolean }) => ref?.get() !== false
+    const read = (ref?: ConfigRef<boolean>) => ref?.get() !== false
     return {
       completed: read(refs?.deliverOnCompleted),
       failed: read(refs?.deliverOnFailed),
@@ -843,6 +858,7 @@ export class OrchestratorService extends TypertRemoteService {
     if (args.conversationId) {
       const existing = this.conversationById(args.conversationId)
       if (!existing || existing.parentSessionId !== parentSessionId) return { ok: false, result: { kind: 'error', error: 'conversation not found' } }
+      await this.refreshWorkerModelIfUnavailable(existing.childSessionId, parent)
 
       // 改需求：先在存储里原子完成“旧任务 interrupted + 新任务 active”，再取消子会话当前轮次，
       // 最后用 followup 把新需求注入同一个持久子会话。这样旧轮次的 turn/end 到达时不会把旧任务误判为 failed。
@@ -1005,62 +1021,110 @@ export class OrchestratorService extends TypertRemoteService {
     }
   }
 
+  /** 设置项只有 provider/model 同时存在才构成有效覆盖。 */
+  private configuredWorkerModel(): ExactModelSelection | undefined {
+    const provider = this.configRefs?.workerProvider?.get()?.trim()
+    const model = this.configRefs?.workerModel?.get()?.trim()
+    if (!provider || !model) return undefined
+    const reasoningEffort = this.configRefs?.workerReasoningEffort?.get()?.trim()
+    return { provider, model, ...reasoningEffort ? { reasoningEffort: reasoningEffort as ReasoningEffort } : {} }
+  }
+
+  /** false 仅表示目录明确不含该模型；目录查询失败返回 undefined，避免误改正常会话。 */
+  private async modelAvailable(selection: ModelSelectionLike): Promise<boolean | undefined> {
+    if (!hasExactModel(selection)) return undefined
+    try {
+      const catalog = await this.hostCtx.sessionController.modelCatalog()
+      const group = catalog.groups.find(item => item.id === selection.provider)
+      if (!group) return catalog.failures.some(item => item.id === selection.provider) ? undefined : false
+      const model = group.models.find(item => item.id === selection.model)
+      if (!model) return false
+      if (selection.reasoningEffort && model.reasoning
+        && !model.reasoning.efforts.some(item => item.id === selection.reasoningEffort)) return false
+      return true
+    } catch (error) {
+      this.hostCtx.logger.warn(`orchestrator: model availability check failed: ${String(error)}`)
+      return undefined
+    }
+  }
+
+  private withModelSelection(parent: Agent, selection: ExactModelSelection): Agent['options'] {
+    return {
+      ...parent.options,
+      provider: selection.provider,
+      model: selection.model,
+      ...selection.reasoningEffort ? { reasoningEffort: selection.reasoningEffort } : {},
+    }
+  }
+
   /**
    * Worker 的模型选项。Agent.options 只是会话创建时的快照：用户在主会话里切换模型走
    * 会话级选择（model/selection 事件 + requestHeader），不回写 options。这里按
    * session-controller 内部 selectionFor 的同一顺序解析主会话当前生效模型——
-   * 会话级 pending 选择 → 最近请求头 → 全局默认——覆盖 provider/model/reasoningEffort；
+   * 可用默认设置 → 会话级 pending 选择 → 最近请求头 → 全局默认——覆盖 provider/model/reasoningEffort；
    * 任一步读取失败回退到创建快照。Worker 首个请求头落盘后，后续轮次沿用它。
    */
-  private workerModelOptions(parent: Agent): Agent['options'] {
+  private async workerModelOptions(parent: Agent): Promise<Agent['options']> {
+    const configured = this.configuredWorkerModel()
+    if (configured) {
+      if (await this.modelAvailable(configured) !== false) return this.withModelSelection(parent, configured)
+      this.hostCtx.logger.warn(`orchestrator: configured worker model unavailable, inherit lead: ${configured.provider}/${configured.model}`)
+    }
     try {
       const projections = (this.hostCtx as unknown as { sessionProjections?: SessionProjectionsLike }).sessionProjections
       const pending = projections?.stateOf(parent.session, 'modelSelection')?.pending
-      if (pending?.provider && pending.model) {
-        return {
-          ...parent.options,
-          provider: pending.provider,
-          model: pending.model,
-          ...pending.reasoningEffort ? { reasoningEffort: pending.reasoningEffort } : {},
-        }
-      }
+      if (hasExactModel(pending)) return this.withModelSelection(parent, pending)
       const header = parent.session.requestHeader()
       if (header?.config.provider && header.config.model) {
         const keepEffort = header.config.reasoningEffort !== undefined && header.adapterDefaults?.reasoningEffort !== true
-        return {
-          ...parent.options,
+        return this.withModelSelection(parent, {
           provider: header.config.provider,
           model: header.config.model,
           ...keepEffort ? { reasoningEffort: header.config.reasoningEffort } : {},
-        }
+        })
       }
       const defaults = (this.hostCtx as unknown as { agentDefaultModel?: AgentDefaultModelLike }).agentDefaultModel
       const fallback = defaults?.currentSelection()
-      if (fallback?.provider && fallback.model) {
-        return {
-          ...parent.options,
-          provider: fallback.provider,
-          model: fallback.model,
-          ...fallback.reasoningEffort ? { reasoningEffort: fallback.reasoningEffort } : {},
-        }
-      }
+      if (hasExactModel(fallback)) return this.withModelSelection(parent, fallback)
     } catch (error) {
       this.hostCtx.logger.warn(`orchestrator: read lead model selection failed: ${String(error)}`)
     }
     return { ...parent.options }
   }
 
+  /** 旧 Worker 保持原模型；仅在模型明确失效时按新 Worker 的优先级重选，不重建会话。 */
+  private async refreshWorkerModelIfUnavailable(childSessionId: string, parent: Agent): Promise<void> {
+    const agents = this.hostCtx.agents as unknown as AgentModelSelectionRegistryLike | undefined
+    if (!agents || typeof agents.selectionFor !== 'function' || typeof agents.selectForNextRequest !== 'function') return
+    await this.withAgent(childSessionId, async agent => {
+      const current = agents.selectionFor(agent).current
+      if (await this.modelAvailable(current) !== false) return
+      const next = await this.workerModelOptions(parent)
+      if (!hasExactModel(next)) {
+        this.hostCtx.logger.warn(`orchestrator: worker model unavailable and no replacement found: ${current.provider}/${current.model}`)
+        return
+      }
+      const selection = {
+        provider: next.provider,
+        model: next.model,
+        ...next.reasoningEffort ? { reasoningEffort: next.reasoningEffort } : {},
+      }
+      agents.selectForNextRequest(agent, selection)
+      this.hostCtx.logger.info(`orchestrator: worker model reassigned: ${current.provider}/${current.model} -> ${selection.provider}/${selection.model}`)
+    })
+  }
+
   /**
    * 创建根级别的 Worker 会话：与主会话同为一等会话（不带 origin/delegationDepth 的
    * subagent 血统），因此 schedule 等只对 depth-0 会话开放的宿主能力对 Worker 可用。
-   * cwd 与 agentPreset 直接写入 session header，冷恢复后保持不变；模型继承主会话当前生效的选择。
+   * cwd 与 agentPreset 直接写入 session header，冷恢复后保持不变；模型优先使用默认设置。
    */
   private async createWorkerAgent(childSessionId: string, cwd: string, parent: Agent, title: string): Promise<void> {
     await this.hostCtx.agents.withoutInitiator(async () => {
       const handle = await this.hostCtx.agents.create({
         sessionId: childSessionId as SessionId,
         meta: { cwd, agentPreset: WORKER_PRESET },
-        agentOptions: this.workerModelOptions(parent),
+        agentOptions: await this.workerModelOptions(parent),
         signal: AbortSignal.timeout(LAUNCH_ACCEPT_TIMEOUT_MS),
       })
       try {
