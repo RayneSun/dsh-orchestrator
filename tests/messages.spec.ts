@@ -93,8 +93,10 @@ describe('prompt 编排约定', () => {
     expect(LEAD_PROMPT).toContain('4. 静默派发（silent）')
     expect(LEAD_PROMPT).toContain('Worker 能做什么')
     expect(LEAD_PROMPT).toContain('dsh-ui 卡片能力')
-    expect(LEAD_PROMPT).toContain('用户日程管理')
+    expect(LEAD_PROMPT).toContain('用户待办/日程管理')
     expect(LEAD_PROMPT).toContain('task_schedule')
+    expect(LEAD_PROMPT).toContain('尽量填全 startAt/endAt/remindAt')
+    expect(LEAD_PROMPT).toContain('自行选择合理的提前量')
     expect(LEAD_PROMPT).not.toMatch(/schedules\.(create|update)/)
     expect(LEAD_PROMPT).toContain('按照下方的输出规范回复用户')
     expect(LEAD_PROMPT).toContain('dsh-ui 围栏')
@@ -125,5 +127,14 @@ describe('prompt 编排约定', () => {
   it('Worker prompt 约定重复模式主动建议定时任务', () => {
     expect(WORKER_PROMPT).toContain('反复定期出现')
     expect(WORKER_PROMPT).toContain('schedule_create 绑定本会话')
+  })
+
+  it('Worker prompt 引导按事件填全起止与提醒时间', () => {
+    expect(WORKER_PROMPT).toContain('# 用户待办/日程（task_schedule）')
+    expect(WORKER_PROMPT).toContain('尽量填全 startAt/endAt/remindAt')
+    expect(WORKER_PROMPT).toContain('根据事件类型合理估计')
+    expect(WORKER_PROMPT).toContain('自行选择合理的提前量')
+    expect(WORKER_PROMPT).toContain('不要对所有事项套用固定提前时间')
+    expect(WORKER_PROMPT).toContain('若判断提前 20 分钟合适')
   })
 })

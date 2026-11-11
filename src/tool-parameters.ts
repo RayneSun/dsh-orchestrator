@@ -22,9 +22,9 @@ const PROGRESS_NOTE_PARAM = { type: 'string', description: '一行精简进展�
 const SCHEDULE_ITEM_PROPERTIES = {
   title: { type: 'string', required: true, description: '日程标题（极简，≤30 字）' },
   allDay: { type: 'boolean', description: '全天日程：true 时 startAt 必填完整纯日期（如 2026-11-04），endAt 可选且尾日包含（11-04 到 11-06 填 2026-11-06），均不带时刻' },
-  startAt: { type: 'string', description: '开始时间；普通日程如 10-28 09:00（可带年份，无年份按未来就近解析）；全天日程用完整纯日期' },
-  endAt: { type: 'string', description: '结束时间；普通日程如 10-28 22:00；全天日程用完整纯日期，尾日包含当天' },
-  remindAt: { type: 'string', description: '提醒时间元数据，如 10-28 17:30（供 App 通知使用；本插件不会据此自动触发提醒）' },
+  startAt: { type: 'string', description: '事件开始时间；普通日程如 10-28 09:00（可带年份，无年份按未来就近解析）；全天日程用完整纯日期' },
+  endAt: { type: 'string', description: '事件结束时间；未明确时按事件类型合理估计，无法估计才省略。普通日程如 10-28 22:00；全天日程用完整纯日期，尾日包含当天' },
+  remindAt: { type: 'string', description: '提醒时间元数据；未指定但需要提醒时，根据事项类型、准备成本和重要程度自行选择合理的 startAt 提前量，如 10-28 07:40（供 App 通知使用；本插件不会据此自动触发提醒）' },
   priority: { type: 'string', enum: [...schedulePriorities], description: 'P0 紧急且重要 / P1 重要不紧急 / P2 紧急不重要 / P3 有空再做（默认 P3）' },
   links: {
     type: 'array',
@@ -65,7 +65,7 @@ export const TASK_SCHEDULE_TOOL_PARAMETERS = {
   create: {
     type: 'array',
     items: { type: 'object', additionalProperties: false, properties: SCHEDULE_ITEM_PROPERTIES },
-    description: '新建用户日程：只有助理代替不了、需要用户本人推进的事才建；电话/网址/地点/附件写进 contacts/links/location/attachments 字段',
+    description: '新建用户待办/日程：只有助理代替不了、需要用户本人推进的事才建；按事件尽量填全 startAt/endAt/remindAt，电话/网址/地点/附件写进 contacts/links/location/attachments 字段',
   },
   update: {
     type: 'array',

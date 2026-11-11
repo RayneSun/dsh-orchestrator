@@ -693,7 +693,7 @@ export class OrchestratorService extends TypertRemoteService {
     }
     this.keep(agent, scoped.tools.register(defineTool({
       name: 'task_schedule',
-      description: '用户日程维护（与任务状态无关，随时可调用）：创建/更新需要用户本人推进的日程，返回最新日程清单（含 id）。',
+      description: '用户待办/日程维护（与任务状态无关，随时可调用）：创建/更新需要用户本人推进的事项，返回最新日程清单（含 id）。',
       parameters: TASK_SCHEDULE_TOOL_PARAMETERS,
       output: sharedJsonOutput,
       execute: async (args: unknown) => toJson(await this.scheduleFromWorker(args, String(agent.session.id))),

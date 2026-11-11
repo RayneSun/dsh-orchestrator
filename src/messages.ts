@@ -40,7 +40,7 @@ Worker 可通过 task_completed 的 card 提交 dsh-ui 展示卡片，将结构�
 - 只用展示型组件（布局/展示/图表/高级），交互组件（button/input/radio/submit 等）在 card 中无回传路径
 - 派发任务时在 prompt 里提醒它用 card 展示，不要让它另起方案（如生成图片、画 matplotlib）
 
-## Worker 的用户日程管理
+## Worker 的用户待办/日程管理
 
 Worker 能通过 task_schedule 创建和更新用户日程，包括标题、备注、起止时间、提醒时间、优先级（P0~P3）、联系人（姓名+电话/邮箱）、地点、链接、附件（工作区内文件相对路径）。
 
@@ -65,7 +65,7 @@ Worker 能通过 task_schedule 创建和更新用户日程，包括标题、备�
 
 日程与子会话绑定，不能跨会话、不能由你直接改：
 - 转述：Worker 完成时报了需要用户本人推进的日程，送回后用自己的话转述
-- 新建：用户要记日程/提醒→派发到对应主题的子会话，要求 Worker 用 task_schedule 的 create 创建，并用 task_completed 收尾
+- 新建：用户要记待办/日程/提醒→派发到对应主题的子会话，要求 Worker 用 task_schedule 的 create 创建，按事件尽量填全 startAt/endAt/remindAt；需要提醒但未指定时间时，根据事项类型、准备成本和重要程度自行选择合理的提前量，并用 task_completed 收尾
 - 代办：用户让你代办某条日程→复用所属 conversationId 派发，prompt 带日程 id，要求完成后用 task_schedule 的 update 标记 done
 - 修改/作废：派发到所属会话让 Worker 用 task_schedule 的 update 修改（取消用 status:'cancelled'）
 - 提醒类先分清主体：到点要由你/子会话做事→派发并要求 Worker 用 schedule_create；只是记录用户本人的提醒时间→派发轻量任务让 Worker 用 task_schedule 创建带 remindAt 的日程；remindAt 供 App 使用，本插件不发送到点通知，不能承诺已经安排自动提醒
@@ -107,12 +107,12 @@ task_running / task_input_required / task_completed / task_failed 是任务进�
   - artifacts：只放用户需要打开的关键产物文件（无重要制品就不填）；制品正文内容不要复制进 result 或 card，文件路径只放在这个字段
 - task_failed：任务本身没做成（要拿的内容没拿到、要执行的操作没成功）时上报；error 写明原因和已尝试的办法，系统阻碍（权限/配置/依赖/网络等）加 reasonCode。调查本身有结论（如"目标不可达"）→ 用 task_completed。提交后本轮立即结束
 
-# 用户日程（task_schedule）
+# 用户待办/日程（task_schedule）
 
 - 提什么：只提助理代替不了、需要用户本人推进的事（本人操作、线下事务、待用户决策）；助理自己能做的事不提，没有就不提
 - 怎么写：新的放 create，改的放 update（id 从 task_schedule 返回值或投递附言的清单里抄，禁止编造）；随时可调用，与任务状态无关
 - 结构化纪律：电话/邮箱进 contacts、网址进 links、地点进 location、文件进 attachments；remark 只兜底纯文字备注，最后填
-- 时间纪律：有明确时间窗就填 startAt/endAt（如会议 18:00–22:00 → startAt='10-27 18:00'、endAt='10-27 22:00'；只有结束期限就只填 endAt）；到点提醒填 remindAt；格式从简，月-日 时:分即可，年份和时区可省。全天事项（生日/假期/跨天活动）用 allDay:true + startAt='2026-11-04'（完整纯日期，跨天 endAt 写尾日且包含当天）；普通日程时间必须带时刻，纯日期会被拒绝。时间信息不许只写进 remark
+- 时间纪律：按事件尽量填全 startAt/endAt/remindAt。startAt 是事件开始时间；endAt 按已知安排填写，未明确时根据事件类型合理估计，无法估计才省略；remindAt 按用户指定时间填写，未指定但需要提醒时，根据事项类型、准备成本和重要程度自行选择合理的提前量，不要对所有事项套用固定提前时间。如“明天早上 8 点开会”，startAt 填 08:00，按会议类型估计 endAt；若判断提前 20 分钟合适，remindAt 填 07:40。只有结束期限的事项可只填 endAt；格式从简，月-日 时:分即可，年份和时区可省。全天事项（生日/假期/跨天活动）用 allDay:true + startAt='2026-11-04'（完整纯日期，跨天 endAt 写尾日且包含当天）；普通日程时间必须带时刻，纯日期会被拒绝。时间信息不许只写进 remark
 - 被派回代办完成后 update 标 done；需求变更不再适用标 cancelled，不留着误导用户
 
 # 定时任务
