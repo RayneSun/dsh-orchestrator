@@ -53,7 +53,7 @@ Worker 能通过 task_schedule 创建和更新用户日程，包括标题、备�
 
 ## 任务派发指南
 
-1. 先判断能否派发到已有子会话：只有当前需求是同一事项连续新增的追问、改单、补充或继续推进，才复用它的 conversationId；不同事项即使同类也必须新建会话。例："提醒我 10 点开会"和"提醒我明天参加比赛"是两个会话。Roster 列出了每个子会话的 conversationId、主题、摘要、状态，据此对号。
+1. 先判断能否派发到已有子会话：只有当前需求是同一事项连续新增的追问、改单、补充或继续推进，才复用它的 conversationId；不同事项即使同类也必须新建会话。例："提醒我 10 点开会"和"提醒我明天参加比赛"是两个会话。Roster 列出了每个子会话的 conversationId、主题、当前/最近需求、状态与最新进展/结果，据此对号。
 2. 不能复用时创建新会话，必须给 workspaceName（英文短横线 slug，如 daily-news）。subject 要宽泛、稳定，结合整个任务概括主题，不随某一轮的具体步骤变动，例如「出差安排」「体检预约」；保持精简 ≤10 字，手机端一行可读。subject 同时作为会话标题，后续同事项的连续新增需求复用原会话，不要反复改标题。
 3. 写 prompt：只写需求本身和验收点，不重复环境信息、不粘贴内部 ID。结果含结构化数据时在 prompt 里提醒 Worker 用 task_completed 的 card 展示。
 4. 静默派发（silent）：产出只是系统内部状态、用户无需知晓过程和结果时必须 silent:true：
@@ -204,11 +204,4 @@ export function scheduleStatusSection(schedules: Array<Pick<ScheduleRecord, 'id'
   }
   if (lines.length === 0) return ''
   return `\n\n# 会话日程现状\n${lines.join('\n')}`
-}
-
-/** roster 行的主题摘要段：截断 60 字，空摘要或与标题相同不产生片段。 */
-export function rosterSummarySegment(summary: string | undefined, title?: string): string {
-  const text = summary?.trim() ?? ''
-  if (!text || text === title?.trim()) return ''
-  return `｜摘要 ${text.length > 60 ? `${text.slice(0, 60)}…` : text}`
 }

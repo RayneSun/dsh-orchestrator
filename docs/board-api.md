@@ -62,7 +62,7 @@
 | title | string | 子会话标题（默认=首个任务主题，复用派发可同步更新） |
 | workspaceName | string? | 子工作区目录名（英文 slug，位于主工作区内） |
 | workspaceDir | string? | 子工作区绝对路径（移动端一般不展示） |
-| outline.summary | string | 最近 dispatch 主题链，Host 用 `'｜'` 拼接，最多保留 5 个；仅用于路由/摘要，不再由 Worker 上报。outline 仅剩此一个字段（v0.3.17 起大纲死字段 keyFacts/entities/tags/artifacts/openQuestions 删除） |
+| outline.summary | string | 最近 dispatch 主题链，Host 用 `'｜'` 拼接，最多保留 5 个；供 API 回溯，roster 不读取此字段，也不再由 Worker 上报。outline 仅剩此一个字段（v0.3.17 起大纲死字段 keyFacts/entities/tags/artifacts/openQuestions 删除） |
 | activeTaskId | string \| null | 当前进行中的任务 ID |
 | lastTaskId | string \| null | 最近一次任务 ID |
 | state | ConversationState | 会话聚合状态：`provisioning / running / idle / input_required / failed`。生命周期：活动任务上报 `input_required` 时同步为该值（`activeTaskId` 保留，轮次未结束）；作答后回 `running`；`completed / failed / interrupted` settle 回 `idle` |

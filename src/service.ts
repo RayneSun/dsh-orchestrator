@@ -13,7 +13,7 @@ import type {} from '@deepseek-ai/dsh-agent-preset-registry'
 import type {} from '@deepseek-ai/dsh-api-session-controller'
 import type {} from '@deepseek-ai/dsh-session-persistence'
 import type {} from '@deepseek-ai/dsh-system-prompt'
-import { deliveryNotice, revisionPrompt, rosterSummarySegment, scheduleProjection, scheduleStatusSection, workerPrompt } from './messages.ts'
+import { deliveryNotice, revisionPrompt, scheduleProjection, scheduleStatusSection, workerPrompt } from './messages.ts'
 import { type ScheduleServiceLike, type SessionActivityGroup } from './host-contracts.ts'
 import { DISPATCH_TOOL_PARAMETERS, TASK_COMPLETED_TOOL_PARAMETERS, TASK_FAILED_TOOL_PARAMETERS, TASK_INPUT_REQUIRED_TOOL_PARAMETERS, TASK_RUNNING_TOOL_PARAMETERS, TASK_SCHEDULE_TOOL_PARAMETERS } from './tool-parameters.ts'
 import type { AnswerQuestionsRequest, AnswerQuestionsResult, SetScheduleStatusRequest, SnapshotRequest } from './remote.ts'
@@ -151,6 +151,30 @@ function formatRosterTime(value: string): string {
   const hour = String(date.getHours()).padStart(2, '0')
   const minute = String(date.getMinutes()).padStart(2, '0')
   return `${sameYear ? '' : `${date.getFullYear()}/`}${month}/${day} ${hour}:${minute}`
+}
+
+/** Roster 保持单会话一行：压缩动态文本中的换行，并限制模型上下文占用。 */
+function rosterExcerpt(value: string | undefined, limit = 80): string {
+  const text = value?.trim().replace(/\s+/g, ' ') ?? ''
+  return text.length > limit ? `${text.slice(0, limit)}…` : text
+}
+
+function rosterTaskSegment(active: TaskRecord | undefined, last: TaskRecord | undefined): string {
+  const task = active ?? last
+  if (!task) return ''
+  if (task.status === 'input_required') {
+    const questions = task.questions ?? []
+    const text = rosterExcerpt(questions.slice(0, 2).map(item => item.question).join('；'), 100)
+    return `｜待操作：${text || '等待用户作答'}${questions.length > 2 ? '…' : ''}`
+  }
+  const segment = `｜${active ? '当前' : '最近'}需求：${rosterExcerpt(task.prompt)} [${task.status}]`
+  if (active) {
+    const progress = [rosterExcerpt(task.header, 8), rosterExcerpt(task.progressNote, 120)].filter(Boolean).join(' — ')
+    return `${segment}${progress ? `｜进展：${progress}` : ''}`
+  }
+  if (task.status === 'completed' && task.result) return `${segment}｜结果：${rosterExcerpt(task.result)}`
+  if (task.status === 'failed' && task.error) return `${segment}｜错误：${rosterExcerpt(task.error)}`
+  return segment
 }
 
 /** 设置页（插件管理 → 本包行配置）的 volatile 配置引用：.get() 读实时值，改动即时生效不重启。 */
@@ -714,11 +738,7 @@ export class OrchestratorService extends TypertRemoteService {
     const lines = conversations.map((conv) => {
       const active = conv.activeTaskId ? this.taskById(conv.activeTaskId) : undefined
       const last = conv.lastTaskId ? this.taskById(conv.lastTaskId) : undefined
-      const tail = active
-        ? `｜进行中：${active.subject}`
-        : last?.result
-          ? `｜最近结果：${last.result.slice(0, 80)}`
-          : ''
+      const taskSegment = rosterTaskSegment(active, last)
       const schedules = this.schedulesOf(conv.id)
       const pending = schedules.filter(schedule => schedule.status === 'pending')
       const todoSegment = schedules.length === 0
@@ -726,7 +746,7 @@ export class OrchestratorService extends TypertRemoteService {
         : pending.length > 0
           ? `｜日程 ${pending.length} 项待处理：${pending.slice(0, 3).map(schedule => schedule.title).join('、')}${pending.length > 3 ? '…' : ''}`
           : `｜日程 ${schedules.length} 项全部完成`
-      return `- ${conv.id} [${conv.state}] ${conv.title}${rosterSummarySegment(conv.outline.summary, conv.title)}｜创建 ${formatRosterTime(conv.createdAt)}｜更新 ${formatRosterTime(conv.updatedAt)}${tail}${todoSegment}`
+      return `- ${conv.id} [${conv.state}] ${conv.title}${taskSegment}｜更新 ${formatRosterTime(conv.updatedAt)}${todoSegment}`
     })
     return `Orchestrator roster（dispatch 用 conversationId 复用子会话；get 看详情）：\n${lines.join('\n')}`
   }
@@ -846,7 +866,6 @@ export class OrchestratorService extends TypertRemoteService {
       // subject 与会话标题同源：复用时主题有变化则同步更新会话标题（看板/roster/侧栏一致）。
       const titleChanged = args.subject !== existing.title
       if (titleChanged) conv = { ...conv, title: args.subject }
-      // 路由卡摘要（roster"摘要"行）由 Host 维护：最近主题链。
       conv = appendOutlineSubject(conv, args.subject)
       if (interruptedTaskId) {
         const active = this.taskById(interruptedTaskId)

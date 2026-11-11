@@ -1,21 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { deliveryNotice, scheduleStatusSection } from '../src/messages.ts'
+import { deliveryNotice, LEAD_PROMPT, scheduleStatusSection, WORKER_PROMPT } from '../src/messages.ts'
 import { createConversation, createTask, type ConversationRecord, type TaskRecord } from '../src/types.ts'
-import { LEAD_PROMPT, rosterSummarySegment, WORKER_PROMPT } from '../src/messages.ts'
-
-describe('roster 摘要段', () => {
-  it('空摘要/纯空白/与标题相同不产生片段', () => {
-    expect(rosterSummarySegment(undefined)).toBe('')
-    expect(rosterSummarySegment('   ')).toBe('')
-    expect(rosterSummarySegment('公司简介对比', '公司简介对比')).toBe('')
-  })
-
-  it('60 字以内原样输出，超长截断并加省略号', () => {
-    expect(rosterSummarySegment('做一个飞机大战游戏')).toBe('｜摘要 做一个飞机大战游戏')
-    const long = '长'.repeat(80)
-    expect(rosterSummarySegment(long)).toBe(`｜摘要 ${'长'.repeat(60)}…`)
-  })
-})
 
 describe('deliveryNotice 用户日程段', () => {
   const baseTask = (): TaskRecord => ({
@@ -102,6 +87,7 @@ describe('prompt 编排约定', () => {
     expect(LEAD_PROMPT).toContain('## 任务派发指南')
     expect(LEAD_PROMPT).toContain('同一事项连续新增')
     expect(LEAD_PROMPT).toContain('复用它的 conversationId')
+    expect(LEAD_PROMPT).toContain('当前/最近需求、状态与最新进展/结果')
     expect(LEAD_PROMPT).toContain('subject 要宽泛、稳定')
     expect(LEAD_PROMPT).not.toContain('## 静默派发（silent）')
     expect(LEAD_PROMPT).toContain('4. 静默派发（silent）')

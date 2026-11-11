@@ -70,7 +70,7 @@ describe('任务状态机', () => {
     expect(() => activateConversation(conv, 't2')).toThrow(/already runs task t1/)
   })
 
-  it('路由卡摘要保留最近主题链（去重、保序、最多 5 个）', () => {
+  it('API 保留最近主题链（去重、保序、最多 5 个）', () => {
     const { conv } = pair()
     let next = appendOutlineSubject(conv, '查天气')
     next = appendOutlineSubject(next, '查机票')

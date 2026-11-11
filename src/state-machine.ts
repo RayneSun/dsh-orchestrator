@@ -88,8 +88,8 @@ export function settleConversation(
 }
 
 /**
- * 会话路由卡摘要改由 Host 维护：每次 dispatch 把 subject 追加进最近主题链
- * （去重、保序、最多 5 个），不再依赖 Worker 上报 summary。
+ * API 的最近派发主题链：去重、保序、最多 5 个。
+ * Roster 不读取此字段，而是实时投影任务记录。
  */
 export function appendOutlineSubject(
   conv: ConversationRecord,

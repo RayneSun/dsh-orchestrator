@@ -150,7 +150,7 @@ export const progressStepSchema = z.object({
 }).strict()
 export type ProgressStep = z.infer<typeof progressStepSchema>
 
-/** 会话路由卡摘要：最近 dispatch 主题链（Host 维护，最多 5 个）。仅保留实际用于路由的主题链。 */
+/** 最近 dispatch 主题链（Host 维护，最多 5 个）；保留在 API 中，roster 实时读取任务记录。 */
 export const outlineSchema = z.object({
   summary: z.string().default(''),
 }).strict()

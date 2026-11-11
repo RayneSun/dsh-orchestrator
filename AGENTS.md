@@ -139,7 +139,7 @@ uv run --no-project --python /usr/bin/python3 python -c 'import subprocess; subp
 - dispatch 的 `prompt` 只写需求和验收点。cwd 由平台注入，禁止重复工作目录/路径声明，禁止粘贴内部 ID。
 - dispatch 返回给 Lead 的只需 `conversationId`（后续复用）；不要返回 taskId/childSessionId。
 - list/get 的输出做投影（leadTools/listWorkflows），不要把整条数据库记录给模型。
-- roster 系统提示词每工作流一行（含创建/更新时间，供"上周那个"类指代对号）；看板（Board.tsx）可以展示更多内部字段，但不要在主会话输出内部概念。
+- roster 系统提示词每工作流一行：会话 ID/状态/标题 + 当前或最近需求、任务状态与进展/结果 + 更新时间和日程摘要；动态文本每次渲染实时读取任务记录，不使用 outline 主题链。看板（Board.tsx）可以展示更多内部字段，但不要在主会话输出内部概念。
 - Worker 注入只有两种文案：`workerPrompt`（正常）和 `revisionPrompt`（改单），都在 messages.ts。
 
 ### Lead 行为约束（messages.ts LEAD_PROMPT）
