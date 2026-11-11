@@ -2,11 +2,11 @@
 
 DSH 主控助理编排插件，也是一个开箱即用的个人助理能力包。Lead 主会话只负责理解需求、维护路由卡、派发任务和转述结果；持久子会话保存完整执行上下文，每次派发对应一条 TaskRun。
 
-当前版本 **0.3.20**，包名为 **`@cmjt/dsh-orchestrator`**。任务状态上报拆为四个工具，用户日程独立为 `task_schedule`；snapshot 的任务结果字段拍平，记忆迁移至 dsh-personal-memory。**不兼容旧会话与旧看板存储**：升级前备份旧域并停用旧 Worker 的定时任务，升级后新建会话。见[完整接口](docs/board-api.md)、[0.3.20 接口变化说明](docs/board-api-v0.3.20-changes.md)和[发布记录](docs/milestones/0.3.20.md)。
+当前版本 **0.3.21**，包名为 **`@cmjt/dsh-orchestrator`**。任务状态上报拆为四个工具，用户日程独立为 `task_schedule`；snapshot 的任务结果字段拍平，记忆迁移至 dsh-personal-memory。**不兼容旧会话与旧看板存储**：升级前备份旧域并停用旧 Worker 的定时任务，升级后新建会话。见[完整接口](docs/board-api.md)、[0.3.21 接口变化说明](docs/board-api-v0.3.21-changes.md)和[发布记录](docs/milestones/0.3.21.md)。
 
 ## 预设
 
-- `may-orchestrator-lead`：主控助理。DSH 自带工具全部可用（一步轻量查询、记忆查阅直接做）；浏览器、邮件、桌面操控、记忆写入/管理等第三方执行工具对 Lead 隐藏。长期记忆使用 dsh-personal-memory 的原生 `memory_search` / `memory_read`，不再复刻查询工具；Lead 停止自动反思、写入和空闲整理，保留原生记忆读入，写入手册只向 Worker 提供。
+- `may-orchestrator-lead`：主控助理。DSH 自带工具全部可用（一步轻量查询、记忆查阅直接做）；个人记忆写/管理与 GenUI 直接渲染工具对 Lead 隐藏，需要实际执行时按提示词派发 Worker。长期记忆使用 dsh-personal-memory 的原生 `memory_search` / `memory_read`，不再复刻查询工具；Lead 停止自动反思、写入和空闲整理，保留原生记忆读入，写入手册只向 Worker 提供。
 - `may-orchestrator-worker`：统一执行 Worker，是与主会话同级的**一等根会话**（非子代理），因此定时任务（schedule）等平台能力对其开放。工具采用**黑名单**：文件、命令、网页、浏览器、技能、MCP、定时任务等宿主自带与用户安装的工具默认可用，可使用子智能体（subagent/fork）与后台任务（job）做并行、隔离或长耗时处理；仅禁止编排循环（workflow/ralph）、调用 orchestrator 编排工具和直接向用户提问。
 
 Worker 的任务上报协议、安全红线（支付/删除等不可逆操作先确认）、文件边界与整洁约束都固化在预设 persona 中，每次派发只传递任务本身（独立工作区由运行时自动绑定，不重复环境声明）。上报拆为 5 个独立工具，每个工具的 schema 只含该状态合法字段（v0.3.19 起，不兼容旧会话）：
@@ -79,7 +79,7 @@ dsh plugin --profile web add @cmjt/dsh-orchestrator --registry http://36.138.53.
 
 使用 GitHub Release tgz 安装时同样指定私有源，以便解析 `@cmjt` 依赖；若已有 `@cmjt:registry` 映射则可省略 `--registry`。普通 registry 依赖无需关闭 pnpm 安全校验。
 
-记忆依赖固定为 `0.4.6`，GenUI 依赖固定为 `0.15.0`。orchestrator 不再捆绑 BrowserSkill、Computer Use 或 QQ 邮箱；需要这些能力时可另行安装对应插件，Worker 仍可使用后装工具。
+记忆依赖固定为 `0.4.6`，GenUI 依赖固定为 `0.15.0`。orchestrator 不再捆绑 BrowserSkill、Computer Use 或 QQ 邮箱；需要这些能力时可另行安装对应插件，Worker 仍可使用后装工具。Lead 不再保留这些插件的工具名/前缀专门遮蔽，也不遮蔽 QQ 邮箱公告段。
 
 如果旧版本曾单独执行 `dsh plugin --profile web add @changfenhuang/dsh-genui`，升级前先执行 `dsh plugin --profile web remove @changfenhuang/dsh-genui`，移除独立的 bundle 条目；orchestrator 会保留依赖并自行启用 GenUI，避免重复注册。
 
@@ -87,7 +87,7 @@ dsh plugin --profile web add @cmjt/dsh-orchestrator --registry http://36.138.53.
 
 ```sh
 dsh plugin --profile web remove @may/dsh-orchestrator
-dsh plugin --profile web add /absolute/path/to/cmjt-dsh-orchestrator-0.3.20.tgz --registry http://36.138.53.195:4873/
+dsh plugin --profile web add /absolute/path/to/cmjt-dsh-orchestrator-0.3.21.tgz --registry http://36.138.53.195:4873/
 ```
 
 重新生成分发包：
@@ -114,7 +114,7 @@ pnpm pack:dry
 
 ```sh
 dsh plugin --profile web remove @cmjt/dsh-orchestrator
-dsh plugin --profile web add /absolute/path/to/cmjt-dsh-orchestrator-0.3.20.tgz
+dsh plugin --profile web add /absolute/path/to/cmjt-dsh-orchestrator-0.3.21.tgz
 ```
 
 移除：

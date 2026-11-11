@@ -1,6 +1,6 @@
 # AGENTS.md — dsh-orchestrator 开发指引
 
-面向接管本仓库的 AI 编码助手。读完本文件再动手。当前仓库版本 0.3.20；文档入口见 [docs/README.md](docs/README.md)。
+面向接管本仓库的 AI 编码助手。读完本文件再动手。当前仓库版本 0.3.21；文档入口见 [docs/README.md](docs/README.md)。
 
 ## 项目是什么
 
@@ -205,5 +205,5 @@ uv run --no-project --python /usr/bin/python3 python -c 'import subprocess; subp
 ## 背景材料
 
 - README.md：用户面说明，发版时随版本号更新。
-- docs/README.md：文档索引；docs/milestones/0.3.20.md：当前变更、验证与已知限制。
+- docs/README.md：文档索引；docs/milestones/0.3.21.md：当前变更、验证与已知限制。
 - **正式发版清单（用户授权后）**：先更新版本与文档 → host/client typecheck + 全量测试 → build + verify:packaging → `npm pack` → 中文 commit + annotated tag（若本地里程碑已存在且内容未变则复用）→ push dev 与对应 tag → `gh release create` 必须同时附三个资产：构建产物 tgz（**lib/ 已编译**，源码 tar.gz 装不了）、`board-api.md` 完整接口和 `board-api-v<版本>-changes.md` 差异说明 → 正式版 tgz 装回 web profile 并通过指定脚本以 start_new_session 重启 3080。**GitHub release 之外必须同步发布私有 npm 源**（Verdaccio `http://36.138.53.195:4873/`，scope `@cmjt` 已映射）：`npm publish --registry http://36.138.53.195:4873/` 后用 `npm view @cmjt/dsh-orchestrator --registry http://36.138.53.195:4873/` 验证；两处包内容 shasum 应一致（同一次 `npm pack` 产物）。
