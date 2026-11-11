@@ -91,6 +91,8 @@ Task 是子会话内的一次任务执行记录（一次 dispatch / 一次定时
 | result | string? | `completed` 时必填：只阐述用户需求的最终结果，不写怎么做，不含过程性内容或文件路径，不重复 card/制品内容 |
 | artifacts | string[]? | completed 关键制品文件（子工作区相对路径），由 Lead 通过 present 交付 |
 | card | Record<string, unknown>? | completed 的 dsh-ui 展示卡片 JSON（≤16KB，禁围栏嵌套） |
+| requestedModel | string? | 本轮最后一次推理实际传入的模型 ID，由 Host 从 DSH `assistant/message` 自动采集 |
+| responseModel | string? | 本轮最后一次推理的上游返回模型 ID；为空或缺失时不保存，用于识别网关路由 |
 | error | string? | `failed` 时必填：失败原因 |
 | reasonCode | BlockReasonCode? | failed 的系统阻碍类别；普通失败不填 |
 | cancelledReason | string? | interrupted 时的中断归类（如 parent、手动停止） |
@@ -102,6 +104,12 @@ Task 是子会话内的一次任务执行记录（一次 dispatch / 一次定时
 | createdAt / updatedAt | string(ISO 8601) | 创建/更新时间 |
 | startedAt | string(ISO 8601)? | 第一次进入 running 的时间 |
 | endedAt | string(ISO 8601)? | completed/failed/interrupted 的结束时间；input_required 等待期间不设置 |
+
+`requestedModel` / `responseModel` 是 Host 生成的只读元数据，**不属于任何 `task_*` 工具的输入字段**。看板模型来源按以下规则计算，下游建议复用同一规则：
+
+- `responseModel` 非空且与 `requestedModel` 不同：显示 `requestedModel-responseModel`，例如 `moma/auto-abc`。
+- 两者一致，或 `responseModel` 为空/缺失：显示 `requestedModel`。
+- `requestedModel` 缺失（旧任务或尚未产生模型响应）：不展示模型来源。
 
 ## 4. QuestionItem 与 QuestionAnswer
 
@@ -231,7 +239,7 @@ App 渲染建议：列表 + 勾（completed）/ 转（in_progress）/ 空（pend
 3. **问题卡**：位于日程框上方，warn 色框；单选切换、多选叠加、custom 输入、提交后卡片消失。
 4. **日程框**：位于工作区行上方；折叠/展开恒显；框头 `日程 · N 项待处理`（0 项为“全部完成”）；done/cancelled 灰显划线；优先级胶囊 P0/P1/P2/P3，颜色红/橙/黄/绿；时间窗/提醒渲染为胶囊。
 5. **任务框**：圈住多轮；默认折叠只显示最新一轮，框头 `N 轮 · 显示最新`，可展开全部。
-6. **任务行**：状态徽标 + subject（有卡片时附卡片徽标）；下一行 `header: progressNote`（running 带 shimmer）；失败可展开错误；completed/input_required 可展开结果/作答；completed 的卡片可展开原始 JSON 预览；脚注创建时间与实时耗时。
+6. **任务行**：状态徽标 + subject（有卡片时附卡片徽标）；下一行 `header: progressNote`（running 带 shimmer）；失败可展开错误；completed/input_required 可展开结果/作答；completed 的卡片可展开原始 JSON 预览；浅灰脚注包含创建时间、实时耗时和右对齐的“本次结果由…提供”，路由不一致时悬浮可分别查看传入/返回模型。
 
 **日程页（日历页）**：
 

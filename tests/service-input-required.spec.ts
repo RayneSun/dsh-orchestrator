@@ -24,6 +24,7 @@ function harness() {
     schedulesOf: () => [],
     deliveryToggles: () => ({ completed: true, failed: true, interrupted: true }),
     putPair: async (c: ConversationRecord, t?: TaskRecord) => { saved.push({ conv: c, task: t }) },
+    latestModels: new Map(),
     blockAndWaitForAnswers: async () => [{ id: 'q1', selected: ['A'] }],
     deliverPendingTask: async () => {},
     hostCtx: { logger: { warn() {}, info() {} }, emit() {} },

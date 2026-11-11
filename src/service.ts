@@ -26,6 +26,7 @@ import { GENUI_CARD_SKILL_CONTENT, GENUI_CARD_SKILL_DESCRIPTION } from './genui-
 import { LEAD_SUPPRESSED_SECTIONS, leadToolDenyList, unrecognizedGlobalTools } from './lead-policy.ts'
 import { configureLeadMemory } from './memory-policy.ts'
 import { normalizeProgressSteps } from './progress.ts'
+import { readModelAttribution, withModelAttribution, type ModelAttribution } from './model-info.ts'
 import { buildChildWorkspace } from './workspaces.ts'
 import { orchestratorDomain } from './storage.ts'
 import { buildPresetDefinitions, LEAD_PRESET, WORKER_PRESET } from './presets.ts'
@@ -232,6 +233,8 @@ export class OrchestratorService extends TypertRemoteService {
   private readonly scheduleMarks = new Map<string, boolean>()
   /** childSessionId -> 最近一条入站消息的 source.kind（判定定时触发上报用）。 */
   private readonly lastInboundSource = new Map<string, string>()
+  /** childSessionId -> 本轮最后一次 assistant/message 的模型元数据，随下一次任务写入落库。 */
+  private readonly latestModels = new Map<string, ModelAttribution>()
   /** childSessionId -> 已同步到 DSH 侧栏的标题（不含定时标记前缀），用于跳过无谓 rename。 */
   private readonly syncedTitles = new Map<string, string>()
   private scheduleSyncTimer: ReturnType<typeof setTimeout> | undefined
@@ -623,10 +626,16 @@ export class OrchestratorService extends TypertRemoteService {
     this.registerGenuiCardSkill(agent, scoped)
     this.keep(agent, scoped.on('session/event', (session, event) => {
       if (String(session.id) !== String(agent.session.id)) return
-      const ev = event as unknown as { type?: unknown; data?: { todos?: unknown; reason?: unknown; source?: { kind?: unknown } } }
+      const ev = event as unknown as { type?: unknown; data?: { todos?: unknown; reason?: unknown; source?: { kind?: unknown }; message?: unknown } }
       if (ev.type === 'user/message') {
+        this.latestModels.delete(String(agent.session.id))
         const kind = ev.data?.source?.kind
         if (typeof kind === 'string') this.lastInboundSource.set(String(agent.session.id), kind)
+        return
+      }
+      if (ev.type === 'assistant/message') {
+        const attribution = readModelAttribution(ev.data?.message)
+        if (attribution) this.latestModels.set(String(agent.session.id), attribution)
         return
       }
       if (ev.type === 'todo/write') {
@@ -1237,11 +1246,16 @@ export class OrchestratorService extends TypertRemoteService {
         })
         // 定时触发的入站消息带 source.kind='schedule'，据此给上报任务打定时标记（仅显示用）。
         const marked = this.lastInboundSource.get(childSessionId) === 'schedule'
+        const seededTask = withModelAttribution(
+          { ...seeded, status: 'running' as const, startedAt: seeded.createdAt, ...marked ? { scheduled: true } : {} },
+          this.latestModels.get(childSessionId),
+        )
         const task = gateTaskDelivery(
-          transitionTask({ ...seeded, status: 'running', startedAt: seeded.createdAt, ...marked ? { scheduled: true } : {} }, input),
+          transitionTask(seededTask, input),
           this.deliveryToggles(),
         )
         await this.putPair(settleConversation(conv, task), task)
+        this.latestModels.delete(childSessionId)
         terminalTaskId = task.id
         shouldDeliver = task.delivery?.state === 'pending'
         return { ok: true as const, status: task.status, schedules: scheduleProjection(this.schedulesOf(conv.id)) }
@@ -1249,7 +1263,10 @@ export class OrchestratorService extends TypertRemoteService {
       const previous = this.taskById(conv.activeTaskId)
       if (!previous) throw new Error('active task record is missing')
 
-      const task = gateTaskDelivery(transitionTask(previous, input), this.deliveryToggles())
+      const task = gateTaskDelivery(
+        transitionTask(withModelAttribution(previous, this.latestModels.get(childSessionId)), input),
+        this.deliveryToggles(),
+      )
       const terminal = (terminalTaskStatuses as readonly string[]).includes(task.status)
       const isInputRequired = task.status === 'input_required'
       // input_required 不 settle（activeTaskId 保留、轮次未结束），但聚合状态要同步为待决策；
@@ -1259,6 +1276,7 @@ export class OrchestratorService extends TypertRemoteService {
         : isInputRequired ? awaitingConversation(conv) : conv
       await this.putPair(nextConv, task)
       if (terminal) {
+        this.latestModels.delete(childSessionId)
         terminalTaskId = task.id
         shouldDeliver = task.delivery?.state === 'pending'
       }
@@ -1288,8 +1306,9 @@ export class OrchestratorService extends TypertRemoteService {
     await this.serialize(async () => {
       const conv = this.conversationByChild(childSessionId)
       if (!conv?.activeTaskId) return
-      const previous = this.taskById(conv.activeTaskId)
-      if (!previous || !isUnfinishedTask(previous.status)) return
+      const stored = this.taskById(conv.activeTaskId)
+      if (!stored || !isUnfinishedTask(stored.status)) return
+      const previous = withModelAttribution(stored, this.latestModels.get(childSessionId))
       const now = timestamp()
       let task: TaskRecord
       let nextConv: ConversationRecord
@@ -1316,6 +1335,7 @@ export class OrchestratorService extends TypertRemoteService {
         outcome = 'failed'
       }
       await this.putPair(nextConv, task)
+      this.latestModels.delete(childSessionId)
       this.pendingAnswers.cancel(task.id, new Error('子会话轮次已结束，停止等待用户作答'))
       taskId = task.id
     })

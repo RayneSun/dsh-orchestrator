@@ -2,7 +2,7 @@
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8">
-<title>DSH 任务看板 · v0.3.15 UI 全景（悬停看字段）</title>
+<title>DSH 任务看板 · 模型来源展示设计稿（悬停看字段）</title>
 <style>
 :root{
   --dsw-alias-bg-layer-1:#f7f8fa;--dsw-alias-bg-layer-2:#ffffff;--dsw-alias-bg-layer-3:#f6f6f8;
@@ -60,8 +60,8 @@ body.map .mapBtn{background:var(--dsho-brand);color:#fff}
 .dsho-open{flex:none;font-size:11px;font-weight:600;color:var(--dsho-brand-ink);background:color-mix(in srgb,var(--dsho-brand) 8%,transparent);border:1px solid color-mix(in srgb,var(--dsho-brand) 28%,transparent);border-radius:999px;padding:2px 10px}
 .dsho-body{padding:2px 13px 11px}
 .dsho-meta{font-size:11px;color:var(--dsw-alias-label-tertiary);padding:6px 0 2px}
-.dsho-collapsedTime{display:none;padding:6px 13px;font-size:10.5px;color:var(--dsw-alias-label-tertiary);border-top:.5px dashed var(--dsho-line)}
-.dsho-conv-collapsed .dsho-collapsedTime{display:block}
+.dsho-collapsedTime{display:none;padding:6px 13px;font-size:10.5px;color:var(--dsw-alias-label-tertiary);border-top:.5px dashed var(--dsho-line);background:var(--dsw-alias-bg-layer-3)}
+.dsho-conv-collapsed .dsho-collapsedTime{display:flex;align-items:center;flex-wrap:wrap;gap:8px}
 /* 问题卡 */
 .dsho-ask{margin:10px 13px 0;border:1px solid color-mix(in srgb,var(--dsho-warn) 35%,transparent);border-radius:10px;background:color-mix(in srgb,var(--dsho-warn) 5%,transparent);padding:10px 12px}
 .dsho-askHead{font-size:11px;font-weight:600;color:var(--dsho-warn)}
@@ -95,7 +95,10 @@ body.map .mapBtn{background:var(--dsho-brand);color:#fff}
 .dsho-stepIcon{flex:none;width:14px;text-align:center;font-size:10px}
 .dsho-steps .dsho-step-completed{color:var(--dsho-pos-ink)}
 .dsho-steps .dsho-step-in_progress{color:var(--dsho-brand-ink);font-weight:600}
-.dsho-taskFoot{display:flex;gap:10px;font-size:10.5px;color:var(--dsw-alias-label-tertiary);margin-top:7px}
+.dsho-taskFoot{display:flex;align-items:center;flex-wrap:wrap;gap:6px 10px;margin-top:7px;padding:4px 7px;border-radius:6px;background:var(--dsw-alias-bg-layer-3);font-size:10.5px;color:var(--dsw-alias-label-tertiary)}
+.dsho-modelCredit{display:inline-flex;align-items:center;justify-content:flex-end;gap:4px;min-width:0;margin-left:auto;color:var(--dsw-alias-label-tertiary);font-size:10px;line-height:17px;white-space:nowrap}
+.dsho-modelSpark{color:color-mix(in srgb,var(--dsho-brand) 68%,var(--dsw-alias-label-tertiary));font-size:11px}
+.dsho-modelName{max-width:260px;overflow:hidden;text-overflow:ellipsis;color:var(--dsw-alias-label-secondary);font-family:"SFMono-Regular",Consolas,monospace;font-size:10px}
 .dsho-dur-live{color:var(--dsho-pos-ink);font-weight:600}
 .dsho-art{display:inline-flex;align-items:center;gap:5px;font-size:10.5px;color:#6941c6;background:color-mix(in srgb,#7a5af5 7%,transparent);border:none;border-radius:6px;padding:2px 8px;margin:3px 4px 0 0;cursor:pointer}
 /* 日程框/行 */
@@ -283,7 +286,7 @@ body.map [data-field]{outline:1.5px dashed color-mix(in srgb,var(--dsho-brand) 5
           <input class="dsho-askInput" data-field="answers[].custom" data-type="string ≤2000" data-desc="自定义回答；selected 与 custom 至少填一项才能提交" placeholder="或者直接输入你的要求…">
           <button class="dsho-askBtn" data-field="answerTaskQuestions RPC" data-type="answers[]" data-desc="提交后 Worker 在下一轮收到答案继续执行；已回答记录进 Task.answers">提交</button>
         </div>
-        <div class="dsho-collapsedTime" data-field="折叠态时间行" data-type="ui" data-desc="折叠时显示：最新任务 · 创建时间 · 耗时">最新任务 · 创建 11-02 09:40 · 耗时 1m12s</div>
+        <div class="dsho-collapsedTime" data-field="折叠态时间行" data-type="ui" data-desc="折叠时显示：最新任务 · 创建时间 · 耗时；模型来源右对齐"><span>最新任务 · 创建 11-02 09:40 · 耗时 1m12s</span><span class="dsho-modelCredit" title="传入模型：moma/auto&#10;返回模型：moma/auto"><span class="dsho-modelSpark">✦</span>本次结果由<span class="dsho-modelName" data-field="Task.requestedModel / Task.responseModel" data-type="string?" data-desc="两者一致，仅显示传入模型">“moma/auto”</span>提供</span></div>
         <div class="dsho-body"><div><div class="dsho-bodyInner"><div class="dsho-taskBox"><div class="dsho-taskBoxHead"><span class="dsho-chevron"></span>任务<span class="dsho-taskBoxCnt">1 轮 · 显示最新</span></div></div></div></div></div>
       </div>
 
@@ -306,7 +309,7 @@ body.map [data-field]{outline:1.5px dashed color-mix(in srgb,var(--dsho-brand) 5
                 <span class="dsho-taskSubject">同步偏好设置到长期记忆</span>
               </div>
               <div class="dsho-note"><span class="dsho-noteTitle">记忆已同步</span><span style="color:var(--dsw-alias-label-tertiary)">:</span><span class="dsho-noteText">写入 2 条偏好、更新 1 条过时事实，无冲突</span></div>
-              <div class="dsho-taskFoot"><span>创建 11-01 22:10</span><span>耗时 0m48s</span></div>
+              <div class="dsho-taskFoot"><span>创建 11-01 22:10</span><span>耗时 0m48s</span><span class="dsho-modelCredit" title="传入模型：moma/auto&#10;返回模型：moma/auto"><span class="dsho-modelSpark">✦</span>本次结果由<span class="dsho-modelName" data-field="Task.requestedModel / Task.responseModel" data-type="string?" data-desc="返回模型与传入模型一致，只显示一次">“moma/auto”</span>提供</span></div>
             </li></ul>
           </div>
         </div>
@@ -327,7 +330,7 @@ body.map [data-field]{outline:1.5px dashed color-mix(in srgb,var(--dsho-brand) 5
               <div class="dsho-taskHead"><span class="dsho-badge dsho-badge-failed">失败</span><span class="dsho-taskSubject">抓取顺丰运单轨迹</span></div>
               <div class="dsho-note"><span class="dsho-noteTitle">查询失败</span><span style="color:var(--dsw-alias-label-tertiary)">:</span><span class="dsho-noteText" data-field="Task.fail.error 首行（折叠态 headline）" data-type="string" data-desc="failed 的折叠态标题取 fail.error 首行">连续 3 次抓取超时</span><button class="dsho-expander" data-field="查看错误" data-type="ui" data-desc="failed 任务的展开按钮文案是「查看错误」（普通任务为「查看结果」）">查看错误</button></div>
               <div class="dsho-detail dsho-detail-err" data-field="Task.fail {error, reasonCode?}" data-type="对象" data-desc="失败原因 + 系统阻碍类别。remediation 字段已废除（v0.3.14），补救建议并入 error 文本"><div class="dsho-detailSec"><b>失败原因</b>：连续 3 次抓取超时（<b data-field="Task.fail.reasonCode = network" data-type="enum" data-desc="权限/配置/依赖/网络/资源/运行时 六类；Lead 可修复后重派">网络</b> 阻碍，处理后可继续）</div></div>
-              <div class="dsho-taskFoot"><span>创建 11-01 15:02</span><span>耗时 3m05s</span></div>
+              <div class="dsho-taskFoot"><span>创建 11-01 15:02</span><span>耗时 3m05s</span><span class="dsho-modelCredit" title="传入模型：moma/auto&#10;返回模型：abc"><span class="dsho-modelSpark">✦</span>本次结果由<span class="dsho-modelName" data-field="Task.requestedModel + Task.responseModel" data-type="string" data-desc="发生路由且返回模型非空：按「传入模型-返回模型」展示；悬浮可分别查看">“moma/auto-abc”</span>提供</span></div>
             </li></ul>
           </div>
         </div></div></div>
@@ -347,7 +350,7 @@ body.map [data-field]{outline:1.5px dashed color-mix(in srgb,var(--dsho-brand) 5
             <ul class="dsho-tasks"><li class="dsho-task dsho-taskMuted" data-field="interrupted 简化行" data-type="ui" data-desc="中断任务整行弱化（muted），只保留 badge + cancelledReason + 创建/耗时，无步骤无展开">
               <div class="dsho-taskHead"><span class="dsho-badge dsho-badge-interrupted">已中断</span><span class="dsho-taskSubject">下载 2025 年年报数据</span></div>
               <p class="dsho-subtle" data-field="Task.cancelledReason" data-type="string?" data-desc="中断归类（如 parent=用户手动停止）。中断后 Lead 会询问继续还是改需求，答复后复用同一 conversationId 续派">用户手动中断</p>
-              <div class="dsho-taskFoot"><span>创建 11-01 11:20</span><span>耗时 2m40s</span></div>
+              <div class="dsho-taskFoot"><span>创建 11-01 11:20</span><span>耗时 2m40s</span><span class="dsho-modelCredit" title="传入模型：moma/auto&#10;返回模型：空"><span class="dsho-modelSpark">✦</span>本次结果由<span class="dsho-modelName" data-field="Task.requestedModel（responseModel 为空）" data-type="string" data-desc="返回模型为空或缺失时回退为传入模型">“moma/auto”</span>提供</span></div>
             </li></ul>
           </div>
         </div></div></div>

@@ -30,6 +30,7 @@ function harness() {
     }) },
     hostCtx: { get: () => ({ ask }), logger: { warn: vi.fn(), info: vi.fn() } },
     pendingAnswers: new PendingAnswers(), revisionTurnEnds: new Map(),
+    latestModels: new Map(), lastInboundSource: new Map(),
     emitChanged: vi.fn(), deliverPendingTask: vi.fn(),
     withAgent: async (_id: string, operation: (agent: unknown) => Promise<unknown>) => operation({}),
     interruptWorker: vi.fn(), deliverToWorker: vi.fn(), renameWorkerSession: vi.fn(),
@@ -38,6 +39,25 @@ function harness() {
   const waitForQuestions = async () => vi.waitFor(() => expect(nativeSignals).toHaveLength(1))
   return { service, call, conversation, task, conversations, tasks, tables, ask, nativeSignals, waitForQuestions }
 }
+
+describe('任务模型元数据落库', () => {
+  it('终态任务保存本轮最后一次推理的传入与返回模型', async () => {
+    const fixture = harness()
+    fixture.service.latestModels.set('worker', { requestedModel: 'moma/auto', responseModel: 'abc' })
+    await fixture.call('reportFromWorker', 'completed', { result: '完成' }, 'worker')
+    expect(fixture.tasks.get('task')).toMatchObject({ requestedModel: 'moma/auto', responseModel: 'abc' })
+    expect(fixture.service.latestModels.has('worker')).toBe(false)
+  })
+
+  it('无活动任务的定时上报也继承当前轮模型信息', async () => {
+    const fixture = harness()
+    fixture.conversations.set('conversation', { ...fixture.conversation, activeTaskId: null })
+    fixture.service.latestModels.set('worker', { requestedModel: 'moma/auto' })
+    await fixture.call('reportFromWorker', 'completed', { result: '定时结果' }, 'worker')
+    const created = [...fixture.tasks.values()].find(item => item.id !== 'task')
+    expect(created).toMatchObject({ requestedModel: 'moma/auto', responseModel: undefined })
+  })
+})
 
 describe('阻塞问答生命周期', () => {
   it('Worker 原生问题卡作答后同轮返回答案', async () => {

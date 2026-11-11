@@ -1,5 +1,6 @@
 import React, { useState } from 'react'
 import type { ConversationRecord, ProgressStep, TaskRecord } from '../types.ts'
+import { modelDisplayName } from '../model-info.ts'
 
 /** Material do_not_disturb_on：静默标识（与 DSH 应用内图标同源，内联避免依赖应用内部 alias）。 */
 function SilentIcon(): React.ReactElement {
@@ -44,6 +45,27 @@ export function durationText(task: TaskRecord, nowMs: number): string {
   const rest = seconds % 60
   if (minutes > 0) return `耗时 ${minutes}m${String(rest).padStart(2, '0')}s`
   return `耗时 ${rest}s`
+}
+
+/** 模型来源脚注：路由发生时悬浮可分别查看传入与返回模型。 */
+export function ModelCredit({ task }: { task: TaskRecord }): React.ReactElement | null {
+  const model = modelDisplayName(task)
+  if (!model) return null
+  return <span
+    className="dsho-modelCredit"
+    title={`传入模型：${task.requestedModel}\n返回模型：${task.responseModel || '未返回'}`}
+  >
+    <span className="dsho-modelSpark" aria-hidden>✦</span>
+    本次结果由<span className="dsho-modelName">“{model}”</span>提供
+  </span>
+}
+
+function TaskFoot({ task, duration, live = false }: { task: TaskRecord, duration: string, live?: boolean }): React.ReactElement {
+  return <div className="dsho-taskFoot">
+    <span>创建 {shortTime(task.createdAt)}</span>
+    {duration && <span className={`dsho-dur${live ? ' dsho-dur-live' : ''}`}>{duration}</span>}
+    <ModelCredit task={task} />
+  </div>
 }
 
 export const taskStatusLabels: Record<string, string> = {
@@ -163,7 +185,7 @@ function TaskLine({ task, conv, nowMs, onOpenArtifact }: TaskLineProps): React.R
     return <li className="dsho-task dsho-taskMuted">
       <TaskHead task={task} />
       {task.cancelledReason && <p className="dsho-subtle">{task.cancelledReason}</p>}
-      <div className="dsho-taskFoot"><span>创建 {shortTime(task.createdAt)}</span>{duration && <span className="dsho-dur">{duration}</span>}</div>
+      <TaskFoot task={task} duration={duration} />
     </li>
   }
 
@@ -176,10 +198,7 @@ function TaskLine({ task, conv, nowMs, onOpenArtifact }: TaskLineProps): React.R
       {detailSections.length > 0 && <button type="button" className="dsho-expander" onClick={() => setExpanded(v => !v)}>{expanded ? '收起' : expanderLabel}</button>}
     </div>}
     {expanded && detailSections.length > 0 && <div className={`dsho-detail${task.status === 'failed' ? ' dsho-detail-err' : ''}`}>{detailSections}</div>}
-    <div className="dsho-taskFoot">
-      <span>创建 {shortTime(task.createdAt)}</span>
-      {duration && <span className={`dsho-dur${live ? ' dsho-dur-live' : ''}`}>{duration}</span>}
-    </div>
+    <TaskFoot task={task} duration={duration} live={live} />
   </li>
 }
 

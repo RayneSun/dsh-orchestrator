@@ -242,6 +242,9 @@ const baseTaskSchema = z.object({
   result: z.string().optional(),
   artifacts: z.array(relativePathSchema).optional(),
   card: z.record(z.string(), z.unknown()).optional(),
+  /** 本轮最后一次推理实际传入的模型，以及上游响应返回的路由后模型。 */
+  requestedModel: z.string().optional(),
+  responseModel: z.string().optional(),
   /** failed 终态：error 必填；reasonCode 标记系统阻碍（Lead 可修复后重派）。 */
   error: z.string().optional(),
   reasonCode: z.enum(blockReasonCodes).optional(),

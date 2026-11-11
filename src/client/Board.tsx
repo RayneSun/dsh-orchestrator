@@ -3,7 +3,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { AnswerQuestionsRequest, OrchestratorClient, SnapshotRequest } from '../remote.ts'
 import { ScheduleList } from './schedule-list.tsx'
 import { AskCard } from './question-card.tsx'
-import { TaskBox, TagChip, taskStatusLabels, shortTime, durationText } from './task-box.tsx'
+import { TaskBox, TagChip, ModelCredit, taskStatusLabels, shortTime, durationText } from './task-box.tsx'
 import { SchedulePane } from './schedule-pane.tsx'
 import { sortSchedules } from './schedule-ordering.ts'
 import { activeTaskStatuses } from '../types.ts'
@@ -246,7 +246,8 @@ export function Board({ sessionId: propSessionId, useTabInfo, orchestrator, remo
         {awaitingInput && latest && <AskCard task={latest} onSubmit={answers => submitAnswers(conv, answers)} />}
         {convSchedules.length > 0 && <ScheduleList schedules={convSchedules} onToggle={toggleSchedule} showToast={showToast} onOpenAttachment={(_schedule, path) => void openArtifact(conv, path)} />}
         {collapsed && latest && <div className="dsho-collapsedTime">
-          最新任务 · 创建 {shortTime(latest.createdAt)}{(() => { const d = durationText(latest, nowMs); return d ? ` · ${d}` : '' })()}
+          <span>最新任务 · 创建 {shortTime(latest.createdAt)}{(() => { const d = durationText(latest, nowMs); return d ? ` · ${d}` : '' })()}</span>
+          <ModelCredit task={latest} />
         </div>}
         <div className="dsho-body"><div>
           <div className="dsho-bodyInner">

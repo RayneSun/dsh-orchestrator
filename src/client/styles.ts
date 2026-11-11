@@ -64,10 +64,13 @@ const CSS = `
 .dsho-art{display:inline-flex;align-items:center;gap:5px;border:.5px solid var(--dsw-alias-border-l2);background:var(--dsw-alias-bg-layer-1,#fff);border-radius:6px;padding:3px 8px;font-size:11px;color:var(--dsho-brand);cursor:pointer}
 .dsho-art:hover{background:color-mix(in srgb,var(--dsho-brand) 8%,transparent)}
 .dsho-art svg{width:12px;height:12px}
-.dsho-taskFoot{display:flex;gap:10px;font-size:11px;color:var(--dsw-alias-label-tertiary)}
+.dsho-taskFoot{display:flex;align-items:center;flex-wrap:wrap;gap:6px 10px;margin-top:7px;padding:4px 7px;border-radius:6px;background:light-dark(#f6f6f8,#242426);font-size:11px;color:var(--dsw-alias-label-tertiary)}
+.dsho-modelCredit{display:inline-flex;align-items:center;justify-content:flex-end;gap:4px;min-width:0;margin-left:auto;color:var(--dsw-alias-label-tertiary);font-size:10px;line-height:17px;white-space:nowrap}
+.dsho-modelSpark{color:color-mix(in srgb,var(--dsho-brand) 68%,var(--dsw-alias-label-tertiary));font-size:11px}
+.dsho-modelName{max-width:260px;overflow:hidden;text-overflow:ellipsis;color:var(--dsw-alias-label-secondary);font-family:"SFMono-Regular",Consolas,monospace;font-size:10px}
 /* 折叠态：仅显示问题卡、待办框与最新任务时间细行（任务区/工作区随 body 折叠） */
-.dsho-collapsedTime{display:none;padding:6px 13px;font-size:10.5px;color:var(--dsw-alias-label-tertiary);border-top:.5px dashed var(--dsho-line)}
-.dsho-conv-collapsed .dsho-collapsedTime{display:block}
+.dsho-collapsedTime{display:none;padding:6px 13px;font-size:10.5px;color:var(--dsw-alias-label-tertiary);border-top:.5px dashed var(--dsho-line);background:light-dark(#f6f6f8,#242426)}
+.dsho-conv-collapsed .dsho-collapsedTime{display:flex;align-items:center;flex-wrap:wrap;gap:8px}
 /* 任务框：圈住多轮任务，默认只显示最新一轮 */
 .dsho-taskBox{margin:10px 13px;border:1px solid var(--dsho-line);border-radius:10px;overflow:hidden}
 .dsho-taskBoxHead{display:flex;align-items:center;gap:6px;padding:7px 11px;font-size:11.5px;font-weight:600;color:var(--dsw-alias-label-secondary);cursor:pointer;background:var(--dsw-alias-bg-layer-3);user-select:none}

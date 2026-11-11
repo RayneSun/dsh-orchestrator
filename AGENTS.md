@@ -35,6 +35,11 @@ node scripts/verify-packaging.mjs     # 校验 tgz 只含运行所需 lib/、cor
 npm pack --pack-destination dist      # 产物 dist/cmjt-dsh-orchestrator-<version>.tgz
 ```
 
+- **Release 文档与通知门禁**：
+  1. 每次 push/release 前，用 `git status`、工作区 diff 及上一 release/tag 以来的提交清单核对全部未同步改动，逐项确认 README、AGENTS、接口/差异文档和里程碑已同步；缺失时先补文档，不得带着文档缺口发布。
+  2. GitHub Release 正文必须逐一列出本次重要改动，尤其是用户可见功能、行为变化、协议/字段、兼容性、配置与依赖变化；每项一句话，写清影响，不只贴 commit 标题。
+  3. 两处发布与验证全部完成后，另给一条可直接发群的简短通知：只面向用户/下游，每个重要改动点用一句话概括；纯内部重构、测试、格式整理、构建细节和无外部影响的杂项不写入群通知。
+
 安装到 web profile 并重启：
 
 ```bash
@@ -64,6 +69,7 @@ uv run --no-project --python /usr/bin/python3 python -c 'import subprocess; subp
 | 模块 | 职责 |
 |---|---|
 | `types.ts` / `schedule-time.ts` | Zod 数据契约 / 日程时间解析及一致性；types 保留时间函数重导出 |
+| `model-info.ts` | DSH assistant message 模型元数据提取、Task 合并与看板展示名计算 |
 | `state-machine.ts` / `task-lifecycle.ts` | 纯状态迁移与投递开关 / 未完成任务判定（含 input_required） |
 | `service.ts` / `pending-answers.ts` | 宿主协调、串行写入、投递恢复 / 作答等待与取消清理 |
 | `schedule-changes.ts` | 日程整批规划、归属及合并校验，不执行持久化 |
