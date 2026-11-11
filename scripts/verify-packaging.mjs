@@ -21,7 +21,6 @@ const requiredExports = [
   ['./client', './lib/client.js'],
   ['./typert', './lib/typert.host.js'],
   ['./remote', './lib/typert.remote-client.js'],
-  ['./dsh-computer-use-darwin', './lib/vendor/dsh-computer-use-darwin/index.js'],
 ]
 for (const [key, expected] of requiredExports) {
   const actual = pkg.exports?.[key]
@@ -29,10 +28,18 @@ for (const [key, expected] of requiredExports) {
   read(expected.replace(/^\.\//, ''))
 }
 
-for (const forbiddenDependency of ['dsh-computer-use', '@deepseek-ai/dsh-tools']) {
+for (const forbiddenDependency of [
+  '@deepseek-ai/dsh-tools',
+  '@milkuovo/dsh-computer-use',
+  '@wxg-prc-cpg/browser-skill-dsh-plugin',
+  '@zhengjunyao/dsh-qqmail',
+]) {
   if (pkg.dependencies?.[forbiddenDependency]) {
-    fail(`ordinary dependency ${forbiddenDependency} would duplicate/hijack the host DSH runtime; use a peer dependency or vendor the adapter`)
+    fail(`removed or host-owned dependency is still declared: ${forbiddenDependency}`)
   }
+}
+if (pkg.dependencies?.['@changfenhuang/dsh-genui'] !== '0.15.0') {
+  fail('@changfenhuang/dsh-genui must be an ordinary pinned dependency so the bundle installs it')
 }
 
 const client = read('lib/client.js').trimStart()
@@ -59,7 +66,8 @@ for (const [label, manifest, descriptors] of [
 const bundleRows = [...read('cordis.patch.yml').matchAll(/^\s*- id: ([^\s]+)\r?\n\s+name: (["'])([^"'\r\n]+)\2[ \t]*$/gm)]
 for (const [id, expected] of [
   ['may-dsh-orchestrator', pkg.name],
-  ['computer-use-darwin', `${pkg.name}/dsh-computer-use-darwin`],
+  ['dsh-personal-memory', '@cmjt/dsh-personal-memory'],
+  ['dsh-genui', '@changfenhuang/dsh-genui'],
 ]) {
   const rows = bundleRows.filter(row => row[1] === id)
   if (rows.length !== 1 || rows[0][3] !== expected) fail(`bundle row ${id} must reference ${expected} exactly once`)
@@ -79,13 +87,13 @@ for (const required of [
   'lib/client.js',
   'lib/typert.host.js',
   'lib/typert.remote-client.js',
-  'lib/vendor/dsh-computer-use-darwin/index.js',
-  'lib/vendor/dsh-computer-use-darwin/LICENSE',
+  'genui-card-skill.md',
 ]) {
   if (!packed.has(required)) fail(`npm pack output omits ${required}`)
 }
 for (const forbidden of packed) {
   if (forbidden.endsWith('.map')) fail(`npm pack output leaks a source map: ${forbidden}`)
+  if (forbidden.startsWith('lib/vendor/')) fail(`npm pack output contains removed vendored dependency: ${forbidden}`)
   if (forbidden.startsWith('src/') || forbidden.startsWith('tests/') || forbidden.startsWith('node_modules/')) {
     fail(`npm pack output leaks development path ${forbidden}`)
   }

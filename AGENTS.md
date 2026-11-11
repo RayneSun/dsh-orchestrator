@@ -6,7 +6,7 @@
 
 `@cmjt/dsh-orchestrator`：DSH（DeepSeek Harness，基线 `0.2.1-rc.2`）的编排插件。
 
-- **Lead**（主会话，预设 `may-orchestrator-lead`）：理解需求、路由、派发、转发结果。保留 DSH 自带工具；第三方执行工具按 `LEAD_TOOL_DENY` 与浏览器前缀隐藏。记忆来自 `@cmjt/dsh-personal-memory@0.4.6`，原生 `memory_search/read` 保留，其余记忆工具隐藏。写入手册对 Lead 遮蔽；`memory-policy.ts` 通过记忆插件原生 HTTP 接口设置会话门控：inject=false（允许读入与查询）、write=true/dream=true（停止写入、反思与自动整理）。不导入数据库 API，不解析记忆存储配置，不重建影子工具或工作区记忆链接。
+- **Lead**（主会话，预设 `may-orchestrator-lead`）：理解需求、路由、派发、转发结果。保留 DSH 自带工具；`LEAD_TOOL_DENY` 只隐藏个人记忆写/管理与 GenUI 直接渲染工具。记忆来自 `@cmjt/dsh-personal-memory@0.4.6`，原生 `memory_search/read` 保留，其余记忆工具隐藏。写入手册对 Lead 遮蔽；`memory-policy.ts` 通过记忆插件原生 HTTP 接口设置会话门控：inject=false（允许读入与查询）、write=true/dream=true（停止写入、反思与自动整理）。不导入数据库 API，不解析记忆存储配置，不重建影子工具或工作区记忆链接。
 - **Worker**（持久**根会话**，预设 `may-orchestrator-worker`）：执行任务。不是 subagent——通过 `agents.create` 创建（无 origin/delegationDepth），与主会话同为一等会话，schedule 等仅 depth-0 可用的宿主能力对 Worker 开放。工具**黑名单**制（只禁编排循环/直接提问/直接 GenUI 渲染及验证），其余宿主与用户安装的工具默认可用。
 - 两层领域模型：**Conversation**（持久子会话/工作流）1—N **TaskRun**（一次派发）。
 - 技术栈：pnpm + TypeScript + Cordis + Zod + tsdown + vitest。4 个入口：主插件、client（看板 React）、typert host/remote（snapshot / setScheduleStatus / answerTaskQuestions RPC）。
@@ -30,9 +30,8 @@
 ./node_modules/.bin/tsc -p tsconfig.client.json --noEmit
 ./node_modules/.bin/vitest run        # 以当前全量用例为准
 ./node_modules/.bin/tsdown            # 应无弃用警告
-node scripts/copy-vendor.mjs          # tsdown 不复制 vendored 驱动
 export npm_config_cache=/private/tmp/dsh-orchestrator-npm-cache
-node scripts/verify-packaging.mjs     # 校验 tgz 只含运行所需 lib/、vendor/、cordis.patch.yml 等
+node scripts/verify-packaging.mjs     # 校验 tgz 只含运行所需 lib/、cordis.patch.yml 等
 npm pack --pack-destination dist      # 产物 dist/cmjt-dsh-orchestrator-<version>.tgz
 ```
 
@@ -74,7 +73,6 @@ uv run --no-project --python /usr/bin/python3 python -c 'import subprocess; subp
 | `client/Board.tsx` | 会话与日程页签、数据刷新和回调协调 |
 | `client/question-card.tsx` / `task-box.tsx` | 问题作答 / 任务时间线及详情 |
 | `client/schedule-list.tsx` / `schedule-pane.tsx` / `schedule-ordering.ts` | 两页共用日程行 / 月历 / 日程排序与日期辅助 |
-| `vendor/dsh-computer-use-darwin/lib/sessions.js` | 按 Agent 隔离驱动 session、快照与串行调用链 |
 
 ### 状态机（src/types.ts + src/state-machine.ts）
 
@@ -111,11 +109,11 @@ uv run --no-project --python /usr/bin/python3 python -c 'import subprocess; subp
 ### 工具权限
 
 - Lead **预设挂载面**（presets.ts）：显式挂载自带插件 tool-web（web_search/web_fetch）、tool-fs-search（glob/grep，必配 `sampleOverCapGlobResults`）、tool-fs（read/write/edit/read_image）、tool-present（Worker artifacts 的主会话制品卡交付）、tool-todo（必配 `allowParallelInProgress`）、tool-goal、tool-ask-user。0.2.7 起 tool-web 曾被误删，"一步查询"长期是空头承诺，0.3.16 补回。不挂 bash/terminal/jobs/schedule/session-query/skill/mcp-resources/subagent/teams/worktree——执行与编排都在 Worker 侧；缺必配 config 会新建会话即报 agent-preset/invalid。
-- Lead：**黑名单裁剪**，按注册表过滤已有第三方执行工具，自带工具升级新增不被误藏。记忆工具全部由 dsh-personal-memory 原生注册；仅保留 search/read，其余交给 Worker。orchestrator 不导入记忆插件实现，只通过原生会话门控接口设置策略。
+- Lead：**黑名单裁剪**，按注册表过滤记忆写/管理与 GenUI 直接渲染工具，自带工具升级新增不被误藏。记忆工具全部由 dsh-personal-memory 原生注册；仅保留 search/read，其余交给 Worker。orchestrator 不导入记忆插件实现，只通过原生会话门控接口设置策略。
 - Worker：按 `isWorkerToolForbidden`（worker-policy.ts）枚举工具并 `scoped.tools.restrict({ deny })`，失败时回退 `guard`。编排/派生类禁止项见 `workerForbiddenPatterns`（workflow/ralph/orchestrator），直接向用户提问类见 `workerQuestionPatterns`（ask_user 系，命中时引导改走 task_input_required）；新增"禁止类"工具只改这两张表。子智能体工具由 Worker 预设的 delegation 组显式组合（与平台 standard 预设同款，spawn/fork 后端驻留宿主平面）。
 - **工具清单巡检（每次相关改动必做）**：改 lead-policy/service 工具面相关代码、或 DSH/插件升级后，重新枚举全局工具（扫 DSH core + profile 插件的 defineTool 名字）与 `DSH_CORE_TOOL_BASELINE` 快照对比。运行时也有兜底：Lead 挂载时 `unrecognizedGlobalTools` 发现基线外且未命中 deny 的名字会打 warn。发现新工具 → 确认归属 → 自带的更新基线、第三方的评估加入 LEAD_TOOL_DENY（或确认放行）。用户主动装新插件同样适用。
 - 不要用白名单限制 Worker；仅禁止上述类别，用户后装工具（MCP/浏览器/技能）默认可用。
-- 当前 Lead deny 包含 macOS 桌面工具实际精确名及 BrowserSkill 的 `browser_session/page/inspect/interact/tabs/assist` 六个精确名；`bsk_` / `ego_` 仍作前缀兜底。核心工具基线 57 项，含 plugin_manager / plugin_market。
+- orchestrator 不再捆绑 BrowserSkill、Computer Use 或 QQ 邮箱，Lead 也不保留对应的工具名/前缀遮蔽与 QQ 邮箱提示段抑制。核心工具基线 57 项，含 plugin_manager / plugin_market。
 - 会话权限：Worker 在 configureWorker 时切 `danger-full-access`（沙箱全开放+审批 never）：后台无人值守，默认 workspace-write+ask 会把敏感操作永远卡在审批上；Lead 保持默认。**注意**：cordis 4 的 context proxy 对未 inject 的服务属性访问直接抛错（cannot get property without inject），permissionPresets/schedule 这类不在 static inject 里的可选服务必须用 `ctx.get(name)` 访问，否则 silently 失效（权限切换曾因此从未生效，定时标记同步同因）。
 
 ### 定时任务
@@ -178,11 +176,6 @@ uv run --no-project --python /usr/bin/python3 python -c 'import subprocess; subp
 - 存储仍位于 ~/.dsh/storages/orchestrator/（domain v3，per-record，conversations/tasks/schedules）；旧 orchestrator.json 同样需要备份移出。详见 docs/board-api-v0.3.19-changes.md。
 - 子会话 transcript：`~/.dsh/sessions/<workspace-encoded>/<childSessionId>/session.v4.jsonl.zstd`，用 `zstd -dc` 解压排查真实轮次；`turn/end` 的 reason 是判断手动停止/改单的依据。
 
-### macOS 桌面驱动
-
-- vendored 驱动用 AsyncLocalStorage 与 WeakMap 按 Agent 隔离快照、初始化状态和驱动 session，同 Agent 串行、不同 Agent 可并行。进程共享物理桌面，隔离 session 不代表窗口与焦点互不影响。
-- 所有元素编号操作都必须经快照 TTL 检查，包括点击；过期时只清当前 Agent 的快照。原生驱动集成仍需实机验收，单测使用 mock 驱动。
-
 ## 代码约定
 
 - typecheck（host + client 两个 project）必须干净；提交前跑全量 vitest。
@@ -206,4 +199,4 @@ uv run --no-project --python /usr/bin/python3 python -c 'import subprocess; subp
 
 - README.md：用户面说明，发版时随版本号更新。
 - docs/README.md：文档索引；docs/milestones/0.3.20.md：当前变更、验证与已知限制。
-- **正式发版清单（用户授权后）**：先更新版本与文档 → host/client typecheck + 全量测试 → build（含 copy-vendor）+ verify:packaging → `npm pack` → 中文 commit + annotated tag（若本地里程碑已存在且内容未变则复用）→ push dev 与对应 tag → `gh release create` 必须同时附三个资产：构建产物 tgz（**lib/ 已编译**，源码 tar.gz 装不了）、`board-api.md` 完整接口和 `board-api-v<版本>-changes.md` 差异说明 → 正式版 tgz 装回 web profile 并通过指定脚本以 start_new_session 重启 3080。**GitHub release 之外必须同步发布私有 npm 源**（Verdaccio `http://36.138.53.195:4873/`，scope `@cmjt` 已映射）：`npm publish --registry http://36.138.53.195:4873/` 后用 `npm view @cmjt/dsh-orchestrator --registry http://36.138.53.195:4873/` 验证；两处包内容 shasum 应一致（同一次 `npm pack` 产物）。
+- **正式发版清单（用户授权后）**：先更新版本与文档 → host/client typecheck + 全量测试 → build + verify:packaging → `npm pack` → 中文 commit + annotated tag（若本地里程碑已存在且内容未变则复用）→ push dev 与对应 tag → `gh release create` 必须同时附三个资产：构建产物 tgz（**lib/ 已编译**，源码 tar.gz 装不了）、`board-api.md` 完整接口和 `board-api-v<版本>-changes.md` 差异说明 → 正式版 tgz 装回 web profile 并通过指定脚本以 start_new_session 重启 3080。**GitHub release 之外必须同步发布私有 npm 源**（Verdaccio `http://36.138.53.195:4873/`，scope `@cmjt` 已映射）：`npm publish --registry http://36.138.53.195:4873/` 后用 `npm view @cmjt/dsh-orchestrator --registry http://36.138.53.195:4873/` 验证；两处包内容 shasum 应一致（同一次 `npm pack` 产物）。

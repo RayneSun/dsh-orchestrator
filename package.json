@@ -9,8 +9,7 @@
     "./client": "./lib/client.js",
     "./typert": "./lib/typert.host.js",
     "./remote": "./lib/typert.remote-client.js",
-    "./package.json": "./package.json",
-    "./dsh-computer-use-darwin": "./lib/vendor/dsh-computer-use-darwin/index.js"
+    "./package.json": "./package.json"
   },
   "files": [
     "lib",
@@ -21,7 +20,7 @@
   ],
   "license": "MIT",
   "scripts": {
-    "build": "rm -rf lib && tsdown && node scripts/copy-vendor.mjs",
+    "build": "rm -rf lib && tsdown",
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.client.json --noEmit",
     "test": "vitest run",
     "pack:dry": "npm pack --dry-run",
@@ -30,14 +29,11 @@
     "verify:packaging": "node scripts/verify-packaging.mjs"
   },
   "dependencies": {
+    "@changfenhuang/dsh-genui": "0.15.0",
     "@cmjt/dsh-personal-memory": "0.4.6",
-    "@milkuovo/dsh-computer-use": "0.3.1",
-    "@wxg-prc-cpg/browser-skill-dsh-plugin": "0.3.2",
-    "@zhengjunyao/dsh-qqmail": "0.1.1",
     "zod": "^4.4.3"
   },
   "peerDependencies": {
-    "@changfenhuang/dsh-genui": ">=0.15.0",
     "@deepseek-ai/cordis": "^4.0.5-alpha.1",
     "@deepseek-ai/dsh-agent": "^0.2.1-rc.2",
     "@deepseek-ai/dsh-agent-preset-registry": "^0.2.1-rc.2",

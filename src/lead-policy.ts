@@ -2,9 +2,8 @@
  * 主控（Lead）工具黑名单与提示段抑制策略。
  *
  * 主控保留 DSH 自带的全局工具（自带工具升级新增对 Lead 自动可见），只屏蔽
- * 第三方执行类工具：个人记忆写/管理（只读 search/read 保留）、qqmail 全家桶、
- * 桌面/浏览器操控。执行能力全部在 Worker 侧。deny 按精确名运行时匹配
- * （未注册的自动跳过），另按前缀兜底浏览器操控类（bsk_* / ego_*）。
+ * 个人记忆写/管理（只读 search/read 保留）与 GenUI 直接渲染工具。
+ * deny 按精确名运行时匹配，未注册的自动跳过。
  */
 
 export const LEAD_TOOL_DENY = [
@@ -15,51 +14,9 @@ export const LEAD_TOOL_DENY = [
   'memory_project',
   'memory_dream',
   'memory_find_similar',
-  // qqmail：收发管理都在 Worker
-  'qqmail_send',
-  'qqmail_reply',
-  'qqmail_list',
-  'qqmail_read',
-  'qqmail_search',
-  'qqmail_folders',
-  'qqmail_attachment',
-  'qqmail_move',
-  'qqmail_mark',
-  'qqmail_delete',
-  'qqmail_config',
-  'qqmail_status',
   // dsh-genui：卡片走 task_completed 的 card，Lead/Worker 不直接渲染或验证围栏
   'render_ui',
   'validate_dsh_ui',
-  // 桌面操控（dsh-computer-use）
-  'click',
-  'drag',
-  'get_app_state',
-  'list_apps',
-  'perform_secondary_action',
-  'press_key',
-  'scroll',
-  'select_text',
-  'set_value',
-  'type_text',
-  'screen_observe',
-  'screen_zoom',
-  'computer_click',
-  'computer_double_click',
-  'computer_right_click',
-  'computer_type',
-  'computer_key',
-  'computer_scroll',
-  'computer_drag',
-  'computer_wait',
-  'app_list',
-  'app_launch',
-  'browser_session',
-  'browser_page',
-  'browser_inspect',
-  'browser_interact',
-  'browser_tabs',
-  'browser_assist',
 ] as const
 
 /**
@@ -85,16 +42,13 @@ export const DSH_CORE_TOOL_BASELINE: readonly string[] = [
 /** 基线外的有意保留项：dsh-personal-memory 原生查询工具。 */
 export const LEAD_TOOL_KEEP: readonly string[] = ['memory_search', 'memory_read']
 
-/** 浏览器操控类前缀兜底（browser-skill / ego-browser，未激活也不怕将来出现）。 */
-const LEAD_TOOL_DENY_PREFIXES = /^(bsk|ego)_/
-
-/** 工具名是否命中 deny：精确名单或浏览器操控类前缀。 */
+/** 工具名是否命中精确 deny 名单。 */
 function isDeniedTool(name: string): boolean {
-  return (LEAD_TOOL_DENY as readonly string[]).includes(name) || LEAD_TOOL_DENY_PREFIXES.test(name)
+  return (LEAD_TOOL_DENY as readonly string[]).includes(name)
 }
 
 /**
- * 计算要 deny 的工具名：精确名单 ∩ 当前注册集合，加上命中前缀的注册工具。
+ * 计算要 deny 的工具名：精确名单 ∩ 当前注册集合。
  * restrict 只接受已注册的全局工具名，必须先按运行时注册表过滤。
  */
 export function leadToolDenyList(registeredNames: readonly string[]): string[] {
@@ -102,7 +56,7 @@ export function leadToolDenyList(registeredNames: readonly string[]): string[] {
 }
 
 /**
- * 陌生工具检测：注册表中不在自带基线/keep、也不命中 deny 名单/前缀的名字。
+ * 陌生工具检测：注册表中不在自带基线/keep、也不命中 deny 名单的名字。
  * 这些工具当前对 Lead 可见——新装第三方插件会走到这里，触发 warn 提醒。
  */
 export function unrecognizedGlobalTools(registeredNames: readonly string[]): string[] {
@@ -111,12 +65,11 @@ export function unrecognizedGlobalTools(registeredNames: readonly string[]): str
 }
 
 /**
- * Lead 会话要遮蔽的全局系统提示段：这些能力对 Worker 有用（手册随工具走），
+ * Lead 会话要遮蔽的全局系统提示段：记忆写入手册与 GenUI 围栏教学
  * 对只做路由的主控是纯上下文负担。
  */
 export const LEAD_SUPPRESSED_SECTIONS = [
   'dsh-personal-memory:guide',
-  'plugin:dsh-qqmail',
   'genui:fence',
   'harness:source',
   'app:web-surface',

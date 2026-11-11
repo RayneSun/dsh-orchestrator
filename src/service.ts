@@ -472,7 +472,7 @@ export class OrchestratorService extends TypertRemoteService {
       text: () => this.renderRoster(String(agent.session.id)),
       interpolate: false,
     }))
-    // 遮蔽与主控无关的全局提示段（记忆写入手册、qqmail 公告）：这些能力的使用方是 Worker。
+    // 遮蔽与主控无关的全局提示段（记忆写入手册、GenUI 围栏教学）。
     for (const sectionName of LEAD_SUPPRESSED_SECTIONS) {
       this.keep(agent, scoped.systemPrompt.section({ name: sectionName, order: 0, text: '', interpolate: false }))
     }

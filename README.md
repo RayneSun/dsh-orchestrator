@@ -27,9 +27,7 @@ Worker 的任务上报协议、安全红线（支付/删除等不可逆操作先
 安装本 bundle 会自动安装并启用以下能力：
 
 - [dsh-personal-memory v0.4.6](https://github.com/friendllcc/dsh-personal-memory/releases/tag/v0.4.6)：通过私有 npm 源的 `@cmjt/dsh-personal-memory@0.4.6` 普通依赖自动安装。Lead 与 Worker 原生共享用户全局记忆库，默认数据家在 `~/.dsh/storages/dsh-personal-memory`（设置了 `DSH_HOME` 时跟随该目录），SQLite 位于其中的 `.dsh-personal-memory/memory.db`。Worker 保留完整记忆能力；Lead 只查询。旧工作区库的发现与合并交由插件原生迁移，不再创建共享链接，也不删除旧记忆。
-- `@wxg-prc-cpg/browser-skill-dsh-plugin`：浏览器自动化；需自行安装 `bsk` CLI 和浏览器扩展。
-- `@zhengjunyao/dsh-qqmail`：QQ 邮箱/IMAP/SMTP，默认只读，外发或删除需用户确认与配置授权码。
-- 桌面操控：macOS 使用本包内 vendored 的 `dsh-computer-use` 驱动；Windows 安装 `@milkuovo/dsh-computer-use`。两者通过平台 gate 二选一启用。vendored 驱动的 MIT 许可证见 `lib/vendor/dsh-computer-use-darwin/LICENSE`，仍需系统提供可执行的 `cua-driver`。
+- `@changfenhuang/dsh-genui@0.15.0`：普通依赖随包安装并在 bundle 中默认启用，负责渲染 Worker 提交的 `dsh-ui` 卡片。orchestrator 继续用定制 skill 约束 Worker 只通过 `task_completed.card` 提交卡片，不开放直接渲染与验证工具。
 
 权限分两层：记忆等可信插件在宿主进程内通过 Node 文件 API 读写 `~/.dsh`，不受模型文件工具的工作区沙箱限制；Worker 使用 `danger-full-access`（审批策略为 never），可按需读写该目录。Lead 的文件工具仍遵守自己的沙箱，记忆工具的查询不受此限制。无需放宽目录的系统权限。
 
@@ -66,13 +64,13 @@ Lead 的只读策略通过记忆插件已有的会话门控接口设置，短暂
 - **任务框**：把多轮任务圈起来，默认只显示最新一轮，可展开全部。任务行含状态徽标、精简主题、实时步骤进度（✓/● 框选清单）、加粗 `header` + 一句话进展（运行中带扫光动效）、创建时间与实时耗时；“展开详情”含完整结果/错误、作答留痕、可点击打开的制品文件与同步状态。
 - 点击“打开子会话”可查看完整子会话（Worker 是与主会话同级的一等会话）。除日程画勾和问题卡作答外看板只读。
 
-会话页与日程页共用日程行，两页都显示 P0–P3 优先级胶囊。macOS 桌面工具按 Agent 隔离快照和驱动 session，同一 Agent 的调用串行；元素编号点击必须通过快照时效校验。
+会话页与日程页共用日程行，两页都显示 P0–P3 优先级胶囊。
 
 ## 分发安装
 
 要求接收方已安装 DSH `0.2.1-rc.2` 或更高版本，并且使用 Web profile。
 
-从私有源安装，记忆插件随依赖自动安装，无需单独添加：
+从私有源安装，记忆与 GenUI 插件随依赖自动安装并启用，无需单独添加：
 
 ```sh
 dsh plugin --profile web add @cmjt/dsh-orchestrator --registry http://36.138.53.195:4873/
@@ -80,7 +78,9 @@ dsh plugin --profile web add @cmjt/dsh-orchestrator --registry http://36.138.53.
 
 使用 GitHub Release tgz 安装时同样指定私有源，以便解析 `@cmjt` 依赖；若已有 `@cmjt:registry` 映射则可省略 `--registry`。普通 registry 依赖无需关闭 pnpm 安全校验。
 
-记忆依赖固定为 `0.4.6`，该版本已修正 scoped 包的客户端注册与 bundle 引用，无需本机补丁，也不会再受 latest 或旧 lockfile 漂移影响。
+记忆依赖固定为 `0.4.6`，GenUI 依赖固定为 `0.15.0`。orchestrator 不再捆绑 BrowserSkill、Computer Use 或 QQ 邮箱；需要这些能力时可另行安装对应插件，Worker 仍可使用后装工具。
+
+如果旧版本曾单独执行 `dsh plugin --profile web add @changfenhuang/dsh-genui`，升级前先执行 `dsh plugin --profile web remove @changfenhuang/dsh-genui`，移除独立的 bundle 条目；orchestrator 会保留依赖并自行启用 GenUI，避免重复注册。
 
 从旧 scope 升级，先备份并清理旧域（详见升级文档），再移除旧包、安装新包；不要同时启用两个 scope：
 
