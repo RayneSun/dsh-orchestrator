@@ -2,14 +2,14 @@
 
 DSH 主控助理编排插件，也是一个开箱即用的个人助理能力包。Lead 主会话只负责理解需求、维护路由卡、派发任务和转述结果；持久子会话保存完整执行上下文，每次派发对应一条 TaskRun。
 
-当前版本 **0.3.22**，包名为 **`@cmjt/dsh-orchestrator`**。任务状态上报拆为四个工具，用户日程独立为 `task_schedule`；snapshot 的任务结果字段拍平，记忆迁移至 dsh-personal-memory。**不兼容旧会话与旧看板存储**：升级前备份旧域并停用旧 Worker 的定时任务，升级后新建会话。见[完整接口](docs/board-api.md)、[0.3.22 接口变化说明](docs/board-api-v0.3.22-changes.md)和[发布记录](docs/milestones/0.3.22.md)。
+当前版本 **0.3.23**，包名为 **`@cmjt/dsh-orchestrator`**。任务状态上报拆为四个工具，用户日程独立为 `task_schedule`；snapshot 的任务结果字段拍平，记忆迁移至 dsh-personal-memory。**不兼容旧会话与旧看板存储**：升级前备份旧域并停用旧 Worker 的定时任务，升级后新建会话。见[完整接口](docs/board-api.md)、[0.3.23 接口变化说明](docs/board-api-v0.3.23-changes.md)和[发布记录](docs/milestones/0.3.23.md)。
 
 ## 预设
 
 - `may-orchestrator-lead`：主控助理。DSH 自带工具全部可用（一步轻量查询、记忆查阅直接做）；个人记忆写/管理与 GenUI 直接渲染工具对 Lead 隐藏，需要实际执行时按提示词派发 Worker。长期记忆使用 dsh-personal-memory 的原生 `memory_search` / `memory_read`，不再复刻查询工具；Lead 停止自动反思、写入和空闲整理，保留原生记忆读入，写入手册只向 Worker 提供。
 - `may-orchestrator-worker`：统一执行 Worker，是与主会话同级的**一等根会话**（非子代理），因此定时任务（schedule）等平台能力对其开放。工具采用**黑名单**：文件、命令、网页、浏览器、技能、MCP、定时任务等宿主自带与用户安装的工具默认可用，可使用子智能体（subagent/fork）与后台任务（job）做并行、隔离或长耗时处理；仅禁止编排循环（workflow/ralph）、调用 orchestrator 编排工具和直接向用户提问。
 
-Worker 的任务上报协议、安全红线（支付/删除等不可逆操作先确认）、文件边界与整洁约束都固化在预设 persona 中，每次派发只传递任务本身（独立工作区由运行时自动绑定，不重复环境声明）。上报拆为 5 个独立工具，每个工具的 schema 只含该状态合法字段（v0.3.19 起，不兼容旧会话）：
+Worker 的任务上报协议、安全红线（支付/删除等不可逆操作先确认）、文件边界与整洁约束都固化在预设 persona 中，每次派发只传递细化后的用户需求与验收点（独立工作区由运行时自动绑定，不重复环境声明或指定执行方法）。Lead 额外获得按实际可见范围生成的 Worker 工具与 Skill 能力索引，用于判断能否派发，不暴露为新的模型工具。上报拆为 5 个独立工具，每个工具的 schema 只含该状态合法字段（v0.3.19 起，不兼容旧会话）：
 
 - `task_running`：进行中上报，可带 `header`（最多 8 个字的状态标题）与 `progressNote`（一句话进展）
 - `task_input_required`：必带结构化 `questions`，在看板和子会话渲染同源问题卡；阻塞工具调用，任一入口作答后工具直接返回用户答案，Worker 同轮继续
@@ -60,7 +60,7 @@ Lead 的只读策略通过记忆插件已有的会话门控接口设置，短暂
 
 在主会话 header 点击“任务看板”。右侧栏按子会话展示：
 
-- **会话卡片**：状态徽标、静默 / 定时 / dsh-ui 卡片徽标、独立工作区名、任务时间线；支持折叠；折叠态保留问题卡与日程，运行中的会话高亮并带柔光扫过动效。completed 任务可展开查看卡片 JSON 预览。每轮任务脚注自动展示实际传入模型与上游返回模型（路由不一致时合并显示），不增加 Worker 上报负担。看板提供**会话 / 日程**双页签：日程页为月历（周一起始、优先级色点、跨天事项逐日出现、过期未完成置顶、缺少 startAt 的日程只在会话页），停留在日程页时任务更新会在会话页签亮起未读点，切回即清除。
+- **会话卡片**：状态徽标、静默 / 定时 / dsh-ui 卡片徽标、独立工作区名、任务时间线；支持折叠；折叠态保留问题卡与日程，运行中的会话高亮并带柔光扫过动效。任务新进入待操作时，看板未展开会自动打开并高亮目标会话与任务；已经查看看板时只高亮，不重复聚焦。completed 任务可展开查看卡片 JSON 预览。每轮任务脚注自动展示实际传入模型与上游返回模型（路由不一致时合并显示），不增加 Worker 上报负担。看板提供**会话 / 日程**双页签：日程页为月历（周一起始、优先级色点、跨天事项逐日出现、过期未完成置顶、缺少 startAt 的日程只在会话页），停留在日程页时任务更新会在会话页签亮起未读点，切回即清除。
 - **用户日程框**：位于工作区行上方、折叠也显示；用户可画勾/取消（经 `setScheduleStatus` 持久化并让子会话在后续派发/工具结果中知情），已完成灰显划线保留，Worker 作废的日程带"已作废"胶囊不可勾；每条日程带优先级胶囊（P0 红 / P1 橙 / P2 黄 / P3 绿，默认 P3），时间窗/提醒时间渲染为胶囊（`remindAt` 是供 App 使用的元数据，本插件不据此发到点通知），点击日程行展开详情（备注/链接/附件/联系人/地点）。
 - **任务框**：把多轮任务圈起来，默认只显示最新一轮，可展开全部。任务行含状态徽标、精简主题、实时步骤进度（✓/● 框选清单）、加粗 `header` + 一句话进展（运行中带扫光动效）、创建时间与实时耗时；“展开详情”含完整结果/错误、作答留痕、可点击打开的制品文件与同步状态。
 - 点击“打开子会话”可查看完整子会话（Worker 是与主会话同级的一等会话）。除日程画勾和问题卡作答外看板只读。
@@ -87,7 +87,7 @@ dsh plugin --profile web add @cmjt/dsh-orchestrator --registry http://36.138.53.
 
 ```sh
 dsh plugin --profile web remove @may/dsh-orchestrator
-dsh plugin --profile web add /absolute/path/to/cmjt-dsh-orchestrator-0.3.22.tgz --registry http://36.138.53.195:4873/
+dsh plugin --profile web add /absolute/path/to/cmjt-dsh-orchestrator-0.3.23.tgz --registry http://36.138.53.195:4873/
 ```
 
 重新生成分发包：
@@ -114,7 +114,7 @@ pnpm pack:dry
 
 ```sh
 dsh plugin --profile web remove @cmjt/dsh-orchestrator
-dsh plugin --profile web add /absolute/path/to/cmjt-dsh-orchestrator-0.3.22.tgz
+dsh plugin --profile web add /absolute/path/to/cmjt-dsh-orchestrator-0.3.23.tgz
 ```
 
 移除：

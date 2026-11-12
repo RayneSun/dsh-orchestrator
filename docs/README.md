@@ -1,6 +1,6 @@
 # 文档索引
 
-当前版本 **0.3.22**，包名 `@cmjt/dsh-orchestrator`。本版 snapshot 任务字段拍平，不兼容旧会话与旧看板存储。
+当前版本 **0.3.23**，包名 `@cmjt/dsh-orchestrator`。本版 snapshot 任务字段拍平，不兼容旧会话与旧看板存储。
 
 ## 当前文档
 
@@ -12,6 +12,8 @@
 | [投递机制](delivery-to-lead.md) | 当前 followup / outbox 与同轮作答链路，附平台 API 调研 |
 | [GenUI 卡片规范](../genui-card-skill.md) | 随包加载的 Worker 运行时文档，规定 task_completed 的 card 展示通道与组件 |
 | [看板展示设计稿](board-showcase-v0315.html) | 静态 UI 设计稿，含任务模型来源、路由差异与折叠态展示 |
+| [0.3.23 接口差异](board-api-v0.3.23-changes.md) | 定时来源关联、问题作答路由与快照布尔投影 |
+| [0.3.23 发布记录](milestones/0.3.23.md) | 定时多轮上报、待操作提醒与 Lead/Worker 提示优化 |
 | [0.3.22 接口差异](board-api-v0.3.22-changes.md) | 定时轮次的任务生命周期与兼容边界 |
 | [0.3.22 发布记录](milestones/0.3.22.md) | 活动定时任务跨轮次继续与误判失败修复 |
 | [0.3.21 接口差异](board-api-v0.3.21-changes.md) | Task 模型元数据、Worker 默认模型、配置与依赖变化 |
