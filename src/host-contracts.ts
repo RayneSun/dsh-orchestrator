@@ -1,7 +1,8 @@
 /**
  * 宿主能力的最小结构化接口。定时任务会话标记通过快照里的
- * hasActiveSchedule 渲染 badge（DSH 侧栏标题不加任何图标前缀）。
- * 标记本身不落库：宿主监听 schedule/changed 并启动时全量核对，即时推导。
+ * hasActiveSchedule 渲染 badge（DSH 侧栏标题不加任何图标前缀），并在轮次结束时
+ * 判断未提交终态的 queued/running 任务是否应等待后续定时轮次。标记本身不落库：宿主监听
+ * schedule/changed 并启动时全量核对，即时推导。
  */
 
 /** 宿主 schedule 服务的最小结构化接口（本地声明，不新增包导入）。 */

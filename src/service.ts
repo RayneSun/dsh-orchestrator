@@ -981,6 +981,18 @@ export class OrchestratorService extends TypertRemoteService {
     return this.hostCtx.get?.('schedule') as ScheduleServiceLike | undefined
   }
 
+  /** 实时查询活动定时任务；服务缺失或查询失败时返回 undefined，由调用方决定降级策略。 */
+  private async hasActiveSchedule(childSessionId: string): Promise<boolean | undefined> {
+    const schedule = this.scheduleService()
+    if (!schedule) return undefined
+    try {
+      return (await schedule.list({ sessionId: childSessionId })).length > 0
+    } catch (error) {
+      this.hostCtx.logger.warn(`orchestrator: schedule list failed for ${childSessionId}: ${String(error)}`)
+      return undefined
+    }
+  }
+
   private queueScheduleMarkSync(): void {
     if (this.scheduleSyncTimer) clearTimeout(this.scheduleSyncTimer)
     this.scheduleSyncTimer = setTimeout(() => {
@@ -1000,13 +1012,8 @@ export class OrchestratorService extends TypertRemoteService {
     const schedule = this.scheduleService()
     if (!schedule) return
     for (const [, conv] of this.conversations().entries()) {
-      let marked: boolean
-      try {
-        marked = (await schedule.list({ sessionId: conv.childSessionId })).length > 0
-      } catch (error) {
-        this.hostCtx.logger.warn(`orchestrator: schedule list failed for ${conv.childSessionId}: ${String(error)}`)
-        continue
-      }
+      const marked = await this.hasActiveSchedule(conv.childSessionId)
+      if (marked === undefined) continue
       const previous = this.scheduleMarks.get(conv.childSessionId) ?? false
       this.scheduleMarks.set(conv.childSessionId, marked)
       if (previous !== marked) this.emitChanged()
@@ -1297,7 +1304,8 @@ export class OrchestratorService extends TypertRemoteService {
 
   /**
    * Worker 轮次结束的结算：已提交终态的任务在 settle 后 activeTaskId 为空，
-   * 走到这里的都是“轮次结束了但任务没有终态”——按结束原因分为手动停止、改单中断或失败。
+   * 走到这里的都是“轮次结束了但任务没有终态”——手动停止与改单立即结算；
+   * queued/running 且仍有活动定时任务时等待后续轮次，其余情况按失败处理。
    */
   private async onWorkerTurnEnd(childSessionId: string, endCause: WorkerTurnEndCause | undefined): Promise<void> {
     let shouldDeliver = false
@@ -1326,6 +1334,8 @@ export class OrchestratorService extends TypertRemoteService {
         nextConv = settleConversation(conv, task, now)
         outcome = 'revision'
       } else {
+        // 异步任务可通过定时触发跨轮次继续；input_required 的阻塞调用不能转到其他轮次。
+        if (stored.status !== 'input_required' && await this.hasActiveSchedule(childSessionId)) return
         task = gateTaskDelivery(
           failTask(previous, previous.status === 'queued' ? '子会话在任务开始前结束' : '子会话结束前未提交终态上报', now),
           this.deliveryToggles(),

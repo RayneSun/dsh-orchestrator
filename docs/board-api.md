@@ -190,7 +190,7 @@ task_schedule       { create?: ScheduleNew[], update?: ScheduleUpdate[] }   日�
 ```
 
 - `task_input_required` 为阻塞调用，返回值即用户答案 `{ answers: [{id, selected, custom?}] }`，Worker 同轮继续。
-- `task_completed / task_failed` 为终态：提交成功后 Worker 本轮不再推理；无活动任务的定时触发轮次只允许 `task_completed`。
+- `task_completed / task_failed` 为终态：提交成功后 Worker 本轮不再推理；无活动任务的定时触发轮次只允许 `task_completed`。queued/running 任务本轮未提交终态但子会话仍有活动原生定时任务时，Task 与 Conversation.activeTaskId 保持原状，等待下一轮继续上报；无活动定时任务或查询失败时仍按未提交终态判 `failed`。`input_required` 的阻塞调用不能跨轮次恢复，轮次结束仍按原规则结算并清理问题卡；手动停止与改单不受影响。
 - `task_schedule` 返回最新日程清单（含 id），随时可调用，不产生状态迁移。
 - `reasonCode`：`permission_denied / configuration / dependency / network / resource / runtime`。
 

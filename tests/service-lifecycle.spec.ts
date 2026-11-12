@@ -17,6 +17,7 @@ function harness() {
   const tables = { conversations, tasks, schedules: new Map() }
   const service = Object.create(OrchestratorService.prototype)
   const nativeSignals: AbortSignal[] = []
+  const scheduleList = vi.fn(async () => [])
   const ask = vi.fn(({ signal }: { signal: AbortSignal }) => {
     nativeSignals.push(signal)
     return new Promise((_resolve, reject) => signal.addEventListener('abort', () => reject(new Error('aborted')), { once: true }))
@@ -28,7 +29,10 @@ function harness() {
       get: (id: string) => tables[name].get(id),
       put: async (id: string, value: never) => { tables[name].set(id, value) },
     }) },
-    hostCtx: { get: () => ({ ask }), logger: { warn: vi.fn(), info: vi.fn() } },
+    hostCtx: {
+      get: (name: string) => name === 'userQuestions' ? { ask } : name === 'schedule' ? { list: scheduleList } : undefined,
+      logger: { warn: vi.fn(), info: vi.fn() },
+    },
     pendingAnswers: new PendingAnswers(), revisionTurnEnds: new Map(),
     latestModels: new Map(), lastInboundSource: new Map(),
     emitChanged: vi.fn(), deliverPendingTask: vi.fn(),
@@ -37,8 +41,39 @@ function harness() {
   })
   const call = (method: string, ...args: unknown[]) => service[method](...args)
   const waitForQuestions = async () => vi.waitFor(() => expect(nativeSignals).toHaveLength(1))
-  return { service, call, conversation, task, conversations, tasks, tables, ask, nativeSignals, waitForQuestions }
+  return { service, call, conversation, task, conversations, tasks, tables, ask, scheduleList, nativeSignals, waitForQuestions }
 }
+
+describe('Worker 轮次结束结算', () => {
+  it('仍有活动定时任务时保留当前任务，等待后续轮次继续上报', async () => {
+    const fixture = harness()
+    fixture.scheduleList.mockResolvedValue([{ id: 'schedule' }])
+    await fixture.call('onWorkerTurnEnd', 'worker', undefined)
+    expect(fixture.tasks.get('task')?.status).toBe('running')
+    expect(fixture.conversations.get('conversation')).toEqual(fixture.conversation)
+    expect(fixture.service.deliverPendingTask).not.toHaveBeenCalled()
+  })
+
+  it('没有活动定时任务时仍按未提交终态判定失败', async () => {
+    const fixture = harness()
+    await fixture.call('onWorkerTurnEnd', 'worker', undefined)
+    expect(fixture.tasks.get('task')).toMatchObject({ status: 'failed', error: '子会话结束前未提交终态上报' })
+    expect(fixture.conversations.get('conversation')).toMatchObject({ state: 'failed', activeTaskId: null })
+  })
+
+  it('等待作答时不因活动定时任务保留已结束轮次', async () => {
+    const fixture = harness()
+    fixture.scheduleList.mockResolvedValue([{ id: 'schedule' }])
+    const waiting = fixture.call('reportFromWorker', 'input_required', { questions: [{ question: '继续吗？' }] }, 'worker')
+    const rejected = expect(waiting).rejects.toThrow('轮次已结束')
+    await fixture.waitForQuestions()
+    await fixture.call('onWorkerTurnEnd', 'worker', undefined)
+    await rejected
+    expect(fixture.tasks.get('task')).toMatchObject({ status: 'failed', error: '子会话结束前未提交终态上报' })
+    expect(fixture.conversations.get('conversation')).toMatchObject({ state: 'failed', activeTaskId: null })
+    expect(fixture.nativeSignals[0].aborted).toBe(true)
+  })
+})
 
 describe('任务模型元数据落库', () => {
   it('终态任务保存本轮最后一次推理的传入与返回模型', async () => {

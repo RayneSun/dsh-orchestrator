@@ -1,6 +1,6 @@
 # AGENTS.md — dsh-orchestrator 开发指引
 
-面向接管本仓库的 AI 编码助手。读完本文件再动手。当前仓库版本 0.3.21；文档入口见 [docs/README.md](docs/README.md)。
+面向接管本仓库的 AI 编码助手。读完本文件再动手。当前仓库版本 0.3.22；文档入口见 [docs/README.md](docs/README.md)。
 
 ## 项目是什么
 
@@ -126,7 +126,7 @@ uv run --no-project --python /usr/bin/python3 python -c 'import subprocess; subp
 ### 定时任务
 
 - Worker 预设挂载 `dsh-tool-schedule`（schedule_create/list/update/delete）；提醒绑定 Worker 会话，到点作为新消息发回该会话。
-- 定时触发的轮次没有活动任务：只允许 `task_completed`，Host 生成 ad-hoc 已完成任务并经 outbox 投递给 Lead（service.ts reportFromWorker 的无 activeTaskId 分支）。
+- 定时触发的轮次没有活动任务：只允许 `task_completed`，Host 生成 ad-hoc 已完成任务并经 outbox 投递给 Lead（service.ts reportFromWorker 的无 activeTaskId 分支）。queued/running 任务本轮未提交终态时，若子会话仍有活动原生定时任务则保留任务与 activeTaskId，等待下一轮继续上报；没有定时任务或查询失败仍按原规则判 failed，input_required 的阻塞等待不能跨轮次保留，手动停止与改单不受影响。
 - 定时标记：`schedule/changed` 事件 + Worker `turn/end` 双触发全量核对（500ms 防抖），`scheduleMarks` 内存 Map → snapshot 投影 `hasActiveSchedule`（看板 badge）。DSH 侧栏标题**不加**图标前缀（0.3.x 曾加 ⏰/🕐，已按用户要求移除，renameWorkerSession 只同步看板标题本身）。turn/end 双触发的原因：schedule/changed 的 cordis 传播链路未实测可靠，而轮次内创建的 schedule 在 turn/end 时必已提交。注意 Worker 经它自己的 subagent/job 创建的 schedule 绑定的是那个子会话，不在本机制覆盖内。
 
 ### 全局个人记忆
@@ -205,5 +205,5 @@ uv run --no-project --python /usr/bin/python3 python -c 'import subprocess; subp
 ## 背景材料
 
 - README.md：用户面说明，发版时随版本号更新。
-- docs/README.md：文档索引；docs/milestones/0.3.21.md：当前变更、验证与已知限制。
+- docs/README.md：文档索引；docs/milestones/0.3.22.md：当前变更、验证与已知限制。
 - **正式发版清单（用户授权后）**：先更新版本与文档 → host/client typecheck + 全量测试 → build + verify:packaging → `npm pack` → 中文 commit + annotated tag（若本地里程碑已存在且内容未变则复用）→ push dev 与对应 tag → `gh release create` 必须同时附三个资产：构建产物 tgz（**lib/ 已编译**，源码 tar.gz 装不了）、`board-api.md` 完整接口和 `board-api-v<版本>-changes.md` 差异说明 → 正式版 tgz 装回 web profile 并通过指定脚本以 start_new_session 重启 3080。**GitHub release 之外必须同步发布私有 npm 源**（Verdaccio `http://36.138.53.195:4873/`，scope `@cmjt` 已映射）：`npm publish --registry http://36.138.53.195:4873/` 后用 `npm view @cmjt/dsh-orchestrator --registry http://36.138.53.195:4873/` 验证；两处包内容 shasum 应一致（同一次 `npm pack` 产物）。
