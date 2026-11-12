@@ -276,14 +276,14 @@ export type TaskStatus = TaskRecord['status']
 export type BlockReasonCode = (typeof blockReasonCodes)[number]
 
 const snapshotTaskSchema = taskSchema.extend({
-  /** 由关联 scheduleIds 与原生活动定时任务实时推导，不落库。 */
-  hasActiveSchedule: z.boolean().optional(),
+  /** 由关联 scheduleIds 与原生活动定时任务实时推导，不落库；无活动关联明确返回 false。 */
+  hasActiveSchedule: z.boolean().default(false),
 })
 
 export const snapshotResultSchema = z.object({
   conversations: z.array(conversationSchema.extend({
-    /** 由宿主定时任务推导，不落库。 */
-    hasActiveSchedule: z.boolean().optional(),
+    /** 由宿主定时任务推导，不落库；任一活动 schedule 为 true，否则明确返回 false。 */
+    hasActiveSchedule: z.boolean().default(false),
   })),
   tasks: z.array(snapshotTaskSchema),
   schedules: z.array(scheduleObjectSchema.extend({ conversationTitle: z.string() })),

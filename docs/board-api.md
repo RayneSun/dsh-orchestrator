@@ -67,7 +67,7 @@
 | lastTaskId | string \| null | 最近一次任务 ID |
 | state | ConversationState | 会话聚合状态：`provisioning / running / idle / input_required / failed`。生命周期：活动任务上报 `input_required` 时同步为该值（`activeTaskId` 保留，轮次未结束）；作答后回 `running`；`completed / failed / interrupted` settle 回 `idle` |
 | revision | number | 乐观锁版本号，任意字段变化时 +1 |
-| hasActiveSchedule | boolean? | 仅 snapshot 投影字段（不落库）：子会话绑定了活动定时任务；App 可渲染 ⏰ 标记 |
+| hasActiveSchedule | boolean | 仅 snapshot 投影字段（不落库）：任一原生活动 schedule 为 true，否则明确为 false；App 可据此渲染 ⏰ |
 | createdAt / updatedAt | string(ISO 8601) | 创建/更新时间 |
 
 ## 3. Task（子任务 / TaskRun）
@@ -101,7 +101,7 @@ Task 是子会话内的一条工作记录（一次 dispatch / 一次改单，或
 | scheduled | boolean? | 历史兼容字段；不再新增写入，也不驱动看板时钟 |
 | scheduleIds | string[] | 当前 Task 创建或关联过的原生 schedule ID；一个 Task 可含多个，删除 schedule 后仍保留历史关联 |
 | lastScheduleId | string? | 最近一次定时上报的来源 schedule ID |
-| hasActiveSchedule | boolean? | 仅 snapshot 投影（不落库）：scheduleIds 中存在原生活动 schedule；App 可在该 Task 上渲染 ⏰ |
+| hasActiveSchedule | boolean | 仅 snapshot 投影（不落库）：scheduleIds 中存在原生活动 schedule 为 true，否则明确为 false；App 可在该 Task 上渲染 ⏰ |
 | delivery | Delivery? | 终态投递回执，见 §9；silent 不产生 |
 | revision | number | 任务版本号，每次更新 +1 |
 | createdAt / updatedAt | string(ISO 8601) | 创建/更新时间 |

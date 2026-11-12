@@ -375,7 +375,10 @@ export class OrchestratorService extends TypertRemoteService {
       .map(([, conv]) => conv)
       .filter(conv => conv.parentSessionId === parentSessionId)
       .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
-      .map(conv => this.activeScheduleIds.get(conv.childSessionId)?.size ? { ...conv, hasActiveSchedule: true } : conv)
+      .map(conv => ({
+        ...conv,
+        hasActiveSchedule: Boolean(this.activeScheduleIds.get(conv.childSessionId)?.size),
+      }))
     const ids = new Set(conversations.map(conv => conv.id))
     const titles = new Map(conversations.map(conv => [conv.id, conv.title]))
     const children = new Map(conversations.map(conv => [conv.id, conv.childSessionId]))
@@ -385,7 +388,7 @@ export class OrchestratorService extends TypertRemoteService {
       .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
       .map(task => {
         const active = this.activeScheduleIds.get(children.get(task.conversationId) ?? '')
-        return task.scheduleIds.some(id => active?.has(id)) ? { ...task, hasActiveSchedule: true } : task
+        return { ...task, hasActiveSchedule: task.scheduleIds.some(id => active?.has(id)) }
       })
     const schedules = [...this.schedules().entries()]
       .map(([, item]) => item)

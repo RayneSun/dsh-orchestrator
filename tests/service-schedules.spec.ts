@@ -341,14 +341,14 @@ describe('看板定时标记投影', () => {
     let snapshot = fixture.call('snapshotFor', 'lead')
     expect(snapshot.conversations[0].hasActiveSchedule).toBe(true)
     expect(snapshot.tasks.find((task: TaskRecord) => task.id === 'task-a')?.hasActiveSchedule).toBe(true)
-    expect(snapshot.tasks.find((task: TaskRecord) => task.id === 'task-b')?.hasActiveSchedule).toBeUndefined()
-    expect(snapshot.tasks.find((task: TaskRecord) => task.id === 'task-legacy')?.hasActiveSchedule).toBeUndefined()
+    expect(snapshot.tasks.find((task: TaskRecord) => task.id === 'task-b')?.hasActiveSchedule).toBe(false)
+    expect(snapshot.tasks.find((task: TaskRecord) => task.id === 'task-legacy')?.hasActiveSchedule).toBe(false)
 
     fixture.scheduleList.mockResolvedValue([])
     await fixture.call('syncScheduleMarks')
     snapshot = fixture.call('snapshotFor', 'lead')
-    expect(snapshot.conversations[0].hasActiveSchedule).toBeUndefined()
-    expect(snapshot.tasks.find((task: TaskRecord) => task.id === 'task-a')?.hasActiveSchedule).toBeUndefined()
+    expect(snapshot.conversations[0].hasActiveSchedule).toBe(false)
+    expect(snapshot.tasks.find((task: TaskRecord) => task.id === 'task-a')?.hasActiveSchedule).toBe(false)
   })
 })
 

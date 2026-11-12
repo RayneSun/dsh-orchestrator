@@ -144,11 +144,13 @@ describe('工具输入 Zod 校验', () => {
     expect(dispatchInputSchema.safeParse({ subject: 's', prompt: 'p', workspaceName: 'demo-task', conversationTitle: 'x' }).success).toBe(false)
   })
 
-  it('conversation 记录允许可选 hasActiveSchedule 快照标记', () => {
+  it('conversation 持久化记录拒绝时钟投影，snapshot 缺省时补 false', () => {
     const conv = createConversation({ id: 'c1', childSessionId: 's1', parentSessionId: 'p1', title: 't' })
     expect(conversationSchema.safeParse({ ...conv, hasActiveSchedule: true }).success).toBe(false)
     const snapshot = snapshotResultSchema.parse({ conversations: [{ ...conv, hasActiveSchedule: true }], tasks: [], schedules: [] })
     expect(snapshot.conversations[0].hasActiveSchedule).toBe(true)
+    expect(snapshotResultSchema.parse({ conversations: [{ ...conv }], tasks: [], schedules: [] })
+      .conversations[0].hasActiveSchedule).toBe(false)
   })
 
   it('conversationId 查询拒绝空值和多余字段', () => {
