@@ -9,9 +9,9 @@ import { blockReasonCodes, schedulePriorities } from './types.ts'
 export const DISPATCH_TOOL_PARAMETERS = {
   subject: { type: 'string', required: true, description: '短主题' },
   workspaceName: { type: 'string', description: '新建子会话必填：子工作区目录名，必须匹配 ^[a-z0-9][a-z0-9-]{0,79}$（英文小写短横线 slug，如 daily-news、plane-war）；复用已有子会话时忽略' },
-  prompt: { type: 'string', required: true, description: '需求本身和验收点。Worker 已绑定独立子工作区，不要重复工作目录等环境声明，不要粘贴内部 ID' },
+  prompt: { type: 'string', required: true, description: '只写细化后的用户需求；不要拆分步骤、指导执行方法或指定工具/Skill/技术方案/上报字段/展示组件，不要重复环境信息或粘贴无关内部 ID' },
   conversationId: { type: 'string', description: '复用已有工作流时提供' },
-  acceptanceCriteria: { type: 'string', description: '可选验收标准' },
+  acceptanceCriteria: { type: 'string', description: '可选验收结果：写清怎样算满足用户需求，不写执行步骤或方法' },
   silent: { type: 'boolean', description: '静默模式：记忆整理等后台维护任务使用；终态不会向主会话投递任何消息，看板仍可见状态' },
 } as const
 /** task_* 工具公共字段（与各 input schema 双写：zod 加了字段而这里没加，模型就永远不知道）。 */

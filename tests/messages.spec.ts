@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { deliveryNotice, LEAD_PROMPT, scheduleStatusSection, WORKER_PROMPT } from '../src/messages.ts'
+import { deliveryNotice, LEAD_PROMPT, renderWorkerCapabilityIndex, scheduleStatusSection, WORKER_PROMPT } from '../src/messages.ts'
 import { createConversation, createTask, type ConversationRecord, type TaskRecord } from '../src/types.ts'
 
 describe('deliveryNotice 用户日程段', () => {
@@ -83,31 +83,43 @@ describe('scheduleStatusSection 投递附言', () => {
 })
 
 describe('prompt 编排约定', () => {
-  it('Lead prompt 约定连续新增需求复用会话、subject 宽泛稳定与 Worker 能力清单', () => {
-    expect(LEAD_PROMPT).toContain('## 任务派发指南')
-    expect(LEAD_PROMPT).toContain('同一事项连续新增')
-    expect(LEAD_PROMPT).toContain('复用它的 conversationId')
-    expect(LEAD_PROMPT).toContain('当前/最近需求、状态与最新进展/结果')
-    expect(LEAD_PROMPT).toContain('subject 要宽泛、稳定')
-    expect(LEAD_PROMPT).not.toContain('## 静默派发（silent）')
-    expect(LEAD_PROMPT).toContain('4. 静默派发（silent）')
-    expect(LEAD_PROMPT).toContain('Worker 能做什么')
-    expect(LEAD_PROMPT).toContain('dsh-ui 卡片能力')
+  it('Lead prompt 只描述 Worker 业务能力，不暴露 Worker 工具与上报协议', () => {
     expect(LEAD_PROMPT).toContain('用户待办/日程管理')
-    expect(LEAD_PROMPT).toContain('task_schedule')
-    expect(LEAD_PROMPT).toContain('尽量填全 startAt/endAt/remindAt')
-    expect(LEAD_PROMPT).toContain('自行选择合理的提前量')
-    expect(LEAD_PROMPT).not.toMatch(/schedules\.(create|update)/)
+    expect(LEAD_PROMPT).toContain('记忆管理')
+    expect(LEAD_PROMPT).toContain('制作 PPT')
+    expect(LEAD_PROMPT).toContain('联网检索与信息整理')
+    expect(LEAD_PROMPT).toContain('DSH-UI 可视化')
+    expect(LEAD_PROMPT).toContain('统计图表与 ECharts')
+    expect(LEAD_PROMPT).toContain('流程图/架构图/Mermaid')
+    expect(LEAD_PROMPT).toContain('数学函数图像、图片及 3D 场景')
+    expect(LEAD_PROMPT).toContain('不要改成 Python/matplotlib 绘图或静态图片制作任务')
+    expect(LEAD_PROMPT).toContain('自己做不了的需求也一律派发 Worker')
+    expect(LEAD_PROMPT).toContain('Worker 环境能力索引')
+    expect(LEAD_PROMPT).toContain('不要在派发需求、执行方法或用户回复中引用这些名称')
+    expect(LEAD_PROMPT).not.toContain('task_completed')
+    expect(LEAD_PROMPT).not.toContain('task_schedule')
+    expect(LEAD_PROMPT).not.toContain('schedule_create')
+    expect(LEAD_PROMPT).not.toContain('list/keyvalue')
+    expect(LEAD_PROMPT).not.toContain('startAt/endAt/remindAt')
+  })
+
+  it('Dispatch 只细化用户需求与验收结果，不指导 Worker 执行', () => {
+    expect(LEAD_PROMPT).toContain('prompt 只写细化后的用户需求')
+    expect(LEAD_PROMPT).toContain('acceptanceCriteria 写可检查的验收结果')
+    expect(LEAD_PROMPT).toContain('不要教 Worker 怎么做')
+    expect(LEAD_PROMPT).toContain('不要替它拆分步骤')
+    expect(LEAD_PROMPT).toContain('不要指定工具、Skill、技术方案、执行路径、上报字段或展示组件')
     expect(LEAD_PROMPT).toContain('按照下方的输出规范回复用户')
-    expect(LEAD_PROMPT).toContain('dsh-ui 围栏')
-    expect(LEAD_PROMPT).toContain('原封不动')
     expect(LEAD_PROMPT).toContain('以 ```dsh-ui 开头、以单独的 ``` 结尾')
-    expect(LEAD_PROMPT).toContain('两个标记都不能漏')
     expect(LEAD_PROMPT).toContain('同一信息只在一个载体出现')
-    expect(LEAD_PROMPT).toContain('紧扣用户原始需求')
-    expect(LEAD_PROMPT).toContain('只说结果')
-    expect(LEAD_PROMPT).toContain('不得补充 Worker 的执行过程')
-    expect(LEAD_PROMPT).not.toContain('result 正文和 dsh-ui 围栏都是权威内容')
+  })
+
+  it('环境能力索引只列名称并禁止在派发文案中引用', () => {
+    const text = renderWorkerCapabilityIndex({ tools: ['bash', 'web_search'], skills: ['genui'] })
+    expect(text).toContain('工具：bash、web_search')
+    expect(text).toContain('Skills：genui')
+    expect(text).toContain('不是使用说明')
+    expect(text).toContain('禁止在 dispatch 的 prompt/acceptanceCriteria')
   })
 
   it('Worker prompt 约定 result/card/artifacts 分工、去重且 result 不含路径', () => {

@@ -100,6 +100,37 @@ describe('Lead roster 提示词', () => {
   })
 })
 
+describe('Worker 环境能力索引', () => {
+  it('按 Worker scope 获取能力并过滤内部上报与禁用工具', async () => {
+    const service = Object.create(OrchestratorService.prototype)
+    const agent = { ctx: { get: (name: string) => name === 'skills' ? {
+      list: async (options?: { scope?: object }) => {
+        expect(options?.scope).toBe(agent)
+        return [
+          { name: 'genui', invocation: { modelInvocable: true } },
+          { name: 'hidden', invocation: { modelInvocable: false } },
+        ]
+      },
+    } : undefined } }
+    Object.assign(service, {
+      hostCtx: {
+        get: (name: string) => name === 'tools' ? {
+          schemas: (scope?: object) => {
+            expect(scope).toBe(agent)
+            return [
+              { name: 'task_running' }, { name: 'orchestrator_dispatch' },
+              { name: 'validate_dsh_ui' }, { name: 'web_search' }, { name: 'bash' },
+            ]
+          },
+        } : undefined,
+        logger: { warn: vi.fn() },
+      },
+    })
+    await service.refreshWorkerCapabilities(agent)
+    expect(service.workerCapabilities).toEqual({ tools: ['bash', 'web_search'], skills: ['genui'] })
+  })
+})
+
 describe('Lead roster 动态任务信息', () => {
   function fixture() {
     const conversation: ConversationRecord = {

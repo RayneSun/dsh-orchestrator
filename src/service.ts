@@ -13,7 +13,7 @@ import type {} from '@deepseek-ai/dsh-agent-preset-registry'
 import type {} from '@deepseek-ai/dsh-api-session-controller'
 import type {} from '@deepseek-ai/dsh-session-persistence'
 import type {} from '@deepseek-ai/dsh-system-prompt'
-import { deliveryNotice, revisionPrompt, scheduleProjection, scheduleStatusSection, workerPrompt } from './messages.ts'
+import { deliveryNotice, renderWorkerCapabilityIndex, revisionPrompt, scheduleProjection, scheduleStatusSection, workerPrompt, type WorkerCapabilityIndex } from './messages.ts'
 import { type ScheduleServiceLike, type SessionActivityGroup } from './host-contracts.ts'
 import { DISPATCH_TOOL_PARAMETERS, TASK_COMPLETED_TOOL_PARAMETERS, TASK_FAILED_TOOL_PARAMETERS, TASK_INPUT_REQUIRED_TOOL_PARAMETERS, TASK_RUNNING_TOOL_PARAMETERS, TASK_SCHEDULE_TOOL_PARAMETERS } from './tool-parameters.ts'
 import type { AnswerQuestionsRequest, AnswerQuestionsResult, SetScheduleStatusRequest, SnapshotRequest } from './remote.ts'
@@ -235,6 +235,8 @@ export class OrchestratorService extends TypertRemoteService {
   private readonly lastInboundSource = new Map<string, string>()
   /** childSessionId -> 本轮最后一次 assistant/message 的模型元数据，随下一次任务写入落库。 */
   private readonly latestModels = new Map<string, ModelAttribution>()
+  /** Lead 路由参考：Worker 配置后按实际可见范围刷新，不持久化。 */
+  private workerCapabilities: WorkerCapabilityIndex = { tools: [], skills: [] }
   /** childSessionId -> 已同步到 DSH 侧栏的标题（不含定时标记前缀），用于跳过无谓 rename。 */
   private readonly syncedTitles = new Map<string, string>()
   private scheduleSyncTimer: ReturnType<typeof setTimeout> | undefined
@@ -481,9 +483,39 @@ export class OrchestratorService extends TypertRemoteService {
     this.installed.set(key, list)
   }
 
+  /** 汇总实际可见能力；内部上报协议不属于 Lead 的路由依据。 */
+  private async refreshWorkerCapabilities(agent?: Agent): Promise<void> {
+    try {
+      const tools = this.hostCtx.get('tools') as {
+        schemas?(scope?: object): Array<{ name: string }>
+      } | undefined
+      const skills = (agent?.ctx ?? this.hostCtx).get?.('skills') as {
+        list?(options?: { scope?: object }): Promise<Array<{ name: string, invocation?: { modelInvocable: boolean } }>>
+      } | undefined
+      const toolNames = tools?.schemas?.(agent) ?? []
+      const skillNames = skills?.list ? await skills.list(agent ? { scope: agent } : undefined) : []
+      this.workerCapabilities = {
+        tools: [...new Set(toolNames.map(item => item.name).filter(name => {
+          const canonical = name.replace(/^tool:/, '')
+          return !canonical.startsWith('task_') && isWorkerToolForbidden(name) === undefined
+        }))].sort(),
+        skills: [...new Set(skillNames.filter(item => item.invocation?.modelInvocable !== false).map(item => item.name))].sort(),
+      }
+    } catch (error) {
+      this.hostCtx.logger.warn(`orchestrator: worker capability discovery failed: ${String(error)}`)
+    }
+  }
+
   private async configureLead(agent: Agent): Promise<void> {
     await this.resetInstalled(String(agent.session.id))
+    await this.refreshWorkerCapabilities()
     const scoped = agent.ctx
+    this.keep(agent, scoped.systemPrompt.section({
+      name: 'orchestrator:worker-capabilities',
+      order: 609,
+      text: () => renderWorkerCapabilityIndex(this.workerCapabilities),
+      interpolate: false,
+    }))
     this.keep(agent, scoped.systemPrompt.section({
       name: 'orchestrator:roster',
       order: 610,
@@ -707,6 +739,7 @@ export class OrchestratorService extends TypertRemoteService {
       output: sharedJsonOutput,
       execute: async (args: unknown) => toJson(await this.scheduleFromWorker(args, String(agent.session.id))),
     })))
+    await this.refreshWorkerCapabilities(agent)
   }
 
   private armRevisionTurnGuard(childSessionId: string): void {
