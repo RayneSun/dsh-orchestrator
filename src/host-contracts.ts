@@ -7,7 +7,7 @@
 
 /** 宿主 schedule 服务的最小结构化接口（本地声明，不新增包导入）。 */
 export interface ScheduleServiceLike {
-  list(request: { sessionId: string }): Promise<unknown[]>
+  list(request: { sessionId: string }): Promise<Array<{ id: string }>>
 }
 
 /** workspace/session-activity 瀑布的活动分组（与 dsh-schedule 上报同构）。 */

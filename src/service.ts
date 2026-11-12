@@ -26,6 +26,7 @@ import { GENUI_CARD_SKILL_CONTENT, GENUI_CARD_SKILL_DESCRIPTION } from './genui-
 import { LEAD_SUPPRESSED_SECTIONS, leadToolDenyList, unrecognizedGlobalTools } from './lead-policy.ts'
 import { configureLeadMemory } from './memory-policy.ts'
 import { normalizeProgressSteps } from './progress.ts'
+import { parseScheduledTurn, scheduleCreateCallId, scheduleCreateResult, type ScheduledTurnContext } from './native-schedules.ts'
 import { readModelAttribution, withModelAttribution, type ModelAttribution } from './model-info.ts'
 import { buildChildWorkspace } from './workspaces.ts'
 import { orchestratorDomain } from './storage.ts'
@@ -40,6 +41,7 @@ import {
   interruptTaskAfterRestart,
   resumeTaskWithAnswers,
   awaitingConversation,
+  transitionScheduledTask,
   settleConversation,
   startConversation,
   deliveryEnabledFor,
@@ -93,6 +95,11 @@ type DomainType = Domain<typeof orchestratorDomain>
 type DispatchProvision =
   | { ok: true; conv: ConversationRecord; task: TaskRecord }
   | { ok: false; result: unknown }
+
+interface PendingScheduleCall {
+  childSessionId: string
+  taskId: string
+}
 
 /** schedule/changed 在任务创建/更新、删除、投递时都会触发，合并后再核对，避免每轮触发都全量 list。 */
 const SCHEDULE_SYNC_DEBOUNCE_MS = 500
@@ -222,17 +229,20 @@ export class OrchestratorService extends TypertRemoteService {
   private domain: DomainType | undefined
   private chain: Promise<unknown> = Promise.resolve()
   private readonly installed = new Map<string, Array<() => unknown>>()
-  private readonly delivering = new Set<string>()
+  private readonly delivering = new Map<string, number>()
+  private readonly deliveryRerun = new Set<string>()
   /** taskId -> resolver，task_input_required 阻塞等待用户作答。 */
   private readonly pendingAnswers = new PendingAnswers()
   private readonly pendingTodoSteps = new Map<string, { taskId: string; steps: ProgressStep[] }>()
   private readonly todoTimers = new Map<string, ReturnType<typeof setTimeout>>()
   // 改单 cancel 自身会产生一次 aborted turn/end，需要忽略，不能当成手动停止或任务失败。
   private readonly revisionTurnEnds = new Map<string, number>()
-  /** childSessionId -> 是否绑定了活动定时任务（看板 badge 数据源，内存推导不落库）。 */
-  private readonly scheduleMarks = new Map<string, boolean>()
-  /** childSessionId -> 最近一条入站消息的 source.kind（判定定时触发上报用）。 */
-  private readonly lastInboundSource = new Map<string, string>()
+  /** childSessionId -> 原生活动定时任务 ID（看板 badge 与 Task 关联投影的数据源）。 */
+  private readonly activeScheduleIds = new Map<string, Set<string>>()
+  /** childSessionId -> 当前定时轮次包含的来源 ID；下一条普通用户消息会清除。 */
+  private readonly scheduledTurns = new Map<string, ScheduledTurnContext>()
+  /** 原生 schedule_create callId -> 应关联的 Task，等待 tool/result 返回真实 scheduleId。 */
+  private readonly pendingScheduleCalls = new Map<string, PendingScheduleCall>()
   /** childSessionId -> 本轮最后一次 assistant/message 的模型元数据，随下一次任务写入落库。 */
   private readonly latestModels = new Map<string, ModelAttribution>()
   /** Lead 路由参考：Worker 配置后按实际可见范围刷新，不持久化。 */
@@ -365,13 +375,18 @@ export class OrchestratorService extends TypertRemoteService {
       .map(([, conv]) => conv)
       .filter(conv => conv.parentSessionId === parentSessionId)
       .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
-      .map(conv => this.scheduleMarks.get(conv.childSessionId) ? { ...conv, hasActiveSchedule: true } : conv)
+      .map(conv => this.activeScheduleIds.get(conv.childSessionId)?.size ? { ...conv, hasActiveSchedule: true } : conv)
     const ids = new Set(conversations.map(conv => conv.id))
     const titles = new Map(conversations.map(conv => [conv.id, conv.title]))
+    const children = new Map(conversations.map(conv => [conv.id, conv.childSessionId]))
     const tasks = [...this.tasks().entries()]
       .map(([, task]) => task)
       .filter(task => ids.has(task.conversationId))
       .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
+      .map(task => {
+        const active = this.activeScheduleIds.get(children.get(task.conversationId) ?? '')
+        return task.scheduleIds.some(id => active?.has(id)) ? { ...task, hasActiveSchedule: true } : task
+      })
     const schedules = [...this.schedules().entries()]
       .map(([, item]) => item)
       .filter(item => item.parentSessionId === parentSessionId)
@@ -658,43 +673,16 @@ export class OrchestratorService extends TypertRemoteService {
     this.registerGenuiCardSkill(agent, scoped)
     this.keep(agent, scoped.on('session/event', (session, event) => {
       if (String(session.id) !== String(agent.session.id)) return
-      const ev = event as unknown as { type?: unknown; data?: { todos?: unknown; reason?: unknown; source?: { kind?: unknown }; message?: unknown } }
-      if (ev.type === 'user/message') {
-        this.latestModels.delete(String(agent.session.id))
-        const kind = ev.data?.source?.kind
-        if (typeof kind === 'string') this.lastInboundSource.set(String(agent.session.id), kind)
-        return
-      }
-      if (ev.type === 'assistant/message') {
-        const attribution = readModelAttribution(ev.data?.message)
-        if (attribution) this.latestModels.set(String(agent.session.id), attribution)
-        return
-      }
-      if (ev.type === 'todo/write') {
-        this.queueTodoProgress(String(agent.session.id), ev.data?.todos)
-        return
-      }
-      if (ev.type === 'turn/end') {
-        const childId = String(agent.session.id)
-        // 定时标记双触发：轮次内可能创建/修改/删除了 schedule，turn/end 后必已提交，
-        // 不依赖 schedule/changed 的传播即可让定时标记及时刷新。
-        this.queueScheduleMarkSync()
-        const until = this.revisionTurnEnds.get(childId)
-        if (until) {
-          this.revisionTurnEnds.delete(childId)
-          if (Date.now() <= until) return // 改单 cancel 的预期内轮次结束，不是手动停止。
-        }
-        const cause = classifyWorkerTurnEnd(ev.data?.reason)
-        void this.onWorkerTurnEnd(childId, cause).catch(error => {
-          this.hostCtx.logger.warn(`orchestrator: worker turn/end handler failed: ${String(error)}`)
-        })
-      }
+      this.onWorkerSessionEvent(String(agent.session.id), event)
     }))
     const reportToolExecute = async (status: TaskReportStatus, args: unknown, exec: ToolRunContext) => {
-      const result = await this.reportFromWorker(status, args, String(agent.session.id), exec.signal)
+      const childSessionId = String(agent.session.id)
+      const batchScheduledTurn = (this.scheduledTurns.get(childSessionId)?.scheduleIds.length ?? 0) > 1
+      const result = await this.reportFromWorker(status, args, childSessionId, exec.signal)
       // 终态（completed/failed）后无需再做一次全上下文推理：标记 concludeTurn 结束本轮。
+      // 批量定时消息可能包含多个来源，必须允许 Worker 连续上报每条结果。
       const resultStatus = (result as { status?: string }).status
-      if (statusConcludesTurn(resultStatus)) exec.concludeTurn?.()
+      if (!batchScheduledTurn && statusConcludesTurn(resultStatus)) exec.concludeTurn?.()
       return toJson(result)
     }
     const statusReportTools = [
@@ -714,7 +702,7 @@ export class OrchestratorService extends TypertRemoteService {
         name: 'task_completed',
         status: 'completed',
         parameters: TASK_COMPLETED_TOOL_PARAMETERS,
-        description: '任务成功收尾：result 只写无路径的简短结论，card 承载结构化明细，artifacts 只交付关键文件，三者不重复。提交后本轮立即结束。定时触发轮次无活动任务时也只允许本工具上报结果。',
+        description: '任务成功收尾：result 只写无路径的简短结论，card 承载结构化明细，artifacts 只交付关键文件，三者不重复。提交后本轮立即结束；批量定时消息需逐条传 scheduleId，且不提前结束本轮。定时结果覆盖其关联的原任务。',
       },
       {
         name: 'task_failed',
@@ -748,11 +736,25 @@ export class OrchestratorService extends TypertRemoteService {
     this.revisionTurnEnds.set(childSessionId, Date.now() + REVISION_GUARD_MS)
   }
 
+  /** todo/write 没有 taskId：定时轮次按消息来源唯一定位，普通轮次沿用 activeTask。 */
+  private currentTurnTaskId(conv: ConversationRecord): string | undefined {
+    const scheduledTurn = this.scheduledTurns.get(conv.childSessionId)
+    if (!scheduledTurn) return conv.activeTaskId ?? undefined
+    const sourceIds = new Set(scheduledTurn.scheduleIds)
+    const candidates = [...this.tasks().entries()]
+      .map(([, item]) => item)
+      .filter(item => item.conversationId === conv.id
+        && isUnfinishedTask(item.status)
+        && item.scheduleIds.some(id => sourceIds.has(id)))
+    return candidates.length === 1 ? candidates[0].id : undefined
+  }
+
   private queueTodoProgress(childSessionId: string, rawTodos: unknown): void {
     const conv = this.conversationByChild(childSessionId)
-    if (!conv?.activeTaskId) return
+    const taskId = conv ? this.currentTurnTaskId(conv) : undefined
+    if (!conv || !taskId) return
     const steps = normalizeProgressSteps(rawTodos)
-    this.pendingTodoSteps.set(childSessionId, { taskId: conv.activeTaskId, steps })
+    this.pendingTodoSteps.set(childSessionId, { taskId, steps })
     const existing = this.todoTimers.get(childSessionId)
     if (existing) clearTimeout(existing)
     // todo_write 是整表覆盖，短时间内可能连续触发；合并后写入并立刻通知看板刷新。
@@ -768,8 +770,8 @@ export class OrchestratorService extends TypertRemoteService {
     if (!pending) return
     await this.serialize(async () => {
       const conv = this.conversationByChild(childSessionId)
-      if (!conv?.activeTaskId || conv.activeTaskId !== pending.taskId) return
-      const task = this.taskById(conv.activeTaskId)
+      if (!conv || this.currentTurnTaskId(conv) !== pending.taskId) return
+      const task = this.taskById(pending.taskId)
       if (!task || !(activeTaskStatuses as readonly string[]).includes(task.status)) return
       const unchanged = JSON.stringify(task.progressSteps ?? []) === JSON.stringify(pending.steps)
       if (unchanged) return
@@ -1014,12 +1016,12 @@ export class OrchestratorService extends TypertRemoteService {
     return this.hostCtx.get?.('schedule') as ScheduleServiceLike | undefined
   }
 
-  /** 实时查询活动定时任务；服务缺失或查询失败时返回 undefined，由调用方决定降级策略。 */
-  private async hasActiveSchedule(childSessionId: string): Promise<boolean | undefined> {
+  /** 实时查询活动定时任务 ID；服务缺失或查询失败时返回 undefined，由调用方决定降级策略。 */
+  private async listActiveScheduleIds(childSessionId: string): Promise<Set<string> | undefined> {
     const schedule = this.scheduleService()
     if (!schedule) return undefined
     try {
-      return (await schedule.list({ sessionId: childSessionId })).length > 0
+      return new Set((await schedule.list({ sessionId: childSessionId })).map(item => item.id))
     } catch (error) {
       this.hostCtx.logger.warn(`orchestrator: schedule list failed for ${childSessionId}: ${String(error)}`)
       return undefined
@@ -1045,11 +1047,14 @@ export class OrchestratorService extends TypertRemoteService {
     const schedule = this.scheduleService()
     if (!schedule) return
     for (const [, conv] of this.conversations().entries()) {
-      const marked = await this.hasActiveSchedule(conv.childSessionId)
-      if (marked === undefined) continue
-      const previous = this.scheduleMarks.get(conv.childSessionId) ?? false
-      this.scheduleMarks.set(conv.childSessionId, marked)
-      if (previous !== marked) this.emitChanged()
+      const next = await this.listActiveScheduleIds(conv.childSessionId)
+      if (next === undefined) continue
+      const previous = this.activeScheduleIds.get(conv.childSessionId)
+      this.activeScheduleIds.set(conv.childSessionId, next)
+      const changed = previous
+        ? previous.size !== next.size || [...next].some(id => !previous.has(id))
+        : next.size > 0
+      if (changed) this.emitChanged()
     }
   }
 
@@ -1242,6 +1247,103 @@ export class OrchestratorService extends TypertRemoteService {
     })
   }
 
+  /** Worker 原生事件统一入口：定时消息、schedule_create 配对与既有看板事件在此汇合。 */
+  private onWorkerSessionEvent(childSessionId: string, event: unknown): void {
+    const ev = event as { type?: unknown; data?: unknown }
+    const data = ev.data as {
+      todos?: unknown
+      reason?: unknown
+      source?: { kind?: unknown }
+      message?: unknown
+    } | undefined
+    if (ev.type === 'user/message') {
+      this.latestModels.delete(childSessionId)
+      if (data?.source?.kind !== 'schedule') {
+        this.scheduledTurns.delete(childSessionId)
+        return
+      }
+      const receivedAt = timestamp()
+      const scheduled = parseScheduledTurn(data, receivedAt)
+      if (scheduled) this.scheduledTurns.set(childSessionId, scheduled)
+      else {
+        // 保留“这是定时轮次”的边界，畸形消息不得回退成普通完成并误结算 activeTask。
+        this.scheduledTurns.set(childSessionId, { scheduleIds: [], receivedAt })
+        this.hostCtx.logger.warn(`orchestrator: malformed schedule message for ${childSessionId}`)
+      }
+      return
+    }
+    if (ev.type === 'assistant/message') {
+      const attribution = readModelAttribution(data?.message)
+      if (attribution) this.latestModels.set(childSessionId, attribution)
+      return
+    }
+    if (ev.type === 'todo/write') {
+      this.queueTodoProgress(childSessionId, data?.todos)
+      return
+    }
+    if (ev.type === 'tool/call') {
+      const callId = scheduleCreateCallId(data)
+      if (!callId) return
+      const conv = this.conversationByChild(childSessionId)
+      if (!conv) return
+      let task: TaskRecord | undefined
+      if (this.scheduledTurns.has(childSessionId)) {
+        const sourceIds = new Set(this.scheduledTurns.get(childSessionId)?.scheduleIds ?? [])
+        const candidates = [...this.tasks().entries()]
+          .map(([, item]) => item)
+          .filter(item => item.conversationId === conv.id && item.scheduleIds.some(id => sourceIds.has(id)))
+        // 无法唯一定位时不猜 lastTaskId，避免把新定时任务绑到无关历史任务。
+        if (candidates.length === 1) task = candidates[0]
+      } else if (conv.activeTaskId) task = this.taskById(conv.activeTaskId)
+      if (task) this.pendingScheduleCalls.set(callId, { childSessionId, taskId: task.id })
+      return
+    }
+    if (ev.type === 'tool/result') {
+      void this.bindScheduleCreateResult(data).catch(error => {
+        this.hostCtx.logger.warn(`orchestrator: bind schedule_create result failed: ${String(error)}`)
+      })
+      return
+    }
+    if (ev.type !== 'turn/end') return
+    for (const [callId, pending] of this.pendingScheduleCalls) {
+      if (pending.childSessionId === childSessionId) this.pendingScheduleCalls.delete(callId)
+    }
+    // 定时标记双触发：轮次内可能创建/修改/删除了 schedule，turn/end 后必已提交，
+    // 不依赖 schedule/changed 的传播即可让定时标记及时刷新。
+    this.queueScheduleMarkSync()
+    const until = this.revisionTurnEnds.get(childSessionId)
+    if (until) {
+      this.revisionTurnEnds.delete(childSessionId)
+      if (Date.now() <= until) return // 改单 cancel 的预期内轮次结束，不是手动停止。
+    }
+    const cause = classifyWorkerTurnEnd(data?.reason)
+    void this.onWorkerTurnEnd(childSessionId, cause).catch(error => {
+      this.hostCtx.logger.warn(`orchestrator: worker turn/end handler failed: ${String(error)}`)
+    })
+  }
+
+  /** 用 tool/result 的真实 scheduleId 完成关联；失败结果只清理等待映射。 */
+  private async bindScheduleCreateResult(data: unknown): Promise<void> {
+    const result = scheduleCreateResult(data)
+    if (!result) return
+    const pending = this.pendingScheduleCalls.get(result.callId)
+    if (!pending) return
+    this.pendingScheduleCalls.delete(result.callId)
+    const scheduleId = result.scheduleId
+    if (!scheduleId) return
+    await this.serialize(async () => {
+      const task = this.taskById(pending.taskId)
+      if (!task || task.scheduleIds.includes(scheduleId)) return
+      await this.tasks().put(task.id, {
+        ...task,
+        scheduleIds: [...task.scheduleIds, scheduleId],
+        revision: task.revision + 1,
+        updatedAt: timestamp(),
+      })
+      this.emitChanged()
+    })
+  }
+
   private async reportFromWorker(
     status: TaskReportStatus,
     rawArgs: unknown,
@@ -1269,11 +1371,77 @@ export class OrchestratorService extends TypertRemoteService {
     const result = await this.serialize(async () => {
       const conv = this.conversationByChild(childSessionId)
       if (!conv) throw new Error(`task_${status} is only available in a managed worker`)
+      const scheduledTurn = this.scheduledTurns.get(childSessionId)
+      if (scheduledTurn) {
+        const scheduleId = scheduledTurn.scheduleIds.length === 1
+          ? input.scheduleId ?? scheduledTurn.scheduleIds[0]
+          : input.scheduleId
+        if (!scheduleId) throw new Error(`task_${status}.scheduleId is required for a batched schedule message`)
+        if (!scheduledTurn.scheduleIds.includes(scheduleId)) {
+          throw new Error(`task_${status}.scheduleId is not present in the current schedule message: ${scheduleId}`)
+        }
+        const linked = [...this.tasks().entries()]
+          .map(([, item]) => item)
+          .filter(item => item.conversationId === conv.id && item.scheduleIds.includes(scheduleId))
+        if (linked.length > 1) throw new Error(`schedule ${scheduleId} is linked to multiple tasks`)
+        const previous = linked[0]
+        let baseTask = previous
+        if (!baseTask) {
+          const reportText = input.status === 'completed' ? input.result
+            : input.status === 'failed' ? input.error
+              : input.status === 'input_required' ? input.questions[0]?.question
+                : input.progressNote
+          const subject = (reportText?.trim().split('\n')[0] || '定时触发上报').slice(0, 60)
+          const seeded = createTask({
+            id: createId('task'),
+            parentSessionId: conv.parentSessionId,
+            conversationId: conv.id,
+            predecessorTaskId: conv.lastTaskId,
+            subject,
+            prompt: '（定时触发或 Worker 自发上报）',
+          })
+          baseTask = {
+            ...seeded,
+            status: 'running' as const,
+            startedAt: scheduledTurn.receivedAt,
+            scheduleIds: [scheduleId],
+            lastScheduleId: scheduleId,
+          }
+        }
+        const task = gateTaskDelivery(transitionScheduledTask(
+          withModelAttribution(baseTask, this.latestModels.get(childSessionId)),
+          input,
+          { scheduleId, startedAt: scheduledTurn.receivedAt },
+        ), this.deliveryToggles())
+        const terminal = (terminalTaskStatuses as readonly string[]).includes(task.status)
+        const isInputRequired = task.status === 'input_required'
+        // 定时轮次可能与会话里另一个活动任务并发；更新来源 Task 时不得结算无关 activeTask。
+        const hasOtherActiveTask = Boolean(conv.activeTaskId && conv.activeTaskId !== task.id)
+        let nextConv = conv
+        if (!hasOtherActiveTask) {
+          nextConv = terminal ? settleConversation(conv, task) : activateConversation(conv, task.id)
+          if (isInputRequired) nextConv = awaitingConversation(nextConv)
+        }
+        await this.putPair(nextConv, task)
+        if (terminal) {
+          if (!hasOtherActiveTask) this.latestModels.delete(childSessionId)
+          terminalTaskId = task.id
+          shouldDeliver = task.delivery?.state === 'pending'
+        }
+        return {
+          ok: true as const,
+          status: task.status,
+          schedules: scheduleProjection(this.schedulesOf(conv.id)),
+          __inputRequired__: isInputRequired ? task : undefined,
+        }
+      }
+      if (input.scheduleId) {
+        throw new Error(`task_${status}.scheduleId is only valid in a schedule-fired turn`)
+      }
       if (!conv.activeTaskId) {
-        // 定时提醒触发等无活动任务的轮次：只允许 task_completed 上报，
-        // 生成一条 ad-hoc 已完成任务并照常经 outbox 投递给主会话。
+        // 非定时的 Worker 自发上报没有 scheduleId 可归因，只允许生成 ad-hoc 完成结果。
         if (input.status !== 'completed') {
-          throw new Error(`no active task: only task_completed is allowed (e.g. schedule-fired reporting)`)
+          throw new Error('no active task: only task_completed is allowed for an unscheduled spontaneous report')
         }
         const subject = (input.result.trim().split('\n')[0] || '定时触发上报').slice(0, 60)
         const seeded = createTask({
@@ -1284,10 +1452,8 @@ export class OrchestratorService extends TypertRemoteService {
           subject,
           prompt: '（定时触发或 Worker 自发上报）',
         })
-        // 定时触发的入站消息带 source.kind='schedule'，据此给上报任务打定时标记（仅显示用）。
-        const marked = this.lastInboundSource.get(childSessionId) === 'schedule'
         const seededTask = withModelAttribution(
-          { ...seeded, status: 'running' as const, startedAt: seeded.createdAt, ...marked ? { scheduled: true } : {} },
+          { ...seeded, status: 'running' as const, startedAt: seeded.createdAt },
           this.latestModels.get(childSessionId),
         )
         const task = gateTaskDelivery(
@@ -1346,8 +1512,32 @@ export class OrchestratorService extends TypertRemoteService {
     let outcome: 'manual_stop' | 'revision' | 'failed' | undefined
     await this.serialize(async () => {
       const conv = this.conversationByChild(childSessionId)
-      if (!conv?.activeTaskId) return
-      const stored = this.taskById(conv.activeTaskId)
+      if (!conv) return
+      let taskIdToSettle = conv.activeTaskId
+      const scheduledTurn = this.scheduledTurns.get(childSessionId)
+      if (scheduledTurn) {
+        const sourceIds = new Set(scheduledTurn.scheduleIds)
+        const candidates = [...this.tasks().entries()]
+          .map(([, item]) => item)
+          .filter(item => item.conversationId === conv.id
+            && isUnfinishedTask(item.status)
+            && item.scheduleIds.some(id => sourceIds.has(id)))
+        // 定时来源已提交终态时，本轮回合结束与同会话其他 activeTask 无关。
+        if (candidates.length === 0) return
+        let candidate = candidates[0]
+        if (candidates.length > 1) {
+          // 批量定时轮次允许其他 Task 继续 running，但唯一的阻塞提问必须在本轮结束时释放。
+          const blocked = candidates.filter(item => item.status === 'input_required')
+          if (blocked.length !== 1) {
+            this.hostCtx.logger.warn(`orchestrator: ambiguous scheduled turn/end for ${childSessionId}`)
+            return
+          }
+          candidate = blocked[0]
+        }
+        taskIdToSettle = candidate.id
+      }
+      if (!taskIdToSettle) return
+      const stored = this.taskById(taskIdToSettle)
       if (!stored || !isUnfinishedTask(stored.status)) return
       const previous = withModelAttribution(stored, this.latestModels.get(childSessionId))
       const now = timestamp()
@@ -1360,20 +1550,26 @@ export class OrchestratorService extends TypertRemoteService {
           task = { ...task, delivery: { state: 'pending', attempts: 0 } }
           shouldDeliver = true
         }
-        nextConv = settleConversation(conv, task, now)
+        nextConv = conv.activeTaskId === task.id ? settleConversation(conv, task, now) : conv
         outcome = 'manual_stop'
       } else if (endCause === 'revision') {
         task = interruptTaskForRevision(previous, '旧轮次被新需求中断', now)
-        nextConv = settleConversation(conv, task, now)
+        nextConv = conv.activeTaskId === task.id ? settleConversation(conv, task, now) : conv
         outcome = 'revision'
       } else {
         // 异步任务可通过定时触发跨轮次继续；input_required 的阻塞调用不能转到其他轮次。
-        if (stored.status !== 'input_required' && await this.hasActiveSchedule(childSessionId)) return
+        const activeScheduleIds = stored.status !== 'input_required'
+          ? await this.listActiveScheduleIds(childSessionId)
+          : undefined
+        // 只有当前 Task 自己关联的 schedule 才能让它跨轮次存活；同会话其他 Task 的定时任务不算。
+        if (activeScheduleIds && stored.scheduleIds.some(id => activeScheduleIds.has(id))) return
         task = gateTaskDelivery(
           failTask(previous, previous.status === 'queued' ? '子会话在任务开始前结束' : '子会话结束前未提交终态上报', now),
           this.deliveryToggles(),
         )
-        nextConv = failConversation(settleConversation(conv, task, now), now)
+        nextConv = conv.activeTaskId === task.id
+          ? failConversation(settleConversation(conv, task, now), now)
+          : conv
         shouldDeliver = task.delivery?.state === 'pending'
         outcome = 'failed'
       }
@@ -1389,31 +1585,43 @@ export class OrchestratorService extends TypertRemoteService {
   }
 
   /** 串行回写任务的投递状态（成功 delivered / 失败 attempts+1），看板经 changed 事件刷新。 */
-  private async patchDelivery(taskId: string, delivery: (current: TaskRecord) => TaskRecord['delivery']): Promise<void> {
-    await this.serialize(async () => {
+  private async patchDelivery(
+    taskId: string,
+    expectedRevision: number,
+    delivery: (current: TaskRecord) => TaskRecord['delivery'],
+  ): Promise<boolean> {
+    return this.serialize(async () => {
       const current = this.taskById(taskId)
-      if (!current) return
+      if (!current || current.revision !== expectedRevision) return false
+      const nextDelivery = delivery(current)
+      if (JSON.stringify(nextDelivery) === JSON.stringify(current.delivery)) return true
       await this.tasks().put(taskId, {
         ...current,
         revision: current.revision + 1,
         updatedAt: timestamp(),
-        delivery: delivery(current),
+        delivery: nextDelivery,
       })
       this.emitChanged()
+      return true
     })
   }
 
   private async deliverPendingTask(taskId: string): Promise<void> {
-    if (this.delivering.has(taskId)) return
+    const inFlightRevision = this.delivering.get(taskId)
+    if (inFlightRevision !== undefined) {
+      if (this.taskById(taskId)?.revision !== inFlightRevision) this.deliveryRerun.add(taskId)
+      return
+    }
     const task = this.taskById(taskId)
     if (!task || task.silent || task.delivery?.state !== 'pending') return
     if (!(terminalTaskStatuses as readonly string[]).includes(task.status)) return
     if (!deliveryEnabledFor(this.deliveryToggles(), task.status)) {
       // 设置页已关闭该状态的投递：清掉存量 pending（不补投），状态本身已持久化、roster/看板照常可见。
-      await this.patchDelivery(taskId, () => undefined)
+      await this.patchDelivery(taskId, task.revision, () => undefined)
       return
     }
-    this.delivering.add(taskId)
+    const revision = task.revision
+    this.delivering.set(taskId, revision)
     try {
       // input_required 由 task_input_required 阻塞处理，不走 deliverPendingTask。
       if (task.status === 'input_required') return
@@ -1425,19 +1633,22 @@ export class OrchestratorService extends TypertRemoteService {
         agent.followup(message)
         const flushed = await this.hostCtx.sessions.flush(agent.session)
         if (!flushed) throw new Error('Session persistence did not acknowledge orchestrator delivery')
-        await this.patchDelivery(taskId, () => ({ state: 'delivered', deliveredAt: timestamp(), messageId: String(message.id) }))
+        const patched = await this.patchDelivery(taskId, revision, () => ({ state: 'delivered', deliveredAt: timestamp(), messageId: String(message.id) }))
+        if (!patched) this.deliveryRerun.add(taskId)
       })
     } catch (error) {
       try {
-        await this.patchDelivery(taskId, current => current.delivery?.state === 'pending'
+        const patched = await this.patchDelivery(taskId, revision, current => current.delivery?.state === 'pending'
           ? { state: 'pending', attempts: current.delivery.attempts + 1, lastError: String(error) }
           : current.delivery)
+        if (!patched) this.deliveryRerun.add(taskId)
       } catch (markError) {
         this.hostCtx.logger.warn(`orchestrator: mark delivery failure ${taskId} failed: ${String(markError)}`)
       }
       this.hostCtx.logger.warn(`orchestrator: deliver ${taskId} failed: ${String(error)}`)
     } finally {
       this.delivering.delete(taskId)
+      if (this.deliveryRerun.delete(taskId)) void this.deliverPendingTask(taskId)
     }
   }
 
@@ -1471,7 +1682,7 @@ export class OrchestratorService extends TypertRemoteService {
         if (questionSignal.aborted) return
         const result = await userQuestions.ask({ questions, agent, signal: questionSignal })
         if (questionSignal.aborted) return
-        await this.answerTaskQuestions({ childSessionId, answers: result.answers })
+        await this.answerTaskQuestions({ childSessionId, taskId: task.id, answers: result.answers })
       }).catch(error => {
         if (!questionSignal.aborted) this.hostCtx.logger.warn(`orchestrator: worker question card failed: ${String(error)}`)
       })
@@ -1481,7 +1692,7 @@ export class OrchestratorService extends TypertRemoteService {
 
   /**
    * 看板与 Worker 原生问题卡共用的作答路由：
-   * 幂等——只有 input_required 的最新任务可答，先答先赢；重开同一 TaskRun 继续执行，
+   * 幂等——只接受指定（或旧客户端默认最新）input_required 任务，先答先赢；重开同一 TaskRun 继续执行，
    * 答案直接返回同轮阻塞的 task_input_required，另一入口的问题卡同时清理。
    */
   async answerTaskQuestions(request: AnswerQuestionsRequest): Promise<AnswerQuestionsResult> {
@@ -1495,18 +1706,21 @@ export class OrchestratorService extends TypertRemoteService {
     const outcome = await this.serialize(async () => {
       const conv = this.conversationByChild(request.childSessionId)
       if (!conv) return { ok: false as const, error: 'conversation not found' }
-      const task = conv.lastTaskId ? this.taskById(conv.lastTaskId) : undefined
+      const taskId = request.taskId ?? conv.lastTaskId
+      const task = taskId ? this.taskById(taskId) : undefined
       if (!task || task.status !== 'input_required') return { ok: false as const, error: 'task is not awaiting input' }
+      if (task.conversationId !== conv.id) return { ok: false as const, error: 'task does not belong to this conversation' }
       const known = new Set((task.questions ?? []).map(item => item.id))
       for (const answer of answers) {
         if (!known.has(answer.id)) return { ok: false as const, error: `unknown question id: ${answer.id}` }
       }
       const now = timestamp()
       const resumed = resumeTaskWithAnswers(task, answers, now)
+      const hasOtherActiveTask = Boolean(conv.activeTaskId && conv.activeTaskId !== resumed.id)
       const nextConv: ConversationRecord = {
         ...conv,
-        state: 'running',
-        activeTaskId: resumed.id,
+        state: hasOtherActiveTask ? conv.state : 'running',
+        activeTaskId: hasOtherActiveTask ? conv.activeTaskId : resumed.id,
         revision: conv.revision + 1,
         updatedAt: now,
       }
@@ -1603,6 +1817,17 @@ export class OrchestratorService extends TypertRemoteService {
           const nextTask = interruptTaskAfterRestart(active, now)
           const nextConv = settleConversation(conv, nextTask, now)
           await this.putPair(nextConv, nextTask)
+        }
+      }
+      // 定时 Task 可能与另一个 activeTask 并存；主循环只处理 active/last，其余未完成任务也要恢复。
+      for (const [, task] of this.tasks().entries()) {
+        if (!isUnfinishedTask(task.status)) continue
+        const conv = this.conversationById(task.conversationId)
+        if (conv?.activeTaskId === task.id) continue
+        const interrupted = interruptTaskAfterRestart(task, now)
+        await this.tasks().put(task.id, interrupted)
+        if (conv && !conv.activeTaskId && conv.lastTaskId === task.id) {
+          await this.conversations().put(conv.id, settleConversation(conv, interrupted, now))
         }
       }
       this.emitChanged()

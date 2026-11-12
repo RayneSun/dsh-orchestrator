@@ -51,7 +51,7 @@ Lead 的只读策略通过记忆插件已有的会话门控接口设置，短暂
 - **Worker 默认模型（设置页）**：在上述行“配置”中可从 DSH 实时模型目录选择 provider/model ID 与推理强度；默认留空并继承主会话。只影响新建 Worker；已有 Worker 保持原模型，目录明确标记原模型失效时才按“默认设置 → Lead 当前选择 → 全局默认”重选，不重建会话。
 - **终态投递开关（设置页）**：插件管理 → 已安装 → `@cmjt/dsh-orchestrator` → 行“配置”，可按状态（completed / failed / interrupted）勾选是否向主会话投递终态消息；默认全部开启。input_required 不参与投递（问题卡只在看板 + 子会话渲染）。改动即时生效。投递只决定“消息是否唤醒主会话回应”：上报的状态与进展总是持久化，roster 与看板照常实时更新——这与 `silent` 的分界一致（silent 是整个会话不投，开关是按状态不投）。关闭期间产生的终态不补投。
 - Lead 紧扣用户原始需求，以 Worker 的 `task.result` 为事实依据只输出结果，不补充子会话执行过程；`task.card` 围栏原封不动；`task.artifacts` 路径自动带工作区前缀并只用于 `present`，三者不重复输出。
-- 定时/周期任务由 Worker 的 schedule 工具创建并绑定其自身子会话；到点触发后 Worker 执行并上报，Lead 转述给用户。queued/running 任务仍有定时任务时，本轮未提交终态不再被误判失败，任务保持当前状态并等待下一轮继续；等待作答、手动停止和改单仍按原规则立即结算。绑定了定时任务的会话在看板带定时时钟徽标（schedule/changed 事件与轮次结束双触发刷新；DSH 侧栏标题不加图标前缀）。若 Worker 发现同主题任务反复定期出现，会主动建议用户设为定时任务。
+- 定时/周期任务由 Worker 的 schedule 工具创建并绑定其自身子会话；Host 自动把 `schedule_create` 返回的 ID 关联到当前 Task（一个 Task 可关联多个）。到点后按消息中的 scheduleId 更新对应 Task，支持 running / input_required / completed / failed 全生命周期，不重复新增任务；批量定时消息的每次上报都必须传 scheduleId，未关联的来源才创建 ad-hoc Task。只有当前 Task 自己仍有活动 schedule 时，本轮未提交终态才保留 queued/running；其他 Task 的 schedule 不再阻止失败结算。Task 与会话时钟徽标都由原生活动 schedule 实时推导，删除后消失；DSH 侧栏标题不加图标前缀。
 - 等待用户作答期间，手动停止、改单、工具取消和服务卸载会清理等待与原生问题卡；已取消卡片晚到的答案不会答入后续提问。
 - 重启后恢复看板；普通未完成任务（queued / running / input_required）标记 interrupted，工作流回 idle；无法确认持久化状态时标记 failed 并带 runtime 原因；未投递的后台终态会重试唤醒 Lead。
 - 日程变更整批完成归属和时间一致性校验后才开始写入，校验失败不写入任何日程；存储没有跨记录事务，I/O 失败仍可能部分落盘。

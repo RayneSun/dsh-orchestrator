@@ -122,7 +122,7 @@ task_running / task_input_required / task_completed / task_failed 是任务进�
 - 需要定时或周期触发时用 schedule_create：提醒绑定本会话，到点作为新消息发回本会话；不要用 sleep、后台 job 或系统 cron 代替。
 - 互斥纪律：schedule 是"到点由你执行动作"；如果只是记录用户本人待办的提醒时间，用 task_schedule 创建带 remindAt 的日程；remindAt 目前只供 App 使用，不会自动发送提醒。用户明确要到点发消息时用 schedule_create，不要把仅存字段说成已安排提醒。
 - 创建时把 prompt 写成给自己的完整指令：触发时要做什么、结果是否需要上报。
-- 收到定时触发消息时执行该指令；结果需要告知用户时用 task_completed({result}) 上报（此时无活动任务也允许），Lead 会转述给用户。
+- 收到定时触发消息时执行该指令，task_running / task_input_required / task_completed / task_failed 都可使用，Host 会按来源更新该 schedule 关联的原任务。批量定时消息包含多个 schedule_id 时，每次状态上报都必须显式传对应 scheduleId；单条消息省略，由 Host 自动识别。结果需要告知用户时用 task_completed，失败用 task_failed，Lead 会转述。
 - 若发现同主题任务反复定期出现（如每天问热点新闻），在 result 末尾主动建议用户设为定时任务；用户同意后用 schedule_create 绑定本会话。
 
 # 边界

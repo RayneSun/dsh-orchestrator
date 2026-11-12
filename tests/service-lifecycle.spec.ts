@@ -11,7 +11,7 @@ function harness() {
   const task = { ...createTask({
     id: 'task', conversationId: conversation.id, parentSessionId: 'lead', predecessorTaskId: null,
     subject: '演示', prompt: '执行',
-  }), status: 'running' as const }
+  }), status: 'running' as const, scheduleIds: ['schedule'] }
   const conversations = new Map<string, ConversationRecord>([[conversation.id, conversation]])
   const tasks = new Map<string, TaskRecord>([[task.id, task]])
   const tables = { conversations, tasks, schedules: new Map() }
@@ -34,7 +34,7 @@ function harness() {
       logger: { warn: vi.fn(), info: vi.fn() },
     },
     pendingAnswers: new PendingAnswers(), revisionTurnEnds: new Map(),
-    latestModels: new Map(), lastInboundSource: new Map(),
+    latestModels: new Map(), scheduledTurns: new Map(), activeScheduleIds: new Map(), pendingScheduleCalls: new Map(),
     emitChanged: vi.fn(), deliverPendingTask: vi.fn(),
     withAgent: async (_id: string, operation: (agent: unknown) => Promise<unknown>) => operation({}),
     interruptWorker: vi.fn(), deliverToWorker: vi.fn(), renameWorkerSession: vi.fn(),

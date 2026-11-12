@@ -18,6 +18,8 @@ export const setScheduleStatusResultSchema = z.object({
 
 export const answerQuestionsRequestSchema = z.object({
   childSessionId: z.string().min(1),
+  /** 定时 Task 与另一个 activeTask 并存时显式指定问题归属；旧客户端可省略。 */
+  taskId: z.string().min(1).optional(),
   answers: z.array(z.object({
     id: z.string().min(1),
     selected: z.array(z.string()).default([]),

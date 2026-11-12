@@ -17,6 +17,7 @@ export const DISPATCH_TOOL_PARAMETERS = {
 /** task_* 工具公共字段（与各 input schema 双写：zod 加了字段而这里没加，模型就永远不知道）。 */
 const HEADER_PARAM = { type: 'string', description: '极度精简的状态标题（最多 8 个字，看板加粗展示），如"抓取新闻源""已查到 3 家"' } as const
 const PROGRESS_NOTE_PARAM = { type: 'string', description: '一行精简进展（看板直接显示；信息优先，可带三分幽默）' } as const
+const SCHEDULE_ID_PARAM = { type: 'string', description: '批量定时消息中必填：本次上报对应消息里的 schedule_id；单条定时消息和普通任务省略' } as const
 
 /** 日程条目（create/update 共用结构，分别导出常量避免双写漂移）。 */
 const SCHEDULE_ITEM_PROPERTIES = {
@@ -88,6 +89,7 @@ export const TASK_SCHEDULE_TOOL_PARAMETERS = {
 export const TASK_RUNNING_TOOL_PARAMETERS = {
   header: HEADER_PARAM,
   progressNote: PROGRESS_NOTE_PARAM,
+  scheduleId: SCHEDULE_ID_PARAM,
 } as const
 
 export const TASK_COMPLETED_TOOL_PARAMETERS = {
@@ -96,11 +98,13 @@ export const TASK_COMPLETED_TOOL_PARAMETERS = {
   result: { type: 'string', required: true, description: '只阐述用户需求的最终结果，不写怎么做或过程性内容；不含文件路径，不重复 card 或制品已表达的内容' },
   card: { type: 'object', additionalProperties: true, description: 'dsh-ui 展示卡片 JSON；组件规范用 genui skill，只放结构化明细，不复制 result 或制品正文' },
   artifacts: { type: 'array', items: { type: 'string' }, description: '仅限用户需要打开的关键制品，子工作区相对路径（禁止绝对路径和 ..）；制品正文不要复制到 result/card' },
+  scheduleId: SCHEDULE_ID_PARAM,
 } as const
 
 export const TASK_FAILED_TOOL_PARAMETERS = {
   header: HEADER_PARAM,
   progressNote: PROGRESS_NOTE_PARAM,
+  scheduleId: SCHEDULE_ID_PARAM,
   error: { type: 'string', required: true, description: '任务本身没做成的原因和已尝试的办法' },
   reasonCode: { type: 'string', enum: [...blockReasonCodes], description: '系统阻碍类别（权限/配置/依赖/网络/资源/运行时）；普通失败不填' },
 } as const
@@ -108,6 +112,7 @@ export const TASK_FAILED_TOOL_PARAMETERS = {
 export const TASK_INPUT_REQUIRED_TOOL_PARAMETERS = {
   header: HEADER_PARAM,
   progressNote: PROGRESS_NOTE_PARAM,
+  scheduleId: SCHEDULE_ID_PARAM,
   questions: {
     type: 'array',
     required: true,

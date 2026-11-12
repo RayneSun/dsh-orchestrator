@@ -176,6 +176,83 @@ export function transitionTask(task: TaskRecord, input: TaskTransitionInput, at 
   }
 }
 
+/** 同一原生定时任务再次触发时覆盖它已有的完成结果，不开放通用的 completed → completed。 */
+export function overwriteScheduledCompletion(
+  task: TaskRecord,
+  input: TaskCompletedInput,
+  options: { scheduleId: string; startedAt: string },
+  at = new Date().toISOString(),
+): TaskRecord {
+  if (task.status !== 'completed' || !task.scheduleIds.includes(options.scheduleId)) {
+    throw new StateError('invalid_scheduled_completion', `task ${task.id} cannot accept completion for schedule ${options.scheduleId}`)
+  }
+  return {
+    ...touch(task, at),
+    // 每一次定时触发都是新执行；未上报新标题/进展时清除上一轮文案，折叠态直接展示本次结果。
+    header: input.header,
+    progressNote: input.progressNote,
+    result: input.result,
+    artifacts: input.artifacts,
+    card: input.card,
+    questions: undefined,
+    answers: undefined,
+    progressSteps: [],
+    error: undefined,
+    reasonCode: undefined,
+    cancelledReason: undefined,
+    lastScheduleId: options.scheduleId,
+    startedAt: options.startedAt,
+    endedAt: at,
+    delivery: withTerminalDelivery(task, 'completed'),
+  }
+}
+
+/** 定时来源的完整状态机：允许新一轮 running/input_required/completed/failed，且只作用于关联 Task。 */
+export function transitionScheduledTask(
+  task: TaskRecord,
+  input: TaskTransitionInput,
+  options: { scheduleId: string; startedAt: string },
+  at = new Date().toISOString(),
+): TaskRecord {
+  if (!task.scheduleIds.includes(options.scheduleId)) {
+    throw new StateError('invalid_scheduled_transition', `task ${task.id} cannot accept update for schedule ${options.scheduleId}`)
+  }
+  if (task.status === 'completed' && input.status === 'completed') {
+    return overwriteScheduledCompletion(task, input, options, at)
+  }
+  if (task.status === 'input_required') {
+    throw new StateError('invalid_scheduled_transition', `task ${task.id} is still awaiting user input`)
+  }
+  if (isTerminal(task.status)) {
+    // 上一次定时执行已经结束：先重开同一 Task，再应用本次上报，不产生新的任务记录。
+    const reopened: TaskRecord = {
+      ...task,
+      status: 'running',
+      header: undefined,
+      progressNote: undefined,
+      result: undefined,
+      artifacts: undefined,
+      card: undefined,
+      questions: undefined,
+      answers: undefined,
+      progressSteps: [],
+      error: undefined,
+      reasonCode: undefined,
+      cancelledReason: undefined,
+      lastScheduleId: options.scheduleId,
+      startedAt: options.startedAt,
+      endedAt: undefined,
+      delivery: undefined,
+    }
+    return transitionTask(reopened, input, at)
+  }
+  return transitionTask({
+    ...task,
+    lastScheduleId: options.scheduleId,
+    startedAt: options.startedAt,
+  }, input, at)
+}
+
 /**
  * 用户作答后 Host 重开同一 TaskRun（input_required → running，不走普通 transition 校验）：
  * 保留原任务的进展与轮次，看板上表现为同一轮继续执行。

@@ -251,8 +251,12 @@ const baseTaskSchema = z.object({
   cancelledReason: z.string().optional(),
   progressSteps: z.array(progressStepSchema).default([]),
   silent: z.boolean().default(false),
-  /** 定时触发产生的上报任务（宿主按入站消息来源自动判定，看板定时标识）。 */
+  /** 历史兼容字段：旧 ad-hoc 定时上报标记；不再新增写入或用于看板。 */
   scheduled: z.boolean().optional(),
+  /** 当前 Task 创建或关联过的原生定时任务；删除 schedule 也保留历史关联。 */
+  scheduleIds: z.array(z.string()).default([]),
+  /** 最近一次定时上报来源。 */
+  lastScheduleId: z.string().optional(),
   delivery: deliverySchema.optional(),
   revision: z.number().int().nonnegative().default(0),
   createdAt: z.string(),
@@ -271,16 +275,22 @@ export type TaskRecord = z.infer<typeof baseTaskSchema>
 export type TaskStatus = TaskRecord['status']
 export type BlockReasonCode = (typeof blockReasonCodes)[number]
 
+const snapshotTaskSchema = taskSchema.extend({
+  /** 由关联 scheduleIds 与原生活动定时任务实时推导，不落库。 */
+  hasActiveSchedule: z.boolean().optional(),
+})
+
 export const snapshotResultSchema = z.object({
   conversations: z.array(conversationSchema.extend({
     /** 由宿主定时任务推导，不落库。 */
     hasActiveSchedule: z.boolean().optional(),
   })),
-  tasks: z.array(taskSchema),
+  tasks: z.array(snapshotTaskSchema),
   schedules: z.array(scheduleObjectSchema.extend({ conversationTitle: z.string() })),
 }).strict()
 
 export type Snapshot = z.infer<typeof snapshotResultSchema>
+export type TaskSnapshot = Snapshot['tasks'][number]
 export type ScheduleSnapshot = Snapshot['schedules'][number]
 
 export function createId(prefix: string): string {
@@ -338,6 +348,7 @@ export function createTask(input: {
     status: 'queued',
     silent: input.silent ?? false,
     progressSteps: [],
+    scheduleIds: [],
     revision: 0,
     createdAt: ts,
     updatedAt: ts,
@@ -367,10 +378,12 @@ export const dispatchInputSchema = z.object({
   }
 })
 
-/** task_* 工具的公共字段：header 与 progressNote（长度只在输入边界限制，存储层不加约束）。 */
+/** task_* 公共字段：header/progressNote（长度只在输入边界限制）与定时来源 scheduleId。 */
 const taskCommonFields = {
   header: trimmed.max(8).optional(),
   progressNote: trimmed.max(500).optional(),
+  /** 批量定时消息中用于指定本次上报归属；单条定时消息可由 Host 自动补全。 */
+  scheduleId: trimmed.optional(),
 }
 
 export const taskRunningInputSchema = z.object({

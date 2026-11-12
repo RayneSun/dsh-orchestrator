@@ -7,6 +7,8 @@
 
 Worker 的 completed / failed / interrupted 通过持久 outbox 投递到 Lead 主会话，受 silent 和状态投递开关约束。`deliverPendingTask`（src/service.ts）调用 `agent.followup(message)`：消息入 inbox 并**唤醒驱动器**，Lead 开一轮推理来转述/处理。input_required 直接等待用户作答，不经过 Lead。
 
+同一 Task 可被定时触发多次并覆盖 completed 结果。每次投递开始捕获 Task.revision，成功或失败回写只处理该 revision；若投递期间产生了新结果，旧回写失效并继续投递最新 pending，避免旧 delivered/attempts 吞掉新结果。无变化的 delivery 回写不增加 revision。
+
 ## 三种机制
 
 | 机制 | 落日志 | 渲染进聊天 | 唤醒模型 | 适用 |

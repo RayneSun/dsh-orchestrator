@@ -3,7 +3,7 @@ import { createConversation, createTask, type QuestionAnswer } from '../src/type
 import {
   activateConversation, statusConcludesTurn, appendOutlineSubject, classifyWorkerTurnEnd,
   failConversation, interruptTaskForRevision, reviseConversation, canTransition, failTask, interruptTaskAfterRestart,
-  isTerminal, resumeTaskWithAnswers, settleConversation, transitionTask,
+  isTerminal, overwriteScheduledCompletion, resumeTaskWithAnswers, settleConversation, transitionScheduledTask, transitionTask,
 } from '../src/state-machine.ts'
 
 function pair() {
@@ -105,6 +105,64 @@ describe('task_* header', () => {
 })
 
 describe('状态迁移和修订号', () => {
+  it('已完成的定时 Task 可重开 running，再完成或失败', () => {
+    const original = {
+      ...transitionTask({ ...bgTask(), scheduleIds: ['a'] }, {
+        status: 'completed', result: '旧结果', header: '旧标题',
+      }),
+      questions: [{ id: 'q1', question: '旧问题' }],
+      answers: [{ id: 'q1', selected: ['旧答案'] }],
+      progressSteps: [{ content: '旧步骤', status: 'completed' as const }],
+    }
+    const running = transitionScheduledTask(original, { status: 'running', progressNote: '本轮开始' }, {
+      scheduleId: 'a', startedAt: '2026-11-12T08:00:00.000Z',
+    })
+    expect(running).toMatchObject({
+      id: original.id, status: 'running', result: undefined, header: undefined,
+      progressNote: '本轮开始', lastScheduleId: 'a', delivery: undefined,
+      questions: undefined, answers: undefined, progressSteps: [],
+    })
+    const completed = transitionScheduledTask(running, { status: 'completed', result: '本轮完成' }, {
+      scheduleId: 'a', startedAt: '2026-11-12T08:00:00.000Z',
+    })
+    expect(completed).toMatchObject({ id: original.id, status: 'completed', result: '本轮完成' })
+
+    const failed = transitionScheduledTask(original, { status: 'failed', error: '本轮失败' }, {
+      scheduleId: 'a', startedAt: '2026-11-12T08:00:00.000Z',
+    })
+    expect(failed).toMatchObject({ id: original.id, status: 'failed', error: '本轮失败', result: undefined })
+  })
+
+  it('定时完成只覆盖同来源的已完成 Task，并保留持久关联', () => {
+    const original = {
+      ...transitionTask({ ...bgTask(), scheduleIds: ['a', 'b'], silent: true }, {
+        status: 'completed', result: '旧结果', header: '旧标题', progressNote: '旧进展',
+      }),
+      questions: [{ id: 'q1', question: '旧问题' }],
+      answers: [{ id: 'q1', selected: ['旧答案'] }],
+      progressSteps: [{ content: '旧步骤', status: 'completed' as const }],
+    }
+    const next = overwriteScheduledCompletion(original, { result: '新结果', artifacts: ['report.md'] }, {
+      scheduleId: 'b', startedAt: '2026-11-12T08:00:00.000Z',
+    }, '2026-11-12T08:00:01.000Z')
+    expect(next).toMatchObject({
+      id: original.id, status: 'completed', result: '新结果', artifacts: ['report.md'],
+      scheduleIds: ['a', 'b'], lastScheduleId: 'b', silent: true,
+      questions: undefined, answers: undefined, progressSteps: [],
+      startedAt: '2026-11-12T08:00:00.000Z', endedAt: '2026-11-12T08:00:01.000Z',
+      revision: original.revision + 1,
+    })
+    expect(next.delivery).toBeUndefined()
+    expect(next.header).toBeUndefined()
+    expect(next.progressNote).toBeUndefined()
+    expect(() => overwriteScheduledCompletion(original, { result: '错误来源' }, {
+      scheduleId: 'c', startedAt: 'now',
+    })).toThrow('cannot accept completion')
+    expect(() => overwriteScheduledCompletion({ ...original, status: 'running' }, { result: '运行中' }, {
+      scheduleId: 'a', startedAt: 'now',
+    })).toThrow('cannot accept completion')
+  })
+
   it('failed 上报写入拍平存储', () => {
     const queued = bgTask()
     expect(transitionTask(queued, { status: 'failed', error: 'boom' }).status).toBe('failed')

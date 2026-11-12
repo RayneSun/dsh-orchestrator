@@ -1,7 +1,7 @@
-# dsh-orchestrator 任务看板数据接口（v0.3.20）
+# dsh-orchestrator 任务看板数据接口（v0.3.22）
 
 > 面向下游（移动端 App）开发者。本文档描述 DSH Orchestrator 插件在 DSH Web（默认 `http://127.0.0.1:3080`）中暴露的任务看板数据结构、状态定义、同步机制与展示建议。
-> 完整契约；相比 0.3.19 的无字段变化说明见[变更说明](board-api-v0.3.20-changes.md)；0.3.18 升级仍需阅读[破坏性变更与迁移步骤](board-api-v0.3.19-changes.md)。
+> 当前完整契约；0.3.18 升级仍需阅读[破坏性变更与迁移步骤](board-api-v0.3.19-changes.md)。
 
 **⚠️ v0.3.18 → v0.3.19 破坏性变化（下游必读）**：
 1. **Task 字段拍平**：`task.report = { result, artifacts?, card? }` 拆为顶层 `task.result / task.artifacts / task.card`；`task.fail = { error, reasonCode? }` 拆为顶层 `task.error / task.reasonCode`。旧包裹字段不再输出。
@@ -42,9 +42,9 @@
 | 项 | 值 |
 |---|---|
 | 远程方法 | `orchestrator/answerTaskQuestions` |
-| 请求 | `{ "childSessionId": "<子会话 sessionId>", "answers": QuestionAnswer[] }` |
+| 请求 | `{ "childSessionId": "<子会话 sessionId>", "taskId"?: "<问题所属 taskId>", "answers": QuestionAnswer[] }` |
 | 响应 | `{ "ok": true, "taskId": "task_<uuid>" }`，失败为 `{ "ok": false, "error": string }` |
-| 行为 | 串行幂等：只有最新任务仍是 `input_required` 才接受；先答先赢。Host resolve 挂起的 `task_input_required` 工具调用（工具返回用户答案，Worker 同轮继续），并 abort 另一侧未答的问题卡。 |
+| 行为 | 串行幂等：显式 taskId 时只接受该任务，旧客户端省略时回退最新任务；目标任务必须仍是 `input_required`，先答先赢。Host resolve 挂起的工具调用并 abort 另一侧问题卡；定时任务与另一个 activeTask 并存时不会抢占 activeTaskId。 |
 
 ### 1.3 变更通知
 
@@ -72,7 +72,7 @@
 
 ## 3. Task（子任务 / TaskRun）
 
-Task 是子会话内的一次任务执行记录（一次 dispatch / 一次定时触发 / 一次改单）。
+Task 是子会话内的一条工作记录（一次 dispatch / 一次改单，或未关联 schedule 的首次上报）。同一 Task 关联的定时任务再次触发时覆盖原完成结果，不新增 Task。
 
 | 字段 | 类型 | 说明 |
 |---|---|---|
@@ -98,12 +98,17 @@ Task 是子会话内的一次任务执行记录（一次 dispatch / 一次定时
 | cancelledReason | string? | interrupted 时的中断归类（如 parent、手动停止） |
 | progressSteps | ProgressStep[] | 多步骤进度清单（来自 Worker 的 todo_write），见 §8 |
 | silent | boolean | 会话/任务是否静默；true 时终态不向主会话投递 |
-| scheduled | boolean? | 定时触发产生的上报任务标记 |
+| scheduled | boolean? | 历史兼容字段；不再新增写入，也不驱动看板时钟 |
+| scheduleIds | string[] | 当前 Task 创建或关联过的原生 schedule ID；一个 Task 可含多个，删除 schedule 后仍保留历史关联 |
+| lastScheduleId | string? | 最近一次定时上报的来源 schedule ID |
+| hasActiveSchedule | boolean? | 仅 snapshot 投影（不落库）：scheduleIds 中存在原生活动 schedule；App 可在该 Task 上渲染 ⏰ |
 | delivery | Delivery? | 终态投递回执，见 §9；silent 不产生 |
 | revision | number | 任务版本号，每次更新 +1 |
 | createdAt / updatedAt | string(ISO 8601) | 创建/更新时间 |
-| startedAt | string(ISO 8601)? | 第一次进入 running 的时间 |
+| startedAt | string(ISO 8601)? | 第一次进入 running 的时间；定时覆盖时更新为本轮消息接收时间 |
 | endedAt | string(ISO 8601)? | completed/failed/interrupted 的结束时间；input_required 等待期间不设置 |
+
+定时关联与覆盖规则：Host 自动配对 Worker 原生 `schedule_create` 的调用与结果并写入 `scheduleIds`，Worker 不需要手工上报关联。单条定时消息由 Host 自动识别来源；批量定时消息的每次 `task_running / task_input_required / task_completed / task_failed` 都必须显式携带当前批次内的 `scheduleId`。找不到关联 Task 时才创建 ad-hoc Task；更新或轮次结束结算某个定时 Task 不会改变同会话另一个 activeTask。
 
 `requestedModel` / `responseModel` 是 Host 生成的只读元数据，**不属于任何 `task_*` 工具的输入字段**。看板模型来源按以下规则计算，下游建议复用同一规则：
 
@@ -204,7 +209,7 @@ task_schedule       { create?: ScheduleNew[], update?: ScheduleUpdate[] }   日�
 | failed | 失败 | 红 |
 | interrupted | 已停止 | 灰 |
 
-会话头徽标跟随最新任务；静默显示 🚫；`hasActiveSchedule` 显示 ⏰。
+会话头徽标跟随最新任务；静默显示 🚫；Conversation 与 Task 各自的 `hasActiveSchedule` 显示 ⏰。Conversation 只要仍有原生活动 schedule 就显示（兼容未关联的旧数据），Task 只显示自己的活动关联。
 
 **消费方聚合规则**：非 idle 会话（`provisioning / running / input_required / failed`）以 `Conversation.state` 为准，只有 `idle` 才回查 `lastTaskId.status`。待决策事项（`input_required`）因此必须同时体现在 `Conversation.state` 上。
 

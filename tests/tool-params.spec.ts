@@ -58,14 +58,17 @@ describe('工具参数描述可被 dsh-tools DSL 编译', () => {
     for (const parameters of [TASK_RUNNING_TOOL_PARAMETERS, TASK_COMPLETED_TOOL_PARAMETERS, TASK_FAILED_TOOL_PARAMETERS, TASK_INPUT_REQUIRED_TOOL_PARAMETERS, TASK_SCHEDULE_TOOL_PARAMETERS]) {
       expect(() => parameterSchemaSpecToJsonSchema(parameters)).not.toThrow()
     }
-    expect(Object.keys(TASK_COMPLETED_TOOL_PARAMETERS)).toEqual(expect.arrayContaining(['header', 'progressNote', 'result', 'artifacts', 'card']))
+    expect(Object.keys(TASK_COMPLETED_TOOL_PARAMETERS)).toEqual(expect.arrayContaining(['header', 'progressNote', 'result', 'artifacts', 'card', 'scheduleId']))
+    expect(Object.keys(TASK_RUNNING_TOOL_PARAMETERS)).toContain('scheduleId')
     expect(TASK_COMPLETED_TOOL_PARAMETERS.result.description).toContain('只阐述用户需求的最终结果')
     expect(TASK_COMPLETED_TOOL_PARAMETERS.result.description).toContain('不写怎么做或过程性内容')
     expect(TASK_COMPLETED_TOOL_PARAMETERS.result.description).toContain('不含文件路径')
     expect(TASK_COMPLETED_TOOL_PARAMETERS.card.description).toContain('不复制 result 或制品正文')
     expect(TASK_COMPLETED_TOOL_PARAMETERS.artifacts.description).toContain('仅限用户需要打开的关键制品')
     expect(Object.keys(TASK_FAILED_TOOL_PARAMETERS)).toEqual(expect.arrayContaining(['header', 'progressNote', 'error', 'reasonCode']))
+    expect(Object.keys(TASK_FAILED_TOOL_PARAMETERS)).toContain('scheduleId')
     expect(Object.keys(TASK_INPUT_REQUIRED_TOOL_PARAMETERS)).toEqual(expect.arrayContaining(['header', 'progressNote', 'questions']))
+    expect(Object.keys(TASK_INPUT_REQUIRED_TOOL_PARAMETERS)).toContain('scheduleId')
     // task_schedule：create.title / update.id 在 JSON Schema 层静态必填（模型漏填在平台侧就被拦）
     const schema = parameterSchemaSpecToJsonSchema(TASK_SCHEDULE_TOOL_PARAMETERS as never) as any
     expect(schema.properties.create.items.required).toContain('title')

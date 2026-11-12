@@ -69,6 +69,7 @@ uv run --no-project --python /usr/bin/python3 python -c 'import subprocess; subp
 | 模块 | 职责 |
 |---|---|
 | `types.ts` / `schedule-time.ts` | Zod 数据契约 / 日程时间解析及一致性；types 保留时间函数重导出 |
+| `native-schedules.ts` | 原生 schedule_create 调用结果配对、单条/批量定时消息来源解析 |
 | `model-info.ts` | DSH assistant message 模型元数据提取、Task 合并与看板展示名计算 |
 | `state-machine.ts` / `task-lifecycle.ts` | 纯状态迁移与投递开关 / 未完成任务判定（含 input_required） |
 | `service.ts` / `pending-answers.ts` | 宿主协调、串行写入、投递恢复 / 作答等待与取消清理 |
@@ -126,8 +127,9 @@ uv run --no-project --python /usr/bin/python3 python -c 'import subprocess; subp
 ### 定时任务
 
 - Worker 预设挂载 `dsh-tool-schedule`（schedule_create/list/update/delete）；提醒绑定 Worker 会话，到点作为新消息发回该会话。
-- 定时触发的轮次没有活动任务：只允许 `task_completed`，Host 生成 ad-hoc 已完成任务并经 outbox 投递给 Lead（service.ts reportFromWorker 的无 activeTaskId 分支）。queued/running 任务本轮未提交终态时，若子会话仍有活动原生定时任务则保留任务与 activeTaskId，等待下一轮继续上报；没有定时任务或查询失败仍按原规则判 failed，input_required 的阻塞等待不能跨轮次保留，手动停止与改单不受影响。
-- 定时标记：`schedule/changed` 事件 + Worker `turn/end` 双触发全量核对（500ms 防抖），`scheduleMarks` 内存 Map → snapshot 投影 `hasActiveSchedule`（看板 badge）。DSH 侧栏标题**不加**图标前缀（0.3.x 曾加 ⏰/🕐，已按用户要求移除，renameWorkerSession 只同步看板标题本身）。turn/end 双触发的原因：schedule/changed 的 cordis 传播链路未实测可靠，而轮次内创建的 schedule 在 turn/end 时必已提交。注意 Worker 经它自己的 subagent/job 创建的 schedule 绑定的是那个子会话，不在本机制覆盖内。
+- Task 持久化 `scheduleIds`（默认 `[]`）与 `lastScheduleId`：Host 监听原生 `schedule_create` 的 `tool/call → tool/result`，普通轮次关联 activeTask；定时轮次关联消息来源唯一反查到的 Task。无法唯一定位时不猜 lastTaskId。同一 Task 可关联多个 schedule，关联历史不因删除 schedule 而清除。
+- 定时轮次支持 `task_running / task_input_required / task_completed / task_failed`：单条消息自动补 scheduleId，批量消息的每次上报必须显式传当前批次内的 scheduleId。`transitionScheduledTask` 允许终态 Task 在同一 ID 上重开新一轮执行；completed → completed 走专用覆盖，不开放普通通用迁移。未关联来源首次生成带 scheduleId 的 ad-hoc Task，后续复用。更新来源 Task 与 turn/end 结算均保留同会话其他 activeTask；问题卡 RPC 可显式携带 taskId，避免答错任务。批量轮次不 concludeTurn，允许逐条上报。outbox 回写校验开始投递时的 revision，旧成功/失败回写不得吞掉新 pending。
+- 定时标记：`schedule/changed` 事件 + Worker `turn/end` 双触发全量核对（500ms 防抖），`activeScheduleIds` 内存 Map 同时投影 Conversation 与 Task 的 `hasActiveSchedule`。Task 只在自己的 scheduleIds 与原生活动 ID 相交时显示时钟；Conversation 对未关联的旧 schedule 仍显示时钟。turn/end 也只有当前 Task 自己有关联活动 schedule 才保留 queued/running，其他 Task 的 schedule 不阻止失败结算。DSH 侧栏标题不加图标前缀；Worker 经自己的 subagent/job 创建的 schedule 仍不在覆盖范围内。
 
 ### 全局个人记忆
 

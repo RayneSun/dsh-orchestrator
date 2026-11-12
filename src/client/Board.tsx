@@ -8,7 +8,7 @@ import { SchedulePane } from './schedule-pane.tsx'
 import { sortSchedules } from './schedule-ordering.ts'
 import { activeTaskStatuses } from '../types.ts'
 
-import type { ConversationRecord, ScheduleSnapshot, Snapshot, TaskRecord } from '../types.ts'
+import type { ConversationRecord, ScheduleSnapshot, Snapshot, TaskSnapshot } from '../types.ts'
 
 interface BoardProps {
   sessionId?: string
@@ -90,7 +90,7 @@ export function Board({ sessionId: propSessionId, useTabInfo, orchestrator, remo
   }, [load, remoteEvents])
 
   const tasksByConversation = useMemo(() => {
-    const map = new Map<string, TaskRecord[]>()
+    const map = new Map<string, TaskSnapshot[]>()
     for (const task of snapshot?.tasks ?? []) {
       map.set(task.conversationId, [...(map.get(task.conversationId) ?? []), task])
     }
@@ -145,8 +145,8 @@ export function Board({ sessionId: propSessionId, useTabInfo, orchestrator, remo
   }, [orchestrator, load, showToast])
 
   // 问题卡作答：走 answerTaskQuestions RPC，Host 恢复任务并返回同轮等待的答案。
-  const submitAnswers = useCallback(async (conv: ConversationRecord, answers: AnswerQuestionsRequest['answers']) => {
-    const result = await orchestrator.answerTaskQuestions({ childSessionId: conv.childSessionId, answers })
+  const submitAnswers = useCallback(async (conv: ConversationRecord, taskId: string, answers: AnswerQuestionsRequest['answers']) => {
+    const result = await orchestrator.answerTaskQuestions({ childSessionId: conv.childSessionId, taskId, answers })
     if (result.ok) {
       showToast('已回答，任务继续中')
       void load(++requestSeq.current)
@@ -209,7 +209,7 @@ export function Board({ sessionId: propSessionId, useTabInfo, orchestrator, remo
       const headState = latest ? latest.status : conv.state
       const collapsed = collapsedOverride[conv.id] ?? !active
       const toggle = (): void => setCollapsedOverride(prev => ({ ...prev, [conv.id]: !collapsed }))
-      const awaitingInput = latest?.status === 'input_required' && (latest.questions?.length ?? 0) > 0
+      const awaitingInput = tasks.find(task => task.status === 'input_required' && (task.questions?.length ?? 0) > 0)
       const convSchedules = schedulesByConversation.get(conv.id) ?? []
       return <section
         className={`dsho-conv${active ? ' dsho-conv-active' : ''}${collapsed ? ' dsho-conv-collapsed' : ''}`}
@@ -243,7 +243,7 @@ export function Board({ sessionId: propSessionId, useTabInfo, orchestrator, remo
           }}>打开子会话</button>
         </header>
         {/* 折叠态也恒显：问题卡 + 用户待办（会话头之下、任务区之外） */}
-        {awaitingInput && latest && <AskCard task={latest} onSubmit={answers => submitAnswers(conv, answers)} />}
+        {awaitingInput && <AskCard task={awaitingInput} onSubmit={answers => submitAnswers(conv, awaitingInput.id, answers)} />}
         {convSchedules.length > 0 && <ScheduleList schedules={convSchedules} onToggle={toggleSchedule} showToast={showToast} onOpenAttachment={(_schedule, path) => void openArtifact(conv, path)} />}
         {collapsed && latest && <div className="dsho-collapsedTime">
           <span>最新任务 · 创建 {shortTime(latest.createdAt)}{(() => { const d = durationText(latest, nowMs); return d ? ` · ${d}` : '' })()}</span>

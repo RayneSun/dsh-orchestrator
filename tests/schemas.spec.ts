@@ -18,6 +18,19 @@ import {
 } from '../src/types.ts'
 
 describe('工具输入 Zod 校验', () => {
+  it('旧 Task 缺少 scheduleIds 时按空关联读取，snapshot 接受 Task 活动时钟投影', () => {
+    const task = createTask({
+      id: 'task', parentSessionId: 'parent', conversationId: 'conv', predecessorTaskId: null,
+      subject: '旧任务', prompt: '执行',
+    })
+    const { scheduleIds: _scheduleIds, ...legacy } = task
+    expect(taskSchema.parse(legacy).scheduleIds).toEqual([])
+    const snapshot = snapshotResultSchema.parse({
+      conversations: [], schedules: [], tasks: [{ ...task, hasActiveSchedule: true }],
+    })
+    expect(snapshot.tasks[0].hasActiveSchedule).toBe(true)
+  })
+
   it('接受完整 dispatch 参数并规范化空白', () => {
     const parsed = dispatchInputSchema.parse({
       subject: '  查询天气  ',

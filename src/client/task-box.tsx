@@ -1,5 +1,5 @@
 import React, { useState } from 'react'
-import type { ConversationRecord, ProgressStep, TaskRecord } from '../types.ts'
+import type { ConversationRecord, ProgressStep, TaskRecord, TaskSnapshot } from '../types.ts'
 import { modelDisplayName } from '../model-info.ts'
 
 /** Material do_not_disturb_on：静默标识（与 DSH 应用内图标同源，内联避免依赖应用内部 alias）。 */
@@ -126,18 +126,18 @@ function CardPreview({ card }: { card: Record<string, unknown> }): React.ReactEl
 }
 
 /** 任务行头：状态 badge + 静默/定时/卡片标识 + 主题。 */
-function TaskHead({ task }: { task: TaskRecord }): React.ReactElement {
+function TaskHead({ task }: { task: TaskSnapshot }): React.ReactElement {
   return <div className="dsho-taskHead">
     <span className={`dsho-badge dsho-badge-${task.status}`}>{taskStatusLabels[task.status] ?? task.status}</span>
     {task.silent && <TagChip kind="silent" title="静默：终态不通知主会话" />}
-    {task.scheduled && <TagChip kind="scheduled" title="定时触发：由定时任务自动执行" />}
+    {task.hasActiveSchedule && <TagChip kind="scheduled" title="关联了活动定时任务：到点自动触发并覆盖本任务结果" />}
     {task.card && <TagChip kind="card" title="含 dsh-ui 展示卡片" />}
     <span className="dsho-taskSubject" title={task.subject}>{task.subject}</span>
   </div>
 }
 
 interface TaskLineProps {
-  task: TaskRecord
+  task: TaskSnapshot
   conv: ConversationRecord
   nowMs: number
   onOpenArtifact: (conv: ConversationRecord, artifact: string) => void
@@ -205,7 +205,7 @@ function TaskLine({ task, conv, nowMs, onOpenArtifact }: TaskLineProps): React.R
 /** 任务框：圈住多轮任务，默认折叠只显示最新一轮（新→旧）。 */
 export function TaskBox({ conv, tasks, nowMs, onOpenArtifact }: {
   conv: ConversationRecord
-  tasks: TaskRecord[]
+  tasks: TaskSnapshot[]
   nowMs: number
   onOpenArtifact: (conv: ConversationRecord, artifact: string) => void
 }): React.ReactElement {
