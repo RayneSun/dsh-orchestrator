@@ -140,10 +140,11 @@ interface TaskLineProps {
   task: TaskSnapshot
   conv: ConversationRecord
   nowMs: number
+  attention: boolean
   onOpenArtifact: (conv: ConversationRecord, artifact: string) => void
 }
 
-function TaskLine({ task, conv, nowMs, onOpenArtifact }: TaskLineProps): React.ReactElement {
+function TaskLine({ task, conv, nowMs, attention, onOpenArtifact }: TaskLineProps): React.ReactElement {
   const [expanded, setExpanded] = useState(false)
   const result = task.result
   const artifacts = task.artifacts ?? []
@@ -189,7 +190,7 @@ function TaskLine({ task, conv, nowMs, onOpenArtifact }: TaskLineProps): React.R
     </li>
   }
 
-  return <li className="dsho-task">
+  return <li className={`dsho-task${attention ? ' dsho-task-attention' : ''}`}>
     <TaskHead task={task} />
     <StepList steps={task.progressSteps ?? []} />
     {(task.header || task.progressNote || detailSections.length > 0) && <div className={`dsho-note${live ? ' dsho-note-live' : ''}`}>
@@ -203,11 +204,12 @@ function TaskLine({ task, conv, nowMs, onOpenArtifact }: TaskLineProps): React.R
 }
 
 /** 任务框：圈住多轮任务，默认折叠只显示最新一轮（新→旧）。 */
-export function TaskBox({ conv, tasks, nowMs, onOpenArtifact }: {
+export function TaskBox({ conv, tasks, nowMs, onOpenArtifact, attentionTaskId }: {
   conv: ConversationRecord
   tasks: TaskSnapshot[]
   nowMs: number
   onOpenArtifact: (conv: ConversationRecord, artifact: string) => void
+  attentionTaskId?: string
 }): React.ReactElement {
   const [expanded, setExpanded] = useState(false)
   const rounds = [...tasks].reverse()
@@ -218,7 +220,7 @@ export function TaskBox({ conv, tasks, nowMs, onOpenArtifact }: {
       <span className="dsho-taskBoxCnt">{rounds.length} 轮 · {expanded ? '全部展开' : '显示最新'}</span>
     </div>
     <ul className="dsho-tasks">
-      {rounds.map(task => <TaskLine key={task.id} task={task} conv={conv} nowMs={nowMs} onOpenArtifact={onOpenArtifact} />)}
+      {rounds.map(task => <TaskLine key={task.id} task={task} conv={conv} nowMs={nowMs} attention={task.id === attentionTaskId} onOpenArtifact={onOpenArtifact} />)}
     </ul>
   </div>
 }

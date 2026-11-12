@@ -11,6 +11,9 @@
 .dsho-title{font-size:15px;font-weight:650;margin:0 0 12px}
 .dsho-empty{color:var(--dsw-alias-label-tertiary);font-size:13px;line-height:1.6;border:.5px dashed var(--dsw-alias-border-l4);border-radius:12px;padding:18px;text-align:center}
 .dsho-conv{position:relative;border:.5px solid var(--dsw-alias-border-l4);border-radius:12px;background:var(--dsw-alias-bg-layer-2,light-dark(#fff,#1f1f1f));margin:0 0 12px;overflow:hidden}
+.dsho-conv-attention{border-color:color-mix(in srgb,var(--dsho-warn) 55%,transparent)}
+.dsho-conv-attention::after{content:'';position:absolute;z-index:10;pointer-events:none;inset:0;border:2px solid var(--dsho-warn);border-radius:inherit;background:var(--dsho-warn);opacity:0;animation:dsho-conv-attention-flash 1.1s ease-in-out 2}
+@keyframes dsho-conv-attention-flash{0%,100%{opacity:0}50%{opacity:.16}}
 .dsho-convHead{display:flex;align-items:center;gap:8px;padding:12px 13px;border-bottom:.5px solid var(--dsw-alias-border-l2);cursor:pointer;user-select:none;outline:none}
 .dsho-convHead:hover{background:var(--dsw-alias-interactive-bg-hover)}
 .dsho-convHead:focus-visible{box-shadow:inset 0 0 0 2px color-mix(in srgb,var(--dsho-brand) 45%,transparent)}
@@ -45,8 +48,9 @@
 .dsho-open:hover{background:color-mix(in srgb,var(--dsho-brand) 8%,transparent)}
 .dsho-open:active{background:color-mix(in srgb,var(--dsho-brand) 16%,transparent)}
 .dsho-tasks{list-style:none;margin:0;padding:0}
-.dsho-task{border-top:.5px dashed var(--dsw-alias-border-l2);padding:10px 13px;display:flex;flex-direction:column;gap:5px}
+.dsho-task{border-top:.5px dashed var(--dsw-alias-border-l2);padding:10px 13px;display:flex;flex-direction:column;gap:5px;border-radius:8px}
 .dsho-task:first-child{border-top:none}
+.dsho-task-attention{background:color-mix(in srgb,var(--dsho-warn) 7%,transparent);box-shadow:inset 3px 0 0 var(--dsho-warn),inset 0 0 0 1px color-mix(in srgb,var(--dsho-warn) 30%,transparent)}
 .dsho-taskHead{display:flex;align-items:center;gap:8px;font-size:12px}
 .dsho-taskSubject{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--dsw-alias-label-primary)}
 .dsho-note{margin:0;color:var(--dsw-alias-label-secondary);font-size:12px;line-height:1.5}
@@ -187,6 +191,14 @@
 }
 body { margin: 0; background: var(--dsw-alias-bg-layer-1); font-family: -apple-system, "PingFang SC", sans-serif; }
 .mock-wrap { max-width: 580px; margin: 0 auto; padding: 18px 14px 40px; }
+.mock-demoBar{box-sizing:border-box;max-width:580px;margin:0 auto;padding:18px 14px 0;display:flex;align-items:center;gap:10px;color:#5c616b;font-size:12px}
+.mock-demoText{flex:1;min-width:0;line-height:1.5}
+.mock-demoText b{display:block;color:#1f2329;font-size:13px}
+.mock-demoBar button{font:inherit;font-size:11.5px;white-space:nowrap;border:1px solid #e4e7eb;border-radius:8px;padding:6px 10px;background:#fff;color:#5c616b;cursor:pointer}
+.mock-demoBar button:hover{background:#eff1f3}
+.mock-demoBar .mock-demoPrimary{border-color:#d9a05f;background:#fff7ed;color:#93500b}
+[hidden]{display:none!important}
+@media (prefers-reduced-motion:reduce){.dsho-conv-attention::after{animation:none;opacity:.08}}
 
 /* tabs：沿用 headerButton 语言 */
 .dsho-tabs { display: flex; gap: 6px; margin-left: auto; }
@@ -227,7 +239,12 @@ body { margin: 0; background: var(--dsw-alias-bg-layer-1); font-family: -apple-s
 </style>
 </head>
 <body>
-<div class="mock-wrap dsho-board" style="min-height:auto">
+<div class="mock-demoBar">
+  <div class="mock-demoText"><b>待操作提醒演示</b><span id="demoState">看板已打开，仅高亮目标任务</span></div>
+  <button id="demoToggle" onclick="toggleBoardDemo()">收起看板</button>
+  <button class="mock-demoPrimary" onclick="simulateInputRequired()">模拟进入待操作</button>
+</div>
+<div class="mock-wrap dsho-board" id="boardPanel" style="min-height:auto">
 
   <h2 class="dsho-title" style="display:flex;align-items:center">
     任务看板
@@ -307,28 +324,35 @@ body { margin: 0; background: var(--dsw-alias-bg-layer-1); font-family: -apple-s
       </div></div>
     </section>
 
-    <section class="dsho-conv">
+    <section class="dsho-conv dsho-conv-attention" id="attentionConversation">
       <div class="dsho-convHead" onclick="toggleConv(this)">
         <span class="dsho-chevron"></span>
         <span class="dsho-convTitle">家庭事务</span>
-        <span class="dsho-badge dsho-badge-running">进行中</span>
+        <span class="dsho-badge dsho-badge-input_required">待你操作</span>
         <button class="dsho-open" onclick="event.stopPropagation()">打开子会话</button>
       </div>
       <div class="dsho-body"><div>
         <ul class="dsho-tasks">
-          <li class="dsho-task">
+          <li class="dsho-task dsho-task-attention" id="attentionTask">
             <div class="dsho-taskHead">
-              <span class="dsho-badge dsho-badge-running">进行中</span>
+              <span class="dsho-badge dsho-badge-input_required">待你操作</span>
               <span class="dsho-taskSubject">订周末蛋糕</span>
-            </div>
-            <div class="dsho-note dsho-note-live">
-              <span class="dsho-noteTitle">比价中</span>
-              <span class="dsho-noteSep">·</span>
-              <span class="dsho-noteText">已看完 4 家店，望京的好利来最快能取——再比两家就下单</span>
             </div>
             <div class="dsho-taskFoot"><span>创建 10-29 15:40</span><span class="dsho-dur">耗时 1m12s</span></div>
           </li>
         </ul>
+        <div class="dsho-ask">
+          <div class="dsho-askHead"><span class="dsho-askIcon">?</span>子会话向你提问 · 订周末蛋糕</div>
+          <div class="dsho-askItem">
+            <div class="dsho-askQ"><b>蛋糕口味：</b>希望预订哪一种？</div>
+            <div class="dsho-askDetail">选好口味后，子会话会继续完成预订。</div>
+            <div class="dsho-askOpts">
+              <button class="dsho-opt" onclick="selectDemoOption(this)">巧克力</button>
+              <button class="dsho-opt" onclick="selectDemoOption(this)">水果</button>
+              <button class="dsho-opt" onclick="selectDemoOption(this)">抹茶</button>
+            </div>
+          </div>
+        </div>
       </div></div>
     </section>
 
@@ -414,6 +438,33 @@ body { margin: 0; background: var(--dsw-alias-bg-layer-1); font-family: -apple-s
 </div>
 
 <script>
+  function toggleBoardDemo() {
+    const panel = document.getElementById('boardPanel');
+    panel.hidden = !panel.hidden;
+    document.getElementById('demoToggle').textContent = panel.hidden ? '展开看板' : '收起看板';
+    document.getElementById('demoState').textContent = panel.hidden ? '看板已收起，再次模拟将自动弹出' : '看板已打开，仅高亮目标任务';
+  }
+  function simulateInputRequired() {
+    const panel = document.getElementById('boardPanel');
+    const wasClosed = panel.hidden;
+    if (wasClosed) {
+      panel.hidden = false;
+      document.getElementById('demoToggle').textContent = '收起看板';
+      switchTab('board');
+    }
+    const task = document.getElementById('attentionTask');
+    const conversation = document.getElementById('attentionConversation');
+    task.classList.remove('dsho-task-attention');
+    conversation.classList.remove('dsho-conv-attention');
+    void task.offsetWidth;
+    task.classList.add('dsho-task-attention');
+    conversation.classList.add('dsho-conv-attention');
+    document.getElementById('demoState').textContent = wasClosed ? '任务进入待操作：已自动弹出看板并高亮' : '任务进入待操作：看板保持原状，仅重新高亮';
+  }
+  function selectDemoOption(button) {
+    button.parentElement.querySelectorAll('.dsho-opt').forEach(option => option.classList.remove('dsho-opt-sel'));
+    button.classList.add('dsho-opt-sel');
+  }
   function switchTab(name) {
     document.getElementById('pane-board').classList.toggle('on', name === 'board');
     document.getElementById('pane-sched').classList.toggle('on', name === 'sched');

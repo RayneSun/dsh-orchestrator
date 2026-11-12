@@ -212,7 +212,7 @@ export function Board({ sessionId: propSessionId, useTabInfo, orchestrator, remo
       const awaitingInput = tasks.find(task => task.status === 'input_required' && (task.questions?.length ?? 0) > 0)
       const convSchedules = schedulesByConversation.get(conv.id) ?? []
       return <section
-        className={`dsho-conv${active ? ' dsho-conv-active' : ''}${collapsed ? ' dsho-conv-collapsed' : ''}`}
+        className={`dsho-conv${active ? ' dsho-conv-active' : ''}${collapsed ? ' dsho-conv-collapsed' : ''}${awaitingInput ? ' dsho-conv-attention' : ''}`}
         key={conv.id}
       >
         <header
@@ -252,7 +252,7 @@ export function Board({ sessionId: propSessionId, useTabInfo, orchestrator, remo
         <div className="dsho-body"><div>
           <div className="dsho-bodyInner">
             {conv.workspaceName && <div className="dsho-meta">工作区：{conv.workspaceName}</div>}
-            <TaskBox conv={conv} tasks={tasks} nowMs={nowMs} onOpenArtifact={openArtifact} />
+            <TaskBox conv={conv} tasks={tasks} nowMs={nowMs} onOpenArtifact={openArtifact} attentionTaskId={awaitingInput?.id} />
           </div>
         </div></div>
       </section>

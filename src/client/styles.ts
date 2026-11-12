@@ -6,6 +6,9 @@ const CSS = `
 .dsho-title{font-size:15px;font-weight:650;margin:0 0 12px}
 .dsho-empty{color:var(--dsw-alias-label-tertiary);font-size:13px;line-height:1.6;border:.5px dashed var(--dsw-alias-border-l4);border-radius:12px;padding:18px;text-align:center}
 .dsho-conv{position:relative;border:.5px solid var(--dsw-alias-border-l4);border-radius:12px;background:var(--dsw-alias-bg-layer-2,light-dark(#fff,#1f1f1f));margin:0 0 12px;overflow:hidden}
+.dsho-conv-attention{border-color:color-mix(in srgb,var(--dsho-warn) 55%,transparent)}
+.dsho-conv-attention::after{content:'';position:absolute;z-index:10;pointer-events:none;inset:0;border:2px solid var(--dsho-warn);border-radius:inherit;background:var(--dsho-warn);opacity:0;animation:dsho-conv-attention-flash 1.1s ease-in-out 2}
+@keyframes dsho-conv-attention-flash{0%,100%{opacity:0}50%{opacity:.16}}
 .dsho-convHead{display:flex;align-items:center;gap:8px;padding:12px 13px;border-bottom:.5px solid var(--dsw-alias-border-l2);cursor:pointer;user-select:none;outline:none}
 .dsho-convHead:hover{background:var(--dsw-alias-interactive-bg-hover)}
 .dsho-convHead:focus-visible{box-shadow:inset 0 0 0 2px color-mix(in srgb,var(--dsho-brand) 45%,transparent)}
@@ -22,7 +25,7 @@ const CSS = `
 /* 顶部柔光扫过：低亮度绿色光带，入场/出场整体淡入淡出，避免边缘突变 */
 .dsho-conv-active::before{content:'';position:absolute;z-index:1;pointer-events:none;top:0;left:0;right:0;height:1.5px;background:linear-gradient(90deg,transparent 0%,color-mix(in srgb,var(--dsho-pos) 55%,transparent) 50%,transparent 100%);background-size:55% 100%;background-repeat:no-repeat;opacity:0;animation:dsho-sweep 2.6s ease-in-out infinite}
 @keyframes dsho-sweep{0%{background-position:-45% 0;opacity:0}20%{opacity:.9}80%{opacity:.9}100%{background-position:145% 0;opacity:0}}
-@media (prefers-reduced-motion:reduce){.dsho-conv-active::before,.dsho-chevron{animation:none;transition:none}.dsho-body{transition:none}}
+@media (prefers-reduced-motion:reduce){.dsho-conv-active::before,.dsho-chevron{animation:none;transition:none}.dsho-body{transition:none}.dsho-conv-attention::after{animation:none;opacity:.08}}
 .dsho-badge{flex:none;display:inline-flex;align-items:center;gap:5px;border-radius:999px;padding:2px 9px;font-size:11px;font-weight:600;line-height:16px;background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-secondary);white-space:nowrap}
 .dsho-badge-queued,.dsho-badge-provisioning{background:color-mix(in srgb,var(--dsho-brand) 13%,transparent);color:var(--dsho-brand-ink)}
 .dsho-badge-running{background:color-mix(in srgb,var(--dsho-pos) 14%,transparent);color:var(--dsho-pos-ink);padding-left:7px}
@@ -39,8 +42,9 @@ const CSS = `
 .dsho-open:hover{background:color-mix(in srgb,var(--dsho-brand) 8%,transparent)}
 .dsho-open:active{background:color-mix(in srgb,var(--dsho-brand) 16%,transparent)}
 .dsho-tasks{list-style:none;margin:0;padding:0}
-.dsho-task{border-top:.5px dashed var(--dsw-alias-border-l2);padding:10px 13px;display:flex;flex-direction:column;gap:5px}
+.dsho-task{border-top:.5px dashed var(--dsw-alias-border-l2);padding:10px 13px;display:flex;flex-direction:column;gap:5px;border-radius:8px}
 .dsho-task:first-child{border-top:none}
+.dsho-task-attention{background:color-mix(in srgb,var(--dsho-warn) 7%,transparent);box-shadow:inset 3px 0 0 var(--dsho-warn),inset 0 0 0 1px color-mix(in srgb,var(--dsho-warn) 30%,transparent)}
 .dsho-taskHead{display:flex;align-items:center;gap:8px;font-size:12px}
 .dsho-taskSubject{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--dsw-alias-label-primary)}
 .dsho-note{margin:0;color:var(--dsw-alias-label-secondary);font-size:12px;line-height:1.5}

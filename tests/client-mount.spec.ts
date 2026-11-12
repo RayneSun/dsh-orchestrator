@@ -16,7 +16,7 @@ function createHarness() {
   const slotDisposes = [vi.fn(), vi.fn(), vi.fn()]
   const scopedRemote = { ...rootRemote, orchestrator: { snapshot } }
   const uiWorkspace = { openSession: vi.fn() }
-  const sidebarRight = { openTab: vi.fn() }
+  const sidebarRight = { openTab: vi.fn(), active: vi.fn(), isExpanded: vi.fn(() => false) }
 
   const scoped: any = {
     remote: scopedRemote,
@@ -69,7 +69,10 @@ describe('client orchestrator mount', () => {
     expect(props.uiWorkspace.openSession).toBe(harness.scoped.uiWorkspace.openSession)
 
     const header = harness.entries.find(entry => entry.options.id === '@cmjt/dsh-orchestrator/header')
-    header!.options.inject('parent-session').sidebarRight.openTab('orchestratorBoard', {
+    const headerProps = header!.options.inject('parent-session')
+    expect(headerProps.orchestrator.snapshot).toBe(harness.snapshot)
+    expect(headerProps.remoteEvents.$on).toBe(harness.scoped.remote.$on)
+    headerProps.sidebarRight.openTab('orchestratorBoard', {
       params: { sessionId: 'parent-session' },
     })
     expect(harness.sidebarRight.openTab).toHaveBeenCalledWith('orchestratorBoard', {

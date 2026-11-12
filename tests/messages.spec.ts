@@ -136,6 +136,12 @@ describe('prompt 编排约定', () => {
     expect(WORKER_PROMPT).toContain('不许编造')
   })
 
+  it('Worker 咨询用户必须通过阻塞问题卡，不允许正文提问后结束', () => {
+    expect(WORKER_PROMPT).toContain('凡需要咨询用户')
+    expect(WORKER_PROMPT).toContain('都必须调用此工具')
+    expect(WORKER_PROMPT).toContain('禁止只在回复正文提问后结束')
+  })
+
   it('Worker prompt 约定重复模式主动建议定时任务', () => {
     expect(WORKER_PROMPT).toContain('反复定期出现')
     expect(WORKER_PROMPT).toContain('schedule_create 绑定本会话')
