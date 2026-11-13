@@ -12,7 +12,7 @@ import {
   taskFailedInputSchema,
   taskInputRequiredInputSchema,
   taskRunningInputSchema,
-  taskScheduleInputSchema,
+  taskTodoInputSchema,
   scheduleConsistencyError,
   scheduleObjectSchema,
 } from '../src/types.ts'
@@ -149,6 +149,8 @@ describe('工具输入 Zod 校验', () => {
     expect(conversationSchema.safeParse({ ...conv, hasActiveSchedule: true }).success).toBe(false)
     const snapshot = snapshotResultSchema.parse({ conversations: [{ ...conv, hasActiveSchedule: true }], tasks: [], schedules: [] })
     expect(snapshot.conversations[0].hasActiveSchedule).toBe(true)
+    expect(snapshot).toHaveProperty('schedules')
+    expect(snapshot).not.toHaveProperty('todos')
     expect(snapshotResultSchema.parse({ conversations: [{ ...conv }], tasks: [], schedules: [] })
       .conversations[0].hasActiveSchedule).toBe(false)
   })
@@ -171,7 +173,7 @@ describe('工具输入 Zod 校验', () => {
 
 })
 
-describe('task_* header 与 task_schedule 协议', () => {
+describe('task_* header 与 task_todo 协议', () => {
   it('header 可选，最多 8 个字；超长拒绝', () => {
     for (const schema of [taskRunningInputSchema, taskCompletedInputSchema, taskFailedInputSchema, taskInputRequiredInputSchema] as const) {
       const base = schema === taskCompletedInputSchema ? { result: '答案' }
@@ -186,7 +188,7 @@ describe('task_* header 与 task_schedule 协议', () => {
   })
 
   it('schedules.create 新建：title 静态必填、priority 默认 P3、结构上无 id/status', () => {
-    const parsed = taskScheduleInputSchema.parse({
+    const parsed = taskTodoInputSchema.parse({
       create: [
         { title: '默认' },
         { title: '加急', priority: 'P0', startAt: '2026-10-28T09:00:00+08:00', endAt: '2026-10-30T18:00:00+08:00', remindAt: '2026-10-29T09:00:00+08:00',
@@ -199,47 +201,47 @@ describe('task_* header 与 task_schedule 协议', () => {
     expect(parsed.create?.[0]).toMatchObject({ title: '默认', priority: 'P3' })
     expect(parsed.create?.[1]).toMatchObject({ title: '加急', priority: 'P0', startAt: '2026-10-28T09:00:00+08:00', endAt: '2026-10-30T18:00:00+08:00' })
     // create 条目结构上接触不到 id/status（strict 拒绝）
-    expect(taskScheduleInputSchema.safeParse({ create: [{ title: 'x', id: 'todo_1' }] }).success).toBe(false)
-    expect(taskScheduleInputSchema.safeParse({ create: [{ title: 'x', status: 'done' }] }).success).toBe(false)
+    expect(taskTodoInputSchema.safeParse({ create: [{ title: 'x', id: 'todo_1' }] }).success).toBe(false)
+    expect(taskTodoInputSchema.safeParse({ create: [{ title: 'x', status: 'done' }] }).success).toBe(false)
     // create 缺 title
-    expect(taskScheduleInputSchema.safeParse({ create: [{}] }).success).toBe(false)
+    expect(taskTodoInputSchema.safeParse({ create: [{}] }).success).toBe(false)
   })
 
   it('schedules.update 更新：id 静态必填，可改 status/title/priority 等', () => {
-    const parsed = taskScheduleInputSchema.parse({
+    const parsed = taskTodoInputSchema.parse({
       update: [{ id: 'todo_1', status: 'done' }, { id: 'todo_2', status: 'cancelled' }, { id: 'todo_3', title: '改标题', priority: 'P1' }],
     })
     expect(parsed.update?.[0]).toMatchObject({ id: 'todo_1', status: 'done' })
-    expect(taskScheduleInputSchema.safeParse({ update: [{ status: 'done' }] }).success).toBe(false)
-    expect(taskScheduleInputSchema.safeParse({ update: [{ id: 'todo_1', priority: 'P9' }] }).success).toBe(false)
+    expect(taskTodoInputSchema.safeParse({ update: [{ status: 'done' }] }).success).toBe(false)
+    expect(taskTodoInputSchema.safeParse({ update: [{ id: 'todo_1', priority: 'P9' }] }).success).toBe(false)
   })
 
   it('schedules 输入边界：时间简写合法、自然语言与不存在日期拒绝、链接必须 http(s)、附件禁绝对路径与 ..', () => {
     for (const bad of ['明天', '下周三', '2026/10/25', '2026-13-01', '2026-02-30', '18:00', '']) {
-      expect(taskScheduleInputSchema.safeParse({ create: [{ title: 'x', endAt: bad }] }).success).toBe(false)
+      expect(taskTodoInputSchema.safeParse({ create: [{ title: 'x', endAt: bad }] }).success).toBe(false)
     }
     for (const good of ['10-25 18:00', '2026-10-25T09:00', '2026-10-25T09:00:00+08:00']) {
-      expect(taskScheduleInputSchema.safeParse({ create: [{ title: 'x', endAt: good }] }).success).toBe(true)
+      expect(taskTodoInputSchema.safeParse({ create: [{ title: 'x', endAt: good }] }).success).toBe(true)
     }
     // 纯日期属于全天日程：allDay 缺省时拒绝（强制模型表态，不再猜午夜）
     for (const dateOnly of ['10-25', '2026-10-25']) {
-      expect(taskScheduleInputSchema.safeParse({ create: [{ title: 'x', endAt: dateOnly }] }).success).toBe(false)
+      expect(taskTodoInputSchema.safeParse({ create: [{ title: 'x', endAt: dateOnly }] }).success).toBe(false)
     }
-    expect(taskScheduleInputSchema.safeParse({ create: [{ title: 'x', links: [{ url: 'ftp://a' }] }] }).success).toBe(false)
-    expect(taskScheduleInputSchema.safeParse({ create: [{ title: 'x', attachments: [{ path: '/etc/passwd' }] }] }).success).toBe(false)
-    expect(taskScheduleInputSchema.safeParse({ create: [{ title: 'x', attachments: [{ path: '../a' }] }] }).success).toBe(false)
+    expect(taskTodoInputSchema.safeParse({ create: [{ title: 'x', links: [{ url: 'ftp://a' }] }] }).success).toBe(false)
+    expect(taskTodoInputSchema.safeParse({ create: [{ title: 'x', attachments: [{ path: '/etc/passwd' }] }] }).success).toBe(false)
+    expect(taskTodoInputSchema.safeParse({ create: [{ title: 'x', attachments: [{ path: '../a' }] }] }).success).toBe(false)
   })
 
-  it('task_schedule 独立承载日程：状态上报工具不再携带 schedules', () => {
+  it('task_todo 独立承载日程：状态上报工具不再携带 schedules', () => {
     const payload = { update: [{ id: 'todo_1', status: 'done' }] }
-    expect(taskScheduleInputSchema.safeParse(payload).success).toBe(true)
+    expect(taskTodoInputSchema.safeParse(payload).success).toBe(true)
     expect(taskRunningInputSchema.safeParse(payload).success).toBe(false)
     expect(taskCompletedInputSchema.safeParse({ result: 'r', schedules: payload }).success).toBe(false)
     expect(taskFailedInputSchema.safeParse({ error: 'e', schedules: payload }).success).toBe(false)
   })
 
   it('日程状态支持 cancelled（Worker 作废旧日程）', () => {
-    const parsed = taskScheduleInputSchema.safeParse({ update: [{ id: 'todo_1', status: 'cancelled' }] })
+    const parsed = taskTodoInputSchema.safeParse({ update: [{ id: 'todo_1', status: 'cancelled' }] })
     expect(parsed.success).toBe(true)
   })
 
@@ -272,38 +274,38 @@ describe('task_* header 与 task_schedule 协议', () => {
   })
 
   it('时间窗顺序：startAt 晚于 endAt 拒绝（create 与 update 同规则）', () => {
-    expect(taskScheduleInputSchema.safeParse({ create: [{ title: 'x', startAt: '2026-10-30T00:00:00+08:00', endAt: '2026-10-28T00:00:00+08:00' }] }).success).toBe(false)
-    expect(taskScheduleInputSchema.safeParse({ update: [{ id: 'todo_1', startAt: '2026-10-30T00:00:00+08:00', endAt: '2026-10-28T00:00:00+08:00' }] }).success).toBe(false)
+    expect(taskTodoInputSchema.safeParse({ create: [{ title: 'x', startAt: '2026-10-30T00:00:00+08:00', endAt: '2026-10-28T00:00:00+08:00' }] }).success).toBe(false)
+    expect(taskTodoInputSchema.safeParse({ update: [{ id: 'todo_1', startAt: '2026-10-30T00:00:00+08:00', endAt: '2026-10-28T00:00:00+08:00' }] }).success).toBe(false)
     // 单边更新不在输入层校验（与存量合并后由 Host 兜底）
-    expect(taskScheduleInputSchema.safeParse({ update: [{ id: 'todo_1', endAt: '2026-10-28T00:00:00+08:00' }] }).success).toBe(true)
+    expect(taskTodoInputSchema.safeParse({ update: [{ id: 'todo_1', endAt: '2026-10-28T00:00:00+08:00' }] }).success).toBe(true)
     // 相等合法（单时间点事项）
-    expect(taskScheduleInputSchema.safeParse({ create: [{ title: 'x', startAt: '2026-10-28T09:00:00+08:00', endAt: '2026-10-28T09:00:00+08:00' }] }).success).toBe(true)
+    expect(taskTodoInputSchema.safeParse({ create: [{ title: 'x', startAt: '2026-10-28T09:00:00+08:00', endAt: '2026-10-28T09:00:00+08:00' }] }).success).toBe(true)
   })
 
   it('schedules 全天日程：allDay 纯日期契约（新建必填 startAt、update 原子切换）', () => {
     // 新建：allDay=true 必填完整纯日期 startAt；endAt 尾日包含、>= startAt
-    const parsed = taskScheduleInputSchema.parse({ create: [{ title: '假期', allDay: true, startAt: '2026-11-04', endAt: '2026-11-06' }] })
+    const parsed = taskTodoInputSchema.parse({ create: [{ title: '假期', allDay: true, startAt: '2026-11-04', endAt: '2026-11-06' }] })
     expect(parsed.create?.[0]).toMatchObject({ allDay: true, startAt: '2026-11-04', endAt: '2026-11-06' })
     // 单日全天可省略 endAt；缺省 allDay 落 false
-    const single = taskScheduleInputSchema.parse({ create: [{ title: 'x', allDay: true, startAt: '2026-11-04' }] })
+    const single = taskTodoInputSchema.parse({ create: [{ title: 'x', allDay: true, startAt: '2026-11-04' }] })
     expect(single.create?.[0]).toMatchObject({ allDay: true, startAt: '2026-11-04' })
-    expect(taskScheduleInputSchema.parse({ create: [{ title: 'x' }] }).create?.[0]).toMatchObject({ allDay: false })
+    expect(taskTodoInputSchema.parse({ create: [{ title: 'x' }] }).create?.[0]).toMatchObject({ allDay: false })
     // allDay=true 但缺 startAt / 带时刻 / 不完整日期 / 倒置 → 拒绝
-    expect(taskScheduleInputSchema.safeParse({ create: [{ title: 'x', allDay: true }] }).success).toBe(false)
-    expect(taskScheduleInputSchema.safeParse({ create: [{ title: 'x', allDay: true, startAt: '2026-11-04 09:00' }] }).success).toBe(false)
-    expect(taskScheduleInputSchema.safeParse({ create: [{ title: 'x', allDay: true, startAt: '2026-11-4' }] }).success).toBe(false)
-    expect(taskScheduleInputSchema.safeParse({ create: [{ title: 'x', allDay: true, startAt: '2026-11-06', endAt: '2026-11-04' }] }).success).toBe(false)
+    expect(taskTodoInputSchema.safeParse({ create: [{ title: 'x', allDay: true }] }).success).toBe(false)
+    expect(taskTodoInputSchema.safeParse({ create: [{ title: 'x', allDay: true, startAt: '2026-11-04 09:00' }] }).success).toBe(false)
+    expect(taskTodoInputSchema.safeParse({ create: [{ title: 'x', allDay: true, startAt: '2026-11-4' }] }).success).toBe(false)
+    expect(taskTodoInputSchema.safeParse({ create: [{ title: 'x', allDay: true, startAt: '2026-11-06', endAt: '2026-11-04' }] }).success).toBe(false)
     // allDay 缺省或显式 false：纯日期拒绝
-    expect(taskScheduleInputSchema.safeParse({ create: [{ title: 'x', startAt: '2026-11-04' }] }).success).toBe(false)
-    expect(taskScheduleInputSchema.safeParse({ create: [{ title: 'x', allDay: false, startAt: '2026-11-04' }] }).success).toBe(false)
+    expect(taskTodoInputSchema.safeParse({ create: [{ title: 'x', startAt: '2026-11-04' }] }).success).toBe(false)
+    expect(taskTodoInputSchema.safeParse({ create: [{ title: 'x', allDay: false, startAt: '2026-11-04' }] }).success).toBe(false)
     // update：只改 allDay 不带 startAt → 拒绝（原子切换）
-    expect(taskScheduleInputSchema.safeParse({ update: [{ id: 'a', allDay: true }] }).success).toBe(false)
-    expect(taskScheduleInputSchema.safeParse({ update: [{ id: 'a', allDay: false }] }).success).toBe(false)
+    expect(taskTodoInputSchema.safeParse({ update: [{ id: 'a', allDay: true }] }).success).toBe(false)
+    expect(taskTodoInputSchema.safeParse({ update: [{ id: 'a', allDay: false }] }).success).toBe(false)
     // update：allDay:true + 纯日期 startAt → 通过；allDay 缺省 + 纯日期 → 拒绝
-    expect(taskScheduleInputSchema.safeParse({ update: [{ id: 'a', allDay: true, startAt: '2026-11-04' }] }).success).toBe(true)
-    expect(taskScheduleInputSchema.safeParse({ update: [{ id: 'a', startAt: '2026-11-04' }] }).success).toBe(false)
+    expect(taskTodoInputSchema.safeParse({ update: [{ id: 'a', allDay: true, startAt: '2026-11-04' }] }).success).toBe(true)
+    expect(taskTodoInputSchema.safeParse({ update: [{ id: 'a', startAt: '2026-11-04' }] }).success).toBe(false)
     // update：只改标题不碰时间 → patch 不携带 allDay/时间字段（避免合并覆盖旧值）
-    const titleOnly = taskScheduleInputSchema.parse({ update: [{ id: 'a', title: '新标题' }] })
+    const titleOnly = taskTodoInputSchema.parse({ update: [{ id: 'a', title: '新标题' }] })
     expect(titleOnly.update?.[0]).toEqual({ id: 'a', title: '新标题' })
   })
 

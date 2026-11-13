@@ -1,15 +1,15 @@
 import { describe, expect, it } from 'vitest'
-import { deliveryNotice, LEAD_PROMPT, renderWorkerCapabilityIndex, scheduleStatusSection, WORKER_PROMPT } from '../src/messages.ts'
+import { deliveryNotice, LEAD_PROMPT, renderWorkerCapabilityIndex, todoStatusSection, WORKER_PROMPT } from '../src/messages.ts'
 import { createConversation, createTask, type ConversationRecord, type TaskRecord } from '../src/types.ts'
 
-describe('deliveryNotice 用户日程段', () => {
+describe('deliveryNotice 用户待办/日程段', () => {
   const baseTask = (): TaskRecord => ({
     ...createTask({ id: 't1', parentSessionId: 'p1', conversationId: 'c1', predecessorTaskId: null, subject: '查距离', prompt: 'p' }),
     status: 'completed',
     result: '安贞最近',
   })
 
-  it('有日程时附带 pending 清单与代办指引；无日程不带该段', () => {
+  it('有待办/日程时附带 pending 清单与代办指引；没有时不带该段', () => {
     const conv: ConversationRecord = {
       ...createConversation({ id: 'c1', childSessionId: 's1', parentSessionId: 'p1', title: '体检' }),
     }
@@ -23,13 +23,13 @@ describe('deliveryNotice 用户日程段', () => {
       },
     ]
     const text = deliveryNotice(baseTask(), conv, schedules)
-    expect(text).toContain('用户日程')
+    expect(text).toContain('用户待办/日程')
     expect(text).toContain('[todo_1] 拨打预约电话')
     expect(text).toContain('结束 10-27')
-    expect(text).toContain('task_schedule 的 update')
+    expect(text).toContain('task_todo 的 update')
     expect(text).not.toContain('todo_2')
     const without = deliveryNotice(baseTask(), conv, [])
-    expect(without).not.toContain('用户日程')
+    expect(without).not.toContain('用户待办/日程')
   })
 })
 
@@ -51,12 +51,12 @@ describe('deliveryNotice 制品交付', () => {
   })
 })
 
-describe('scheduleStatusSection 投递附言', () => {
+describe('todoStatusSection 投递附言', () => {
   const base = {
     createdAt: '2026-10-23T00:00:00Z', updatedAt: '2026-10-23T00:00:00Z',
   }
   it('pending 全列含 id；用户标完成的列出防重复代办；worker 标完成与 cancelled 不提', () => {
-    const text = scheduleStatusSection([
+    const text = todoStatusSection([
       { ...base, id: 'todo_1', title: '买火车票', startAt: '2026-10-20T00:00:00+08:00', endAt: '2026-10-25T23:59:59+08:00', status: 'pending', priority: 'P3' as const, links: [], attachments: [], contacts: [] },
       { ...base, id: 'todo_2', title: '取快递', status: 'done', priority: 'P3' as const, links: [], attachments: [], contacts: [], completedBy: 'user' as const },
       { ...base, id: 'todo_3', title: '已代办的', status: 'done', priority: 'P3' as const, links: [], attachments: [], contacts: [], completedBy: 'worker' as const },
@@ -68,7 +68,7 @@ describe('scheduleStatusSection 投递附言', () => {
     expect(text).not.toContain('todo_4')
   })
   it('全天日程纯日期标签：不经 Date.parse，直接月-日展示（含跨天）', () => {
-    const text = scheduleStatusSection([
+    const text = todoStatusSection([
       { ...base, id: 'sch_1', title: '十一假期', startAt: '2026-10-01', endAt: '2026-10-07', status: 'pending', priority: 'P3' as const, links: [], attachments: [], contacts: [] },
       { ...base, id: 'sch_2', title: '生日', startAt: '2026-11-04', status: 'pending', priority: 'P3' as const, links: [], attachments: [], contacts: [] },
     ])
@@ -77,8 +77,8 @@ describe('scheduleStatusSection 投递附言', () => {
   })
 
   it('空清单或全无可提项时不产生片段', () => {
-    expect(scheduleStatusSection([])).toBe('')
-    expect(scheduleStatusSection([{ ...base, id: 'todo_1', title: 'x', status: 'cancelled', priority: 'P3' as const, links: [], attachments: [], contacts: [] }])).toBe('')
+    expect(todoStatusSection([])).toBe('')
+    expect(todoStatusSection([{ ...base, id: 'todo_1', title: 'x', status: 'cancelled', priority: 'P3' as const, links: [], attachments: [], contacts: [] }])).toBe('')
   })
 })
 
@@ -97,7 +97,7 @@ describe('prompt 编排约定', () => {
     expect(LEAD_PROMPT).toContain('Worker 环境能力索引')
     expect(LEAD_PROMPT).toContain('不要在派发需求、执行方法或用户回复中引用这些名称')
     expect(LEAD_PROMPT).not.toContain('task_completed')
-    expect(LEAD_PROMPT).not.toContain('task_schedule')
+    expect(LEAD_PROMPT).not.toContain('task_todo')
     expect(LEAD_PROMPT).not.toContain('schedule_create')
     expect(LEAD_PROMPT).not.toContain('list/keyvalue')
     expect(LEAD_PROMPT).not.toContain('startAt/endAt/remindAt')
@@ -148,7 +148,7 @@ describe('prompt 编排约定', () => {
   })
 
   it('Worker prompt 引导按事件填全起止与提醒时间', () => {
-    expect(WORKER_PROMPT).toContain('# 用户待办/日程（task_schedule）')
+    expect(WORKER_PROMPT).toContain('# 用户待办/日程（task_todo）')
     expect(WORKER_PROMPT).toContain('尽量填全 startAt/endAt/remindAt')
     expect(WORKER_PROMPT).toContain('根据事件类型合理估计')
     expect(WORKER_PROMPT).toContain('自行选择合理的提前量')

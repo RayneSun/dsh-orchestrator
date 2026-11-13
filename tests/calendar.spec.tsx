@@ -1,10 +1,14 @@
 import React from 'react'
+import FullCalendar from '@fullcalendar/react'
+import interactionPlugin from '@fullcalendar/react/interaction'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { SchedulePane } from '../src/client/schedule-pane.tsx'
 import { ScheduleList } from '../src/client/schedule-list.tsx'
 import type { ScheduleSnapshot } from '../src/types.ts'
 
-// 无 DOM 的组件交互桩：保留 state 与 memo 依赖，直接触发真实 JSX 回调后重新渲染。
+vi.mock('@fullcalendar/react', () => ({ default: function FullCalendarMock() { return null } }))
+
+// 无 DOM 的组件交互桩：保留 state/memo/ref，直接触发真实 JSX 与 FullCalendar 回调后重新渲染。
 const hooks = vi.hoisted(() => ({ slots: [] as any[], cursor: 0 }))
 vi.mock('react', async importOriginal => {
   const actual = await importOriginal<typeof import('react')>()
@@ -25,6 +29,11 @@ vi.mock('react', async importOriginal => {
       }
       return hooks.slots[index].value
     },
+    useRef(initial: unknown) {
+      const index = hooks.cursor++
+      if (!(index in hooks.slots)) hooks.slots[index] = { current: initial }
+      return hooks.slots[index]
+    },
   }
 })
 
@@ -32,12 +41,10 @@ function nodes(node: React.ReactNode): React.ReactElement<any>[] {
   return React.Children.toArray(node).flatMap(child => React.isValidElement<any>(child)
     ? [child, ...nodes(child.props.children)] : [])
 }
-
 function text(node: React.ReactNode): string {
   return React.Children.toArray(node).map(child => React.isValidElement<any>(child)
     ? text(child.props.children) : String(child)).join('')
 }
-
 function schedule(patch: Partial<ScheduleSnapshot> = {}): ScheduleSnapshot {
   return {
     id: 'sch_1', parentSessionId: 'parent', conversationId: 'conv', conversationTitle: '会话',
@@ -52,6 +59,9 @@ function pane(schedules: ScheduleSnapshot[]) {
   hooks.cursor = 0
   return nodes(SchedulePane({ schedules, ...callbacks }))
 }
+function calendarProps(tree: React.ReactElement<any>[]) {
+  return tree.find(node => node.type === FullCalendar)!.props
+}
 function timeLabel(item: ScheduleSnapshot): string {
   hooks.cursor = 0
   const row = nodes(ScheduleList({ schedules: [item], ...callbacks }))
@@ -65,31 +75,41 @@ beforeEach(() => {
 })
 afterEach(() => vi.useRealTimers())
 
-describe('日历日期与长日程', () => {
-  it('全年日程在第 62 天之后仍覆盖整月，并随切月重新索引', () => {
+describe('FullCalendar 月历与长日程', () => {
+  it('全年日程使用单条连续事件，切月后选中日仍覆盖该日程', () => {
     const schedules = [schedule()]
     let tree = pane(schedules)
-    expect(tree.filter(node => node.props.className === 'dsho-dayDot')).toHaveLength(30)
+    expect(calendarProps(tree).dayMaxEventRows).toBe(5)
+    expect(calendarProps(tree).plugins).toContain(interactionPlugin)
+    expect(calendarProps(tree).moreLinkContent({ num: 3 })).toBe('展开 3 项')
+    expect(calendarProps(tree).moreLinkClick).toBe('popover')
+    expect(calendarProps(tree).events).toHaveLength(1)
+    expect(calendarProps(tree).events[0]).toMatchObject({ start: '2026-01-01', end: '2027-01-01' })
     expect(tree.find(node => node.type === ScheduleList)!.props.schedules).toEqual(schedules)
 
     tree.find(node => node.props['aria-label'] === '下个月')!.props.onClick()
     tree = pane(schedules)
-    expect(tree.filter(node => node.props.className === 'dsho-dayDot')).toHaveLength(31)
+    expect(text(tree.find(node => node.props.className === 'dsho-calTitle')!.props.children)).toBe('2026 年 12 月')
     expect(tree.find(node => node.type === ScheduleList)!.props.schedules).toEqual(schedules)
   })
 
-  it('跨月日程包含尾日，之后不再显示；作废或无开始时间的日程不进日历', () => {
+  it('作废或无开始时间不进入月历；无开始时间进入未安排', () => {
     const schedules = [
       schedule({ endAt: '2026-11-09' }),
       schedule({ id: 'cancelled', status: 'cancelled' }),
       schedule({ id: 'no-start', startAt: undefined }),
     ]
     let tree = pane(schedules)
-    expect(tree.filter(node => node.props.className === 'dsho-dayDot')).toHaveLength(9)
+    expect(calendarProps(tree).events).toHaveLength(1)
     expect(tree.find(node => node.type === ScheduleList)!.props.schedules).toEqual([schedules[0]])
-    tree.find(node => node.props.className?.split(' ').includes('dsho-day') && node.props.children[0] === 10)!.props.onClick()
+    expect(tree.find(node => node.props.className === 'dsho-unscheduledCount')!.props.children).toBe(1)
+
+    calendarProps(tree).dateClick({ dateStr: '2026-11-10' })
     tree = pane(schedules)
-    expect(tree.some(node => node.type === ScheduleList)).toBe(false)
+    expect(tree.some(node => node.props.className === 'dsho-dayEmpty')).toBe(true)
+    const lists = tree.filter(node => node.type === ScheduleList)
+    expect(lists).toHaveLength(1)
+    expect(lists[0].props.schedules.map((item: ScheduleSnapshot) => item.id)).toEqual(['no-start'])
   })
 
   it.each([
@@ -102,7 +122,7 @@ describe('日历日期与长日程', () => {
     tree.find(node => node.props['aria-label'] === '下个月')!.props.onClick()
     tree = pane(schedules)
     expect(text(tree.find(node => node.props.className === 'dsho-calTitle')!.props.children)).toBe(heading)
-    expect(text(tree.find(node => node.props.className === 'dsho-dayTitle')!.props.children)).toBe(`${selected}· 1 条`)
+    expect(text(tree.find(node => node.props.className === 'dsho-dayTitle')!.props.children)).toBe(`${selected}· 1 项`)
     expect(tree.find(node => node.type === ScheduleList)!.props.schedules).toEqual(schedules)
   })
 })

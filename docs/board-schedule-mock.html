@@ -4,6 +4,8 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>看板 + 日程 mock · 真实 UI 语言</title>
+<!-- FullCalendar 7.1.5 (MIT) · Breezy / Indigo，本地资源仅用于此 Demo -->
+<link rel="stylesheet" href="./vendor/fullcalendar/fullcalendar.min.css">
 <style>
 .dsho-headerButton{font:inherit;border:.5px solid var(--dsw-alias-border-l4);background:var(--dsw-alias-bg-layer-3);color:var(--dsw-alias-label-primary);border-radius:8px;padding:3px 9px;cursor:pointer}
 .dsho-headerButton:hover{border-color:var(--dsw-alias-label-dimmed);background:var(--dsw-alias-interactive-bg-hover)}
@@ -213,29 +215,58 @@ body { margin: 0; background: var(--dsw-alias-bg-layer-1); font-family: -apple-s
 /* 日程行来源回链（日程页多的一行） */
 .dsho-src { font-size: 10px; color: var(--dsw-alias-label-tertiary); margin: 2px 0 0 23px; }
 
-/* ═══ 月历（全部用真实令牌/软色） ═══ */
-.dsho-cal { margin: 0 0 12px; }
-.dsho-calHead { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
-.dsho-calTitle { font-size: 13px; font-weight: 650; color: var(--dsw-alias-label-primary); }
-.dsho-calNav { display: flex; gap: 5px; }
-.dsho-calNav button { font: inherit; width: 25px; height: 25px; border-radius: 7px; border: .5px solid var(--dsw-alias-border-l4); background: var(--dsw-alias-bg-layer-2); color: var(--dsw-alias-label-secondary); cursor: pointer; font-size: 12px; }
-.dsho-calNav button.wide { width: auto; padding: 0 10px; }
-.dsho-calNav button:hover { background: var(--dsw-alias-interactive-bg-hover); }
-.dsho-calGrid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 2px; }
-.dsho-dow { text-align: center; font-size: 10px; color: var(--dsw-alias-label-tertiary); padding: 3px 0; }
-.dsho-day { position: relative; aspect-ratio: 1; border-radius: 8px; display: flex; align-items: center; justify-content: center; font-size: 12px; color: var(--dsw-alias-label-primary); cursor: pointer; border: 1.5px solid transparent; }
-.dsho-day:hover { background: var(--dsw-alias-interactive-bg-hover); }
-.dsho-day.dim { color: color-mix(in srgb, var(--dsw-alias-label-tertiary) 55%, transparent); }
-.dsho-day.today { border-color: color-mix(in srgb, var(--dsho-brand) 55%, transparent); font-weight: 650; }
-.dsho-day.sel { background: color-mix(in srgb, var(--dsho-brand) 8%, transparent); border-color: color-mix(in srgb, var(--dsho-brand) 35%, transparent); }
-.dsho-dayDots { display: flex; gap: 2px; position: absolute; bottom: 3px; }
-.dsho-dayDot { width: 4.5px; height: 4.5px; border-radius: 50%; }
-.dsho-dayMore { position: absolute; bottom: 1px; right: 4px; font-size: 8.5px; color: var(--dsw-alias-label-tertiary); }
-.dsho-dayTitle { font-size: 13px; font-weight: 650; margin: 2px 0 4px; display: flex; align-items: baseline; gap: 8px; }
-.dsho-dayTitle .cnt { color: var(--dsw-alias-label-tertiary); font-weight: 400; font-size: 11px; }
-.dsho-groupLabel { font-size: 10.5px; color: var(--dsw-alias-label-tertiary); margin: 10px 2px 2px; }
-.dsho-groupLabel.overdue { color: var(--dsho-err-ink); font-weight: 600; }
-.dsho-span { display: inline-flex; align-items: center; gap: 3px; }
+/* ═══ 现代月历：无间隙日期 + 跨天连续色条 ═══ */
+.dsho-cal{margin:0 0 12px;padding:14px 12px 12px;border:.5px solid var(--dsw-alias-border-l4);border-radius:16px;background:var(--dsw-alias-bg-layer-2);box-shadow:0 5px 20px rgb(31 35 41 / 3%)}
+.dsho-calHead{display:flex;align-items:center;justify-content:space-between;margin:0 1px 12px}
+.dsho-calHeading{display:flex;align-items:baseline;gap:8px}
+.dsho-calTitle{font-size:16px;font-weight:680;letter-spacing:-.2px;color:var(--dsw-alias-label-primary)}
+.dsho-calSubtitle{font-size:10px;color:var(--dsw-alias-label-tertiary)}
+.dsho-calNav{display:flex;gap:4px}
+.dsho-calNav button{font:inherit;width:28px;height:28px;border-radius:8px;border:.5px solid var(--dsw-alias-border-l4);background:var(--dsw-alias-bg-layer-3);color:var(--dsw-alias-label-secondary);cursor:pointer;font-size:14px;line-height:1}
+.dsho-calNav button.wide{width:auto;padding:0 10px;font-size:11px}
+.dsho-calNav button:hover{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}
+.dsho-calMonth{overflow:hidden;border:.5px solid var(--dsw-alias-border-l4);border-radius:12px;background:var(--dsw-alias-bg-layer-2);--fc-breezy-background:transparent;--fc-breezy-foreground:var(--dsw-alias-label-primary);--fc-breezy-border:var(--dsw-alias-border-l4);--fc-breezy-strong-border:var(--dsw-alias-border-l4);--fc-breezy-muted-foreground:var(--dsw-alias-label-tertiary);--fc-breezy-faint-foreground:var(--dsw-alias-label-tertiary)}
+.dsho-calMonth a{color:inherit;text-decoration:none}
+.dsho-calView{font-family:inherit;font-size:11px}
+.dsho-dowCell{padding:7px 0!important;text-align:center!important}
+.dsho-dow{display:block;text-align:center;font-size:10px;font-weight:550;color:var(--dsw-alias-label-tertiary)}
+.dsho-dow.weekend{color:color-mix(in srgb,var(--dsho-warn) 65%,var(--dsw-alias-label-tertiary))}
+.dsho-calWeek{min-height:100px}
+.dsho-day{cursor:pointer;transition:background-color .15s ease}
+.dsho-calMonth .dsho-day.today{background:transparent}
+.dsho-day:hover{background:var(--dsw-alias-interactive-bg-hover)}
+.dsho-day.sel{background:color-mix(in srgb,var(--dsho-brand) 6%,transparent)}
+.dsho-calMonth .dsho-day.today.sel{background:color-mix(in srgb,var(--dsho-brand) 6%,transparent)}
+.dsho-dayInner{min-width:0}
+.dsho-dayTop{display:flex;justify-content:flex-start;padding:4px 4px 1px!important}
+.dsho-day.today .dsho-dayTop>[aria-hidden="true"]{background:transparent!important;color:inherit!important;box-shadow:none!important}
+.dsho-dayNum{display:inline-flex;align-items:center;justify-content:center;min-width:21px;height:21px;padding:0 4px;border-radius:7px;font-size:11px;font-weight:520;line-height:21px;color:var(--dsw-alias-label-primary)}
+.dsho-day.dim .dsho-dayNum{color:color-mix(in srgb,var(--dsw-alias-label-tertiary) 55%,transparent)}
+.dsho-day.today .dsho-dayNum{background:var(--dsho-brand);color:#fff;font-weight:650;box-shadow:0 2px 6px color-mix(in srgb,var(--dsho-brand) 25%,transparent)}
+.dsho-day.today.sel .dsho-dayNum{box-shadow:0 0 0 2px color-mix(in srgb,var(--dsho-brand) 16%,transparent)}
+.dsho-calEvent{min-width:0;min-height:16px;margin:1px 0;border:0!important;border-radius:0;background:var(--fc-event-color,var(--dsho-brand))!important;color:#fff!important;box-shadow:none;cursor:pointer}
+.dsho-calEvent:hover{filter:brightness(.96);box-shadow:inset 0 0 0 1px rgb(255 255 255 / 22%)}
+.dsho-calEvent.start{margin-left:3px;border-radius:5px 0 0 5px}
+.dsho-calEvent.end{margin-right:3px;border-radius:0 5px 5px 0}
+.dsho-calEvent.start.end{border-radius:5px}
+.dsho-calEventInner{display:block;min-width:0;padding:1px 5px!important;overflow:hidden;color:inherit;font-size:9px;font-weight:580;line-height:14px;text-overflow:ellipsis;white-space:nowrap}
+.dsho-calMore{align-self:center;justify-self:start;margin:1px 0 1px 5px;padding:0;border:0;background:transparent;color:var(--dsw-alias-label-tertiary);font:inherit;font-size:9px;line-height:15px;cursor:pointer}
+.dsho-calMore:hover{color:var(--dsho-brand-ink)}
+.dsho-calLegend{display:flex;align-items:center;gap:12px;margin:10px 2px 0;color:var(--dsw-alias-label-tertiary);font-size:9px}
+.dsho-calLegend span{display:inline-flex;align-items:center;gap:4px}
+.dsho-calLegend i{display:inline-block;width:12px;height:5px;border-radius:3px;background:var(--legend-color)}
+.dsho-calLegend .dsho-calLegendHint{margin-left:auto}
+.dsho-dayPanel,.dsho-unscheduled{margin:0 0 12px;padding:12px 13px 8px;border:.5px solid var(--dsw-alias-border-l4);border-radius:14px;background:var(--dsw-alias-bg-layer-2)}
+.dsho-dayTitle{display:flex;align-items:baseline;gap:7px;margin:0 0 5px;font-size:13px;font-weight:650}
+.dsho-dayTitle .cnt{color:var(--dsw-alias-label-tertiary);font-size:10px;font-weight:400}
+.dsho-dayTitle .dsho-todayTag{padding:1px 6px;border-radius:999px;background:color-mix(in srgb,var(--dsho-brand) 9%,transparent);color:var(--dsho-brand-ink);font-size:9px;font-weight:600}
+.dsho-dayEmpty{margin:8px 0 12px;color:var(--dsw-alias-label-tertiary);font-size:11px;text-align:center}
+.dsho-unscheduled{padding-bottom:7px}
+.dsho-unscheduledHead{display:flex;align-items:center;gap:7px;margin-bottom:4px}
+.dsho-unscheduledTitle{font-size:13px;font-weight:650}
+.dsho-unscheduledCount{display:inline-flex;align-items:center;justify-content:center;min-width:18px;height:18px;padding:0 5px;border-radius:999px;background:var(--dsw-alias-bg-layer-3);color:var(--dsw-alias-label-secondary);font-size:9px}
+.dsho-unscheduledRule{margin-left:auto;color:var(--dsw-alias-label-tertiary);font-size:9px}
+.dsho-created{flex:none;padding:0 6px;border:.5px solid var(--dsho-line);border-radius:999px;color:var(--dsw-alias-label-tertiary);font-size:9px;line-height:15px;white-space:nowrap}
 </style>
 </head>
 <body>
@@ -358,85 +389,48 @@ body { margin: 0; background: var(--dsw-alias-bg-layer-1); font-family: -apple-s
 
   </div>
 
-  <!-- ═══ 日程 tab ═══ -->
+  <!-- ═══ 日程 tab：现代月历 + 未安排待办 ═══ -->
   <div class="dsho-pane" id="pane-sched">
-
-    <div class="dsho-cal card-like">
+    <section class="dsho-cal">
       <div class="dsho-calHead">
-        <span class="dsho-calTitle">2026年10月</span>
-        <span class="dsho-calNav"><button>‹</button><button class="wide">今天</button><button>›</button></span>
+        <div class="dsho-calHeading">
+          <span class="dsho-calTitle" id="calTitle">2026年11月</span>
+          <span class="dsho-calSubtitle">待办 / 日程</span>
+        </div>
+        <span class="dsho-calNav">
+          <button aria-label="上个月" onclick="changeMonth(-1)">‹</button>
+          <button class="wide" onclick="goToday()">今天</button>
+          <button aria-label="下个月" onclick="changeMonth(1)">›</button>
+        </span>
       </div>
-      <div class="dsho-calGrid" id="cal"></div>
-    </div>
-
-    <section class="dsho-conv">
-      <div class="dsho-dayTitle" style="padding:12px 13px 0">10月29日 周四 <span class="cnt">· 3 条</span></div>
-
-      <div style="padding:0 13px 12px">
-        <div class="dsho-groupLabel overdue">已过期 1</div>
-        <div class="dsho-todo" onclick="toggleTodo(this)">
-          <button class="dsho-todoCheck" onclick="checkTodo(this, event)">✓</button>
-          <div class="dsho-todoBody">
-            <div class="dsho-todoLine">
-              <span class="dsho-todoTitle">向财务确认发票抬头要求</span>
-              <span class="dsho-todoPriority dsho-todoPriority-P1">P1</span>
-              <span class="dsho-todoTime dsho-todoTime-over">10-27 12:00</span>
-            </div>
-            <div class="dsho-src">来自 体检机构对比</div>
-          </div>
-        </div>
-
-        <div class="dsho-groupLabel">今天</div>
-        <div class="dsho-todo" onclick="toggleTodo(this)">
-          <button class="dsho-todoCheck" onclick="checkTodo(this, event)">✓</button>
-          <div class="dsho-todoBody">
-            <div class="dsho-todoLine">
-              <span class="dsho-todoTitle">部门周会（两天议程）</span>
-              <span class="dsho-todoPriority dsho-todoPriority-P1">P1</span>
-              <span class="dsho-todoTime dsho-todoTime-active"><span class="dsho-dot"></span>10-29 18:00 → 10-30 22:00</span>
-            </div>
-            <div class="dsho-src">来自 今晚会议提醒 · 提醒 17:30</div>
-          </div>
-        </div>
-        <div class="dsho-todo" onclick="toggleTodo(this)">
-          <button class="dsho-todoCheck" onclick="checkTodo(this, event)">✓</button>
-          <div class="dsho-todoBody">
-            <div class="dsho-todoLine">
-              <span class="dsho-todoTitle">给妈妈订周末蛋糕</span>
-              <span class="dsho-todoPriority dsho-todoPriority-P3">P3</span>
-              <span class="dsho-todoTime">20:00</span>
-            </div>
-            <div class="dsho-src">来自 家庭事务</div>
-          </div>
-        </div>
+      <div class="dsho-calMonth" id="cal"></div>
+      <div class="dsho-calLegend">
+        <span><i style="--legend-color:#d5483f"></i>P0</span>
+        <span><i style="--legend-color:#d97706"></i>P1</span>
+        <span><i style="--legend-color:#a87900"></i>P2</span>
+        <span><i style="--legend-color:#2f8f57"></i>P3</span>
+        <span class="dsho-calLegendHint">点击日期查看当日事项</span>
       </div>
     </section>
 
-    <section class="dsho-conv">
-      <div class="dsho-dayTitle" style="padding:12px 13px 0">10月30日 周五</div>
-      <div style="padding:0 13px 12px">
-        <div class="dsho-todo" onclick="toggleTodo(this)">
-          <button class="dsho-todoCheck" onclick="checkTodo(this, event)">✓</button>
-          <div class="dsho-todoBody">
-            <div class="dsho-todoLine">
-              <span class="dsho-todoTitle">部门周会（两天议程）</span>
-              <span class="dsho-todoPriority dsho-todoPriority-P1">P1</span>
-              <span class="dsho-todoTime">10-29 18:00 → 10-30 22:00</span>
-            </div>
-            <div class="dsho-src">来自 今晚会议提醒</div>
-          </div>
-        </div>
+    <section class="dsho-dayPanel">
+      <div class="dsho-dayTitle" id="selectedDayTitle"></div>
+      <div id="selectedDayTodos"></div>
+    </section>
+
+    <section class="dsho-unscheduled">
+      <div class="dsho-unscheduledHead">
+        <span class="dsho-unscheduledTitle">未安排</span>
+        <span class="dsho-unscheduledCount" id="unscheduledCount"></span>
+        <span class="dsho-unscheduledRule">优先级优先 · 同级近期创建在前</span>
       </div>
+      <div id="unscheduledTodos"></div>
     </section>
-
-    <section class="dsho-conv">
-      <div class="dsho-dayTitle" style="padding:12px 13px 0">10月31日 周六</div>
-      <div class="dsho-empty" style="margin:0 13px 13px">这一天没有日程</div>
-    </section>
-
   </div>
 </div>
 
+<script src="./vendor/fullcalendar/fullcalendar.global.min.js"></script>
+<script src="./vendor/fullcalendar/breezy.global.min.js"></script>
 <script>
   function toggleBoardDemo() {
     const panel = document.getElementById('boardPanel');
@@ -471,6 +465,7 @@ body { margin: 0; background: var(--dsw-alias-bg-layer-1); font-family: -apple-s
     document.getElementById('tab-board').classList.toggle('on', name === 'board');
     document.getElementById('tab-sched').classList.toggle('on', name === 'sched');
     if (name === 'board') document.getElementById('notif')?.remove();
+    if (name === 'sched') requestAnimationFrame(() => calendar.updateSize());
   }
   function toggleConv(head) { head.parentElement.classList.toggle('dsho-conv-collapsed'); }
   function toggleTodo(row) { row.classList.toggle('dsho-todo-open'); }
@@ -479,25 +474,163 @@ body { margin: 0; background: var(--dsw-alias-bg-layer-1); font-family: -apple-s
     const row = btn.closest('.dsho-todo');
     row.classList.toggle('dsho-todo-done');
   }
-  // 月历
-  const grid = document.getElementById('cal');
-  const P = { P0: '#d5483f', P1: '#e08300', P2: '#b59a00', P3: '#3d9a50' };
-  const ev = { 27: [P.P1], 28: [P.P2], 29: [P.P1, P.P1, P.P3], 30: [P.P1], 31: [P.P3] };
-  const firstDow = (new Date(2026, 9, 1).getDay() + 6) % 7;
-  let html = ['一','二','三','四','五','六','日'].map(d => '<div class="dsho-dow">' + d + '</div>').join('');
-  for (let i = 0; i < firstDow; i++) html += '<div></div>';
-  for (let d = 1; d <= 31; d++) {
-    const dots = ev[d] || [];
-    html += '<div class="dsho-day ' + (d === 29 ? 'today sel' : '') + '">' + d +
-      '<span class="dsho-dayDots">' + dots.slice(0, 3).map(c => '<span class="dsho-dayDot" style="background:' + c + '"></span>').join('') + '</span>' +
-      (dots.length > 3 ? '<span class="dsho-dayMore">+' + (dots.length - 3) + '</span>' : '') + '</div>';
+  // FullCalendar 负责日期单元格、跨天色条和跨周分段；这里只维护 Demo 数据与选中态。
+  const TODO_COLORS = { P0: '#d5483f', P1: '#d97706', P2: '#a87900', P3: '#2f8f57' };
+  const DEMO_TODAY = '2026-11-13';
+  const calendarEvents = [
+    { id: 'e2', title: '产品发布保障', start: '2026-11-13', end: '2026-11-16', priority: 'P0', time: '今天 20:00 → 11-16 08:00', source: '产品发布', remark: '跨周事项：FullCalendar 自动续接到下一周。' },
+    { id: 'e3', title: '提交周报', start: '2026-11-12', end: '2026-11-12', priority: 'P2', time: '18:00', source: '工作事务' },
+    { id: 'e4', title: '给妈妈订周末蛋糕', start: '2026-11-13', end: '2026-11-13', priority: 'P3', time: '20:00', source: '家庭事务' },
+    { id: 'e5', title: '电话回访', start: '2026-11-11', end: '2026-11-11', priority: 'P3', time: '15:30', source: '客户维护' },
+    { id: 'e6', title: '部门周会', start: '2026-11-16', end: '2026-11-16', priority: 'P1', time: '10:00 → 11:30', source: '工作事务' },
+    { id: 'e7', title: '团队秋游', start: '2026-11-21', end: '2026-11-22', priority: 'P3', time: '11-21 08:30 → 11-22 17:00', source: '团队活动' },
+    { id: 'e8', title: '客户演示', start: '2026-11-13', end: '2026-11-13', priority: 'P1', time: '14:00 → 15:00', source: '客户维护' },
+    { id: 'e9', title: '设计评审', start: '2026-11-13', end: '2026-11-13', priority: 'P2', time: '16:00 → 17:00', source: '产品发布' },
+    { id: 'e10', title: '发布复盘', start: '2026-11-13', end: '2026-11-13', priority: 'P3', time: '18:30 → 19:00', source: '产品发布' },
+  ];
+  const unscheduledEvents = [
+    { id: 'u1', title: '确认搬家报价', priority: 'P0', createdAt: '2026-11-12T09:20:00+08:00', created: '创建 11-12 09:20', source: '家庭事务' },
+    { id: 'u2', title: '回复物业验收单', priority: 'P1', createdAt: '2026-11-12T18:40:00+08:00', created: '创建 11-12 18:40', source: '家庭事务' },
+    { id: 'u3', title: '整理报销发票', priority: 'P2', createdAt: '2026-11-10T10:00:00+08:00', created: '创建 11-10 10:00', source: '财务报销' },
+    { id: 'u4', title: '陪妈妈选蛋糕', priority: 'P3', createdAt: '2026-11-13T12:10:00+08:00', created: '创建 11-13 12:10', source: '家庭事务' },
+    { id: 'u5', title: '读完产品方案', priority: 'P3', createdAt: '2026-11-09T08:00:00+08:00', created: '创建 11-09 08:00', source: '自我提升' },
+  ];
+  const pad2 = n => String(n).padStart(2, '0');
+  const keyOf = date => `${date.getFullYear()}-${pad2(date.getMonth() + 1)}-${pad2(date.getDate())}`;
+  const dateOf = key => { const [y, m, d] = key.split('-').map(Number); return new Date(y, m - 1, d); };
+  const addDays = (date, amount) => { const next = new Date(date); next.setDate(next.getDate() + amount); return next; };
+  let selectedDate = DEMO_TODAY;
+
+  function todoRow(item, timeText, extraClass = '') {
+    return `<div class="dsho-todo ${extraClass}" onclick="toggleTodo(this)">
+      <button class="dsho-todoCheck" aria-label="标记完成" onclick="checkTodo(this, event)">✓</button>
+      <div class="dsho-todoBody">
+        <div class="dsho-todoLine">
+          <span class="dsho-todoTitle">${item.title}</span>
+          <span class="dsho-todoPriority dsho-todoPriority-${item.priority}">${item.priority}</span>
+          <span class="${item.created ? 'dsho-created' : 'dsho-todoTime'}">${timeText}</span>
+        </div>
+        <div class="dsho-todoDetail">${item.remark ? `<div class="dsho-todoRemark">${item.remark}</div>` : ''}<div class="dsho-src">来自 ${item.source}</div></div>
+      </div>
+    </div>`;
   }
-  grid.innerHTML = html;
-  grid.addEventListener('click', e => {
-    const day = e.target.closest('.dsho-day'); if (!day) return;
-    grid.querySelectorAll('.dsho-day.sel').forEach(x => x.classList.remove('sel'));
-    day.classList.add('sel');
+
+  const calendar = new FullCalendar.Calendar(document.getElementById('cal'), {
+    initialView: 'dayGridMonth',
+    initialDate: DEMO_TODAY,
+    now: DEMO_TODAY,
+    locale: 'zh-cn',
+    firstDay: 1,
+    fixedWeekCount: false,
+    height: 'auto',
+    headerToolbar: false,
+    borderless: true,
+    dayMaxEventRows: 4,
+    dayHeaderClass: 'dsho-dowCell',
+    dayHeaderContent(info) {
+      const labels = ['日', '一', '二', '三', '四', '五', '六'];
+      const weekend = info.dow === 0 || info.dow === 6 ? ' weekend' : '';
+      return { html: `<span class="dsho-dow${weekend}">${labels[info.dow]}</span>` };
+    },
+    viewClass: 'dsho-calView',
+    dayRowClass: 'dsho-calWeek',
+    dayCellClass(info) {
+      const key = keyOf(info.date);
+      return ['dsho-day', info.isOther && 'dim', key === DEMO_TODAY && 'today', key === selectedDate && 'sel'].filter(Boolean).join(' ');
+    },
+    dayCellInnerClass: 'dsho-dayInner',
+    dayCellTopClass: 'dsho-dayTop',
+    dayCellTopContent(info) {
+      return { html: `<span class="dsho-dayNum">${info.date.getDate()}</span>` };
+    },
+    events: calendarEvents.map(item => ({
+      id: item.id,
+      title: item.title,
+      start: item.start,
+      // FullCalendar 的全天 end 为排他日期，示例数据中的 end 为包含当日。
+      end: keyOf(addDays(dateOf(item.end), 1)),
+      allDay: true,
+      color: TODO_COLORS[item.priority],
+      contrastColor: '#fff',
+      extendedProps: { priority: item.priority, priorityRank: Number(item.priority.slice(1)) },
+    })),
+    eventOrder: 'priorityRank,title',
+    eventClass(info) {
+      return [
+        'dsho-calEvent',
+        `dsho-calEvent-${info.event.extendedProps.priority}`,
+        info.isStart && 'start',
+        info.isEnd && 'end',
+      ].filter(Boolean).join(' ');
+    },
+    eventInnerClass: 'dsho-calEventInner',
+    eventContent(info) { return { html: info.event.title }; },
+    eventDidMount(info) {
+      info.el.title = info.event.title;
+      info.el.setAttribute('aria-label', info.event.title);
+    },
+    moreLinkClass: 'dsho-calMore',
+    moreLinkContent(info) { return `展开 ${info.num} 项`; },
+    moreLinkClick: 'popover',
+    dateClick(info) { selectDate(info.dateStr); },
+    eventClick(info) {
+      info.jsEvent.preventDefault();
+      selectDate(dateAtPoint(info.jsEvent.clientX, info.jsEvent.clientY) || keyOf(info.event.start));
+    },
+    datesSet() {
+      const date = calendar.getDate();
+      document.getElementById('calTitle').textContent = `${date.getFullYear()}年${date.getMonth() + 1}月`;
+      requestAnimationFrame(syncSelectedDay);
+    },
   });
+
+  function dateAtPoint(x, y) {
+    const cell = [...document.querySelectorAll('#cal .dsho-day[data-date]')].find(element => {
+      const rect = element.getBoundingClientRect();
+      return x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom;
+    });
+    return cell?.dataset.date;
+  }
+
+  function syncSelectedDay() {
+    document.querySelectorAll('#cal .dsho-day').forEach(cell => {
+      cell.classList.toggle('sel', cell.dataset.date === selectedDate);
+    });
+  }
+
+  function renderSelectedDay() {
+    const date = dateOf(selectedDate);
+    const items = calendarEvents.filter(item => item.start <= selectedDate && item.end >= selectedDate)
+      .sort((a, b) => a.priority.localeCompare(b.priority) || a.time.localeCompare(b.time));
+    const weekdays = ['日', '一', '二', '三', '四', '五', '六'];
+    document.getElementById('selectedDayTitle').innerHTML = `${date.getMonth() + 1}月${date.getDate()}日 周${weekdays[date.getDay()]}<span class="cnt">· ${items.length} 项</span>${selectedDate === DEMO_TODAY ? '<span class="dsho-todayTag">今天</span>' : ''}`;
+    document.getElementById('selectedDayTodos').innerHTML = items.length ? items.map(item => todoRow(item, item.time)).join('') : '<div class="dsho-dayEmpty">这一天没有待办/日程</div>';
+  }
+
+  function renderUnscheduled() {
+    const items = [...unscheduledEvents].sort((a, b) => a.priority.localeCompare(b.priority) || b.createdAt.localeCompare(a.createdAt));
+    document.getElementById('unscheduledCount').textContent = items.length;
+    document.getElementById('unscheduledTodos').innerHTML = items.map(item => todoRow(item, item.created)).join('');
+  }
+
+  function selectDate(key) {
+    selectedDate = key;
+    if (key.slice(0, 7) !== keyOf(calendar.getDate()).slice(0, 7)) calendar.gotoDate(key);
+    syncSelectedDay();
+    renderSelectedDay();
+  }
+  function changeMonth(delta) {
+    const date = calendar.getDate();
+    date.setDate(1);
+    date.setMonth(date.getMonth() + delta);
+    selectedDate = keyOf(date);
+    calendar.gotoDate(date);
+    renderSelectedDay();
+  }
+  function goToday() { selectDate(DEMO_TODAY); }
+  calendar.render();
+  renderSelectedDay();
+  renderUnscheduled();
 </script>
 </body>
 </html>

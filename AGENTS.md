@@ -80,7 +80,8 @@ uv run --no-project --python /usr/bin/python3 python -c 'import subprocess; subp
 | `client/Board.tsx` | 会话与日程页签、数据刷新和回调协调 |
 | `client/task-attention.ts` | 任务新进入 input_required 时自动唤起看板；已可见时只保留高亮 |
 | `client/question-card.tsx` / `task-box.tsx` | 问题作答 / 任务时间线及详情 |
-| `client/schedule-list.tsx` / `schedule-pane.tsx` / `schedule-ordering.ts` | 两页共用日程行 / 月历 / 日程排序与日期辅助 |
+| `client/schedule-list.tsx` / `schedule-pane.tsx` | 两页共用日程行 / FullCalendar Breezy 月历、选中日与未安排分组 |
+| `client/schedule-calendar.ts` / `schedule-ordering.ts` / `fullcalendar-styles.ts` | 月历事件与包含式尾日适配 / 日程排序 / 主题 CSS 构建期内联 |
 
 ### 状态机（src/types.ts + src/state-machine.ts）
 
@@ -161,18 +162,18 @@ uv run --no-project --python /usr/bin/python3 python -c 'import subprocess; subp
 
 ### Worker 上报协议
 
-- **5 个独立工具（v0.3.19 起，单工具 `task_update` 已删除）**：`task_running` / `task_input_required` / `task_completed` / `task_failed` / `task_schedule`。每个工具的 zod input schema（`taskReportInputSchemas` / `taskScheduleInputSchema`）只含该工具合法字段，schema 结构即校验——不再有 allowlist / superRefine 交叉校验（单工具 + 条件必填被模型多次踩坑，拆分是根治）。四个状态工具可带 header（≤8 字极简状态标题）和 progressNote（一句话进展）；task_schedule 不带进度字段。
+- **5 个独立工具（v0.3.19 起，单工具 `task_update` 已删除）**：`task_running` / `task_input_required` / `task_completed` / `task_failed` / `task_todo`。每个工具的 zod input schema（`taskReportInputSchemas` / `taskTodoInputSchema`）只含该工具合法字段，schema 结构即校验——不再有 allowlist / superRefine 交叉校验（单工具 + 条件必填被模型多次踩坑，拆分是根治）。四个状态工具可带 header（≤8 字极简状态标题）和 progressNote（一句话进展）；task_todo 不带进度字段。
   - `task_input_required`：必填 `questions[]`，结构化问卷 `{id?, question, header?, detail?, options?, multi_select?}`，Worker 的 id 可省略，Host 补 q1/q2/…，snapshot 与作答后的 answers 使用该 id。阻塞工具调用，返回值即用户答案。
   - `task_completed`：必填 `result`（只阐述用户需求的最终结果，不写怎么做，不含过程性内容或文件路径）；可选 `artifacts`（关键制品的子工作区相对路径，投递时自动加工作区前缀，仅供 Lead 调用 present）与 `card`（dsh-ui 结构化明细 JSON，Host 序列化围栏后由 Lead 原封不动输出）；正文、卡片和制品不重复。
   - `task_failed`：必填 `error`，系统阻碍加 `reasonCode`。
-  - `task_schedule`：日程 CRUD（`create`/`update` 分桶，create.title / update.id 在 DSL 层静态必填——分支规则必须由结构而非文案表达）；返回最新日程清单投影，与任务状态无关、不产生状态迁移。
+  - `task_todo`：日程 CRUD（`create`/`update` 分桶，create.title / update.id 在 DSL 层静态必填——分支规则必须由结构而非文案表达）；返回最新日程清单投影，与任务状态无关、不产生状态迁移。
   - **存储拍平**：TaskRecord 顶层 `result/artifacts/card/error/reasonCode`，`report/fail` 包裹层删除；domain v3 隔离旧存储，不加载、不迁移旧记录。transitionTask 输入是判别联合 `TaskTransitionInput`，按 status 收敛字段并清空非对应终态字段；保留已回答的问题及答案。
 - 终态（completed/failed）提交成功后调 `exec.concludeTurn()` 直接结束本轮（statusConcludesTurn），省掉末次全上下文推理；running 不结束；input_required 为阻塞工具调用（不 concludeTurn，用户作答后同轮返回答案继续）。
 - **zod/DSL 双写**：模型可见的只有 defineTool 的 parameters DSL（`tool-parameters.ts` 的 `TASK_*_TOOL_PARAMETERS` 五个常量，service.ts 保留重导出），zod 是 Host 侧校验；两处必须同步——zod 加了字段而 DSL 没加，模型永远不知道（0.3.13 踩过）。tool-params.spec 锁定 5 个工具的 DSL 可编译且字段与 zod 契约一致。
 - header 的 8 字上限只在输入边界限制；baseTaskSchema 用 z.string() 不加 max，避免持久化层重复输入边界约束。
 - 日程时间逻辑位于 `schedule-time.ts`，types.ts 保留重导出：allDay=true 的 startAt/endAt 使用完整纯日期；普通日程必须带时刻，remindAt 使用 `normalizeTimePoint` 宽松解析，省略年份取最近未来、缺时区补本地；自然语言（"明天下午"）拒绝；priority(P0~P3 默认 P3)/links/attachments(相对路径)/contacts/location/remark（备注，排字段表末位诱导先填结构化字段）。
-- 双向知情通道：新任务投递附"会话日程现状"（scheduleStatusSection，pending 全列+用户已勾的防重复代办），task_schedule 与状态上报的返回值都带 `schedules` 投影（id/title/status/priority，scheduleProjection）。用户在看板画勾走 setScheduleStatus RPC（Host 持久化+看板刷新，Worker 不实时通知，靠上述两个通道知情）。
-- 用户日程（v2 独立表 schedules，主会话 scope；v0.3.17 起 conv.todos 字段删除、旧残留数据直接丢弃）：ScheduleRecord{id/title/startAt/endAt/remindAt/priority/links/attachments/contacts/location/remark/status: pending|done|cancelled/completedBy: user|worker + parentSessionId/conversationId 归属回链}，Worker 用 task_schedule 的 create 提出、update 标 done 或 cancelled 作废；用户在任务看板画勾/取消走 `setScheduleStatus` RPC（仅 pending/done）；日程框在"工作区"行上方，折叠也显示，cancelled 灰显划线带"已作废"胶囊且不可勾。派发与改单注入末尾附 `scheduleStatusSection`（会话日程现状：pending 全列含 id，用户自己勾掉的标注"不要重复代办"，cancelled 不提）。看板双页签：会话（会话页）+ 日程（月历页：周一起始、优先级色点、跨天逐日出现、过期未完成置顶、无时间字段只在会话页）；停留在日程页时任务更新会在会话页签显示未读点（颜色跟最新任务状态），切回即清除。Lead 把日程转述给用户；用户让代办/修改时复用原 conversationId，只提供日程 id、变更需求与验收结果，具体维护方式由 Worker 自主决定。校验失败报错带全量路径（如 create[0].title: …），模型可一轮自愈。
+- 双向知情通道：新任务投递附"会话日程现状"（todoStatusSection，pending 全列+用户已勾的防重复代办），task_todo 与状态上报的返回值都带 `todos` 投影（id/title/status/priority，todoProjection）。用户在看板画勾走 setScheduleStatus RPC（Host 持久化+看板刷新，Worker 不实时通知，靠上述两个通道知情）。
+- 用户日程（v2 独立表 schedules，主会话 scope；v0.3.17 起 conv.todos 字段删除、旧残留数据直接丢弃）：ScheduleRecord{id/title/startAt/endAt/remindAt/priority/links/attachments/contacts/location/remark/status: pending|done|cancelled/completedBy: user|worker + parentSessionId/conversationId 归属回链}，Worker 用 task_todo 的 create 提出、update 标 done 或 cancelled 作废；用户在任务看板画勾/取消走 `setScheduleStatus` RPC（仅 pending/done）；日程框在"工作区"行上方，折叠也显示，cancelled 灰显划线带"已作废"胶囊且不可勾。派发与改单注入末尾附 `todoStatusSection`（会话日程现状：pending 全列含 id，用户自己勾掉的标注"不要重复代办"，cancelled 不提）。看板双页签：会话（会话页）+ 日程（FullCalendar Breezy 月历：周一起始、P0–P3 色条、跨天连续与跨周续接、过期未完成置顶；无 startAt 的待办进入底部“未安排”分组，优先级优先、同级近期创建在前）；停留在日程页时任务更新会在会话页签显示未读点（颜色跟最新任务状态），切回即清除。Lead 把日程转述给用户；用户让代办/修改时复用原 conversationId，只提供日程 id、变更需求与验收结果，具体维护方式由 Worker 自主决定。校验失败报错带全量路径（如 create[0].title: …），模型可一轮自愈。
 - ScheduleRecord 还包含 allDay（默认 false）。缺少 startAt 的日程只在会话页显示；两页共用 ScheduleList，均展示 P0–P3 胶囊。更新全天纯日期时显式提供 allDay=true 与 startAt，未提供 allDay 的时间输入按普通带时刻语义解析。
 - Worker 会话在 configureWorker 时切到 `danger-full-access` 权限预设（permissionPresets.set，沙箱全开放+审批 never）：后台无人值守，默认 workspace-write+ask 会把敏感操作卡在审批上。Lead 保持默认。
 - Worker 不能直接向用户提问（ask-user 工具由 restrict 隐藏，失败时由 guard 拦截，且不进预设）。

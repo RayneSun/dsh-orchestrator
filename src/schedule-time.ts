@@ -39,7 +39,7 @@ export function normalizeTimePoint(raw: string): string | undefined {
   return toLocalIso(local)
 }
 
-/** 纯日期（全天日程）：完整 YYYY-MM-DD、真实存在、不落时区。 */
+/** 纯日期（全天待办/日程）：完整 YYYY-MM-DD、真实存在、不落时区。 */
 export function normalizeDateOnly(raw: string): string | undefined {
   const match = raw.trim().match(/^(\d{4})-(\d{2})-(\d{2})$/)
   if (!match) return undefined
@@ -56,7 +56,7 @@ export const isDateOnly = (value: string): boolean => /^\d{4}-\d{2}-\d{2}$/.test
  * 日程时间字段按 allDay 分叉解析，返回可直接并入记录的规范化字段：
  * - allDay=true：startAt 必填纯日期 YYYY-MM-DD（不省略年、不带时刻）；endAt 可选、尾日包含、≥ startAt。
  * - allDay=false：startAt/endAt 可选但必须带时刻（纯日期拒绝，提示改用 allDay），走宽松简写归一化。
- * - patch 模式（update 条目）：显式改 allDay 必须同时给 startAt；未声明 allDay 时按普通日程解析。
+ * - patch 模式（update 条目）：显式改 allDay 必须同时给 startAt；未声明 allDay 时按普通待办/日程解析。
  *   service 合并整条记录后用 scheduleConsistencyError 校验最终一致性。
  * 输出只包含 patch 实际带来的字段，避免合并时把缺省值覆盖到旧记录上。
  */
@@ -73,29 +73,29 @@ export function resolveScheduleTimes(
     return issue('startAt', '切换全天状态必须同时提供新格式的 startAt（原子切换，禁止只改 allDay）')
   }
   const normalizeTimed = (raw: string): string | undefined => {
-    // 普通日程必须带时刻（"2026-11-04"、"10-25" 等纯日期一律拒绝，强制模型用 allDay 表态）
+    // 普通待办/日程必须带时刻（"2026-11-04"、"10-25" 等纯日期一律拒绝，强制模型用 allDay 表态）
     if (isDateOnly(raw) || !/[T ]\d{1,2}:\d{2}/.test(raw)) return undefined
     return normalizeTimePoint(raw)
   }
   if (value.allDay ?? false) {
-    if (!value.startAt) return issue('startAt', '全天日程必须提供 startAt（YYYY-MM-DD 纯日期）')
+    if (!value.startAt) return issue('startAt', '全天待办/日程必须提供 startAt（YYYY-MM-DD 纯日期）')
     const start = normalizeDateOnly(value.startAt)
-    if (!start) return issue('startAt', '全天日程 startAt 必须是完整 YYYY-MM-DD 纯日期（不省略年、不带时刻）')
+    if (!start) return issue('startAt', '全天待办/日程 startAt 必须是完整 YYYY-MM-DD 纯日期（不省略年、不带时刻）')
     let end: string | undefined
     if (value.endAt !== undefined) {
       end = normalizeDateOnly(value.endAt)
-      if (!end) return issue('endAt', '全天日程 endAt 必须是完整 YYYY-MM-DD 纯日期（尾日包含当天）')
+      if (!end) return issue('endAt', '全天待办/日程 endAt 必须是完整 YYYY-MM-DD 纯日期（尾日包含当天）')
       if (end < start) return issue('endAt', 'endAt（尾日包含）不能早于 startAt')
     }
     return { allDay: true, startAt: start, ...end !== undefined ? { endAt: end } : {} }
   }
   const start = value.startAt !== undefined ? normalizeTimed(value.startAt) : undefined
   if (value.startAt !== undefined && !start) {
-    return issue('startAt', '普通日程时间必须带时刻（如 "10-28 09:00"）；纯日期属于全天日程，请设置 allDay: true')
+    return issue('startAt', '普通待办/日程时间必须带时刻（如 "10-28 09:00"）；纯日期属于全天事项，请设置 allDay: true')
   }
   const end = value.endAt !== undefined ? normalizeTimed(value.endAt) : undefined
   if (value.endAt !== undefined && !end) {
-    return issue('endAt', '普通日程时间必须带时刻（如 "10-28 22:00"）；纯日期属于全天日程，请设置 allDay: true')
+    return issue('endAt', '普通待办/日程时间必须带时刻（如 "10-28 22:00"）；纯日期属于全天事项，请设置 allDay: true')
   }
   if (start && end && Date.parse(start) > Date.parse(end)) {
     return issue('startAt', 'startAt 不能晚于 endAt')
@@ -114,10 +114,10 @@ export function resolveScheduleTimes(
 export function scheduleConsistencyError(record: { allDay?: boolean, startAt?: string, endAt?: string }): string | undefined {
   if (record.allDay) {
     if (!record.startAt || !isDateOnly(record.startAt)) {
-      return '日程为全天（allDay），startAt 必须是 YYYY-MM-DD 纯日期；切换时间格式需同时更新 allDay 与 startAt'
+      return '待办/日程为全天（allDay），startAt 必须是 YYYY-MM-DD 纯日期；切换时间格式需同时更新 allDay 与 startAt'
     }
     if (record.endAt !== undefined) {
-      if (!isDateOnly(record.endAt)) return '全天日程 endAt 必须是 YYYY-MM-DD 纯日期'
+      if (!isDateOnly(record.endAt)) return '全天待办/日程 endAt 必须是 YYYY-MM-DD 纯日期'
       if (record.endAt < record.startAt) return 'endAt（尾日包含）不能早于 startAt'
     }
     return undefined

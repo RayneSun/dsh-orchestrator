@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { OrchestratorService } from '../src/service.ts'
 import { PendingAnswers } from '../src/pending-answers.ts'
 import { activateConversation } from '../src/state-machine.ts'
-import { createConversation, createTask, taskScheduleInputSchema, type ConversationRecord, type TaskRecord } from '../src/types.ts'
+import { createConversation, createTask, taskTodoInputSchema, type ConversationRecord, type TaskRecord } from '../src/types.ts'
 
 function harness() {
   const conversation = activateConversation(createConversation({
@@ -208,8 +208,8 @@ describe('阻塞问答生命周期', () => {
 describe('日程先校验再写入', () => {
   it('create 搭配不存在的 update 时不留下新增记录', async () => {
     const fixture = harness()
-    const input = taskScheduleInputSchema.parse({ create: [{ title: '新增' }], update: [{ id: 'missing', status: 'done' }] })
-    await expect(fixture.call('scheduleFromWorker', input, 'worker')).rejects.toThrow('schedule not found')
+    const input = taskTodoInputSchema.parse({ create: [{ title: '新增' }], update: [{ id: 'missing', status: 'done' }] })
+    await expect(fixture.call('todoFromWorker', input, 'worker')).rejects.toThrow('schedule not found')
     expect(fixture.tables.schedules.size).toBe(0)
   })
 })

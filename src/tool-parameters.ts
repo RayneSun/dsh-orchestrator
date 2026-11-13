@@ -21,10 +21,10 @@ const SCHEDULE_ID_PARAM = { type: 'string', description: '批量定时消息中�
 
 /** 日程条目（create/update 共用结构，分别导出常量避免双写漂移）。 */
 const SCHEDULE_ITEM_PROPERTIES = {
-  title: { type: 'string', required: true, description: '日程标题（极简，≤30 字）' },
-  allDay: { type: 'boolean', description: '全天日程：true 时 startAt 必填完整纯日期（如 2026-11-04），endAt 可选且尾日包含（11-04 到 11-06 填 2026-11-06），均不带时刻' },
-  startAt: { type: 'string', description: '事件开始时间；普通日程如 10-28 09:00（可带年份，无年份按未来就近解析）；全天日程用完整纯日期' },
-  endAt: { type: 'string', description: '事件结束时间；未明确时按事件类型合理估计，无法估计才省略。普通日程如 10-28 22:00；全天日程用完整纯日期，尾日包含当天' },
+  title: { type: 'string', required: true, description: '待办/日程标题（极简，≤30 字）' },
+  allDay: { type: 'boolean', description: '全天待办/日程：true 时 startAt 必填完整纯日期（如 2026-11-04），endAt 可选且尾日包含（11-04 到 11-06 填 2026-11-06），均不带时刻' },
+  startAt: { type: 'string', description: '事项开始时间；普通待办/日程如 10-28 09:00（可带年份，无年份按未来就近解析）；全天事项用完整纯日期' },
+  endAt: { type: 'string', description: '事项结束时间；未明确时按事件类型合理估计，无法估计才省略。普通待办/日程如 10-28 22:00；全天事项用完整纯日期，尾日包含当天' },
   remindAt: { type: 'string', description: '提醒时间元数据；未指定但需要提醒时，根据事项类型、准备成本和重要程度自行选择合理的 startAt 提前量，如 10-28 07:40（供 App 通知使用；本插件不会据此自动触发提醒）' },
   priority: { type: 'string', enum: [...schedulePriorities], description: 'P0 紧急且重要 / P1 重要不紧急 / P2 紧急不重要 / P3 有空再做（默认 P3）' },
   links: {
@@ -62,7 +62,7 @@ const SCHEDULE_ITEM_PROPERTIES = {
   },
   remark: { type: 'string', description: '备注：纯文字说明。联系方式/网址/地点/文件用 contacts/links/location/attachments 字段，不要堆在这里' },
 } as const
-export const TASK_SCHEDULE_TOOL_PARAMETERS = {
+export const TASK_TODO_TOOL_PARAMETERS = {
   create: {
     type: 'array',
     items: { type: 'object', additionalProperties: false, properties: SCHEDULE_ITEM_PROPERTIES },
@@ -74,14 +74,14 @@ export const TASK_SCHEDULE_TOOL_PARAMETERS = {
       type: 'object',
       additionalProperties: false,
       properties: {
-        id: { type: 'string', required: true, description: '日程 id（从投递附言/本工具返回值的清单里抄，禁止编造）' },
+        id: { type: 'string', required: true, description: '待办/日程 id（从投递附言/本工具返回值的 todos 清单里抄，禁止编造）' },
         status: { type: 'string', enum: ['pending', 'done', 'cancelled'], description: '代办完成标 done；不再适用标 cancelled' },
         ...SCHEDULE_ITEM_PROPERTIES,
         title: { type: 'string', description: '改标题（≤30 字）' },
-        allDay: { type: 'boolean', description: '修改全天状态时必须同时提供新格式的 startAt；普通日程带时刻，全天日程用完整纯日期' },
+        allDay: { type: 'boolean', description: '修改全天状态时必须同时提供新格式的 startAt；普通待办/日程带时刻，全天事项用完整纯日期' },
       },
     },
-    description: '更新已有日程：按 id 改状态或内容（改谁带谁）',
+    description: '更新已有待办/日程：按 id 改状态或内容（改谁带谁）',
   },
 } as const
 

@@ -93,7 +93,7 @@ const scheduleContentFields = {
   remark: z.string().trim().max(2_000).optional(),
 }
 
-/** task_schedule 的 create 元素：新建日程（title 静态必填，结构上接触不到 id/status）。 */
+/** task_todo 的 create 元素：新建日程（title 静态必填，结构上接触不到 id/status）。 */
 export const scheduleCreateSchema = z.object({
   title: trimmed.max(30),
   ...scheduleTimeFields,
@@ -105,7 +105,7 @@ export const scheduleCreateSchema = z.object({
   return { ...value, ...times }
 })
 
-/** task_schedule 的 update 元素：更新已有日程（id 静态必填，抄自可见清单，禁止编造）。 */
+/** task_todo 的 update 元素：更新已有日程（id 静态必填，抄自可见清单，禁止编造）。 */
 export const scheduleUpdateSchema = z.object({
   id: trimmed,
   status: z.enum(['pending', 'done', 'cancelled']).optional(),
@@ -412,14 +412,14 @@ export const taskInputRequiredInputSchema = z.object({
 }).strict()
 export type TaskInputRequiredInput = z.infer<typeof taskInputRequiredInputSchema>
 
-export const taskScheduleInputSchema = z.object({
+export const taskTodoInputSchema = z.object({
   create: z.array(scheduleCreateSchema).max(50).optional(),
   update: z.array(scheduleUpdateSchema).max(50).optional(),
 }).strict().refine(
   value => (value.create?.length ?? 0) + (value.update?.length ?? 0) > 0,
-  { message: 'task_schedule requires create or update' },
+  { message: 'task_todo requires create or update' },
 )
-export type TaskScheduleInput = z.infer<typeof taskScheduleInputSchema>
+export type TaskTodoInput = z.infer<typeof taskTodoInputSchema>
 
 /** 四个状态上报工具的 schema 查找表（service 按工具名取用）。 */
 export const taskReportInputSchemas = {

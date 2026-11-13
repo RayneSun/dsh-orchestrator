@@ -1,3 +1,5 @@
+import { fullCalendarStyles } from './fullcalendar-styles.ts'
+
 const STYLE_ID = 'may-dsh-orchestrator-style'
 const CSS = `
 .dsho-headerButton{font:inherit;font-size:12.5px;font-weight:500;color:var(--dsw-alias-label-secondary);border:.5px solid var(--dsw-alias-border-l4);background:var(--dsw-alias-bg-layer-3);border-radius:7px;padding:3px 10px;cursor:pointer}
@@ -138,9 +140,9 @@ const CSS = `
 @keyframes dsho-pulse{0%,100%{opacity:.35}50%{opacity:1}}
 .dsho-todoPriority{flex:none;font-size:10px;font-weight:600;border-radius:999px;padding:0 7px;line-height:15px;border:.5px solid transparent}
 .dsho-todoPriority-P0{color:#d5483f;border-color:color-mix(in srgb,#d5483f 35%,transparent);background:color-mix(in srgb,#d5483f 8%,transparent)}
-.dsho-todoPriority-P1{color:#e08300;border-color:color-mix(in srgb,#e08300 35%,transparent);background:color-mix(in srgb,#e08300 8%,transparent)}
-.dsho-todoPriority-P2{color:#b59a00;border-color:color-mix(in srgb,#b59a00 35%,transparent);background:color-mix(in srgb,#b59a00 8%,transparent)}
-.dsho-todoPriority-P3{color:#3d9a50;border-color:color-mix(in srgb,#3d9a50 35%,transparent);background:color-mix(in srgb,#3d9a50 8%,transparent)}
+.dsho-todoPriority-P1{color:#d97706;border-color:color-mix(in srgb,#d97706 35%,transparent);background:color-mix(in srgb,#d97706 8%,transparent)}
+.dsho-todoPriority-P2{color:#a87900;border-color:color-mix(in srgb,#a87900 35%,transparent);background:color-mix(in srgb,#a87900 8%,transparent)}
+.dsho-todoPriority-P3{color:#2f8f57;border-color:color-mix(in srgb,#2f8f57 35%,transparent);background:color-mix(in srgb,#2f8f57 8%,transparent)}
 .dsho-todo-done .dsho-todoTime{opacity:.55;text-decoration:line-through}
 .dsho-todoDetail{display:none;padding:4px 0 2px}
 .dsho-todo-open .dsho-todoDetail{display:block}
@@ -171,24 +173,59 @@ const CSS = `
 .dsho-notif-input_required{background:var(--dsho-warn)}
 
 /* ═══ 日程页：月历 + 日列表 ═══ */
-.dsho-cal{margin:0 0 12px}
-.dsho-calHead{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px}
-.dsho-calTitle{font-size:13px;font-weight:650;color:var(--dsw-alias-label-primary)}
-.dsho-calNav{display:flex;gap:5px}
-.dsho-calNav button{font:inherit;width:25px;height:25px;border-radius:7px;border:.5px solid var(--dsw-alias-border-l4);background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-label-secondary);cursor:pointer;font-size:12px}
-.dsho-calNav button.wide{width:auto;padding:0 10px}
-.dsho-calNav button:hover{background:var(--dsw-alias-interactive-bg-hover)}
-.dsho-calGrid{display:grid;grid-template-columns:repeat(7,1fr);gap:2px}
-.dsho-dow{text-align:center;font-size:10px;color:var(--dsw-alias-label-tertiary);padding:3px 0}
-.dsho-day{position:relative;aspect-ratio:1;border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:12px;color:var(--dsw-alias-label-primary);cursor:pointer;border:1.5px solid transparent}
+.dsho-cal{margin:0 0 12px;padding:12px 10px 10px;border:.5px solid var(--dsw-alias-border-l4);border-radius:14px;background:var(--dsw-alias-bg-layer-2);box-shadow:0 5px 20px rgb(31 35 41 / 3%)}
+.dsho-calHead{display:flex;align-items:center;justify-content:space-between;margin:0 1px 10px;gap:8px}
+.dsho-calHeading{display:flex;align-items:baseline;gap:7px;min-width:0}
+.dsho-calTitle{font-size:14px;font-weight:680;color:var(--dsw-alias-label-primary);white-space:nowrap}
+.dsho-calSubtitle{font-size:9px;color:var(--dsw-alias-label-tertiary);white-space:nowrap}
+.dsho-calNav{display:flex;gap:4px}
+.dsho-calNav button{font:inherit;width:26px;height:26px;border-radius:7px;border:.5px solid var(--dsw-alias-border-l4);background:var(--dsw-alias-bg-layer-3);color:var(--dsw-alias-label-secondary);cursor:pointer;font-size:13px;line-height:1}
+.dsho-calNav button.wide{width:auto;padding:0 9px;font-size:10px}
+.dsho-calNav button:hover{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}
+.dsho-calMonth{overflow:hidden;border:.5px solid var(--dsw-alias-border-l4);border-radius:11px;background:var(--dsw-alias-bg-layer-2);--fc-breezy-background:transparent;--fc-breezy-foreground:var(--dsw-alias-label-primary);--fc-breezy-border:var(--dsw-alias-border-l4);--fc-breezy-strong-border:var(--dsw-alias-border-l4);--fc-breezy-muted-foreground:var(--dsw-alias-label-tertiary);--fc-breezy-faint-foreground:var(--dsw-alias-label-tertiary)}
+.dsho-calMonth a{color:inherit;text-decoration:none}
+.dsho-calView{font-family:inherit;font-size:10px}
+.dsho-dowCell{padding:6px 0!important;text-align:center!important}
+.dsho-dow{display:block;text-align:center;font-size:9px;font-weight:550;color:var(--dsw-alias-label-tertiary)}
+.dsho-dow.weekend{color:color-mix(in srgb,var(--dsho-warn) 65%,var(--dsw-alias-label-tertiary))}
+.dsho-calWeek{min-height:100px}
+.dsho-day{cursor:pointer;transition:background-color .15s ease}
+.dsho-calMonth .dsho-day.today{background:transparent}
 .dsho-day:hover{background:var(--dsw-alias-interactive-bg-hover)}
-.dsho-day.today{border-color:color-mix(in srgb,var(--dsho-brand) 55%,transparent);font-weight:650}
-.dsho-day.sel{background:color-mix(in srgb,var(--dsho-brand) 8%,transparent);border-color:color-mix(in srgb,var(--dsho-brand) 35%,transparent)}
-.dsho-dayDots{display:flex;gap:2px;position:absolute;bottom:3px}
-.dsho-dayDot{width:4.5px;height:4.5px;border-radius:50%}
-.dsho-dayMore{position:absolute;bottom:1px;right:4px;font-size:8.5px;color:var(--dsw-alias-label-tertiary)}
-.dsho-dayTitle{font-size:13px;font-weight:650;margin:2px 0 4px;display:flex;align-items:baseline;gap:8px}
-.dsho-dayTitle .cnt{color:var(--dsw-alias-label-tertiary);font-weight:400;font-size:11px}
+.dsho-day.sel{background:color-mix(in srgb,var(--dsho-brand) 6%,transparent)}
+.dsho-calMonth .dsho-day.today.sel{background:color-mix(in srgb,var(--dsho-brand) 6%,transparent)}
+.dsho-dayInner{min-width:0}
+.dsho-dayTop{display:flex;justify-content:flex-start;padding:4px 3px 1px!important}
+.dsho-day.today .dsho-dayTop>[aria-hidden="true"]{background:transparent!important;color:inherit!important;box-shadow:none!important}
+.dsho-dayNum{display:inline-flex;align-items:center;justify-content:center;min-width:20px;height:20px;padding:0 3px;border-radius:6px;font-size:10px;font-weight:520;line-height:20px;color:var(--dsw-alias-label-primary)}
+.dsho-day.dim .dsho-dayNum{color:color-mix(in srgb,var(--dsw-alias-label-tertiary) 55%,transparent)}
+.dsho-day.today .dsho-dayNum{background:var(--dsho-brand);color:#fff;font-weight:650;box-shadow:0 2px 6px color-mix(in srgb,var(--dsho-brand) 25%,transparent)}
+.dsho-day.today.sel .dsho-dayNum{box-shadow:0 0 0 2px color-mix(in srgb,var(--dsho-brand) 16%,transparent)}
+.dsho-calEvent{min-width:0;min-height:12px;margin:1px 0;border:0!important;border-radius:0;background:var(--fc-event-color,var(--dsho-brand))!important;color:#fff!important;box-shadow:none;cursor:pointer}
+.dsho-calEvent:hover{filter:brightness(.96);box-shadow:inset 0 0 0 1px rgb(255 255 255 / 22%)}
+.dsho-calEvent.start{margin-left:2px;border-radius:5px 0 0 5px}
+.dsho-calEvent.end{margin-right:2px;border-radius:0 5px 5px 0}
+.dsho-calEvent.start.end{border-radius:5px}
+.dsho-calEvent.done{opacity:.48}
+.dsho-calEventInner{display:block;min-width:0;padding:0 4px!important;overflow:hidden;color:inherit;font-size:8px;font-weight:580;line-height:12px;text-overflow:ellipsis;white-space:nowrap}
+.dsho-calEvent.done .dsho-calEventInner{text-decoration:line-through}
+.dsho-calMore{align-self:center;justify-self:start;height:10px;margin:0 0 0 4px;padding:0;border:0;background:transparent;color:var(--dsw-alias-label-tertiary);font:inherit;font-size:8px;line-height:10px;cursor:pointer}
+.dsho-calMore:hover{color:var(--dsho-brand-ink)}
+.dsho-calLegend{display:flex;align-items:center;gap:9px;margin:9px 2px 0;color:var(--dsw-alias-label-tertiary);font-size:8px}
+.dsho-calLegend span{display:inline-flex;align-items:center;gap:3px}
+.dsho-calLegend i{display:inline-block;width:11px;height:5px;border-radius:3px}
+.dsho-calLegend-P0{background:#d5483f}.dsho-calLegend-P1{background:#d97706}.dsho-calLegend-P2{background:#a87900}.dsho-calLegend-P3{background:#2f8f57}
+.dsho-calLegend .dsho-calLegendHint{margin-left:auto}
+.dsho-dayPanel,.dsho-unscheduled{margin:0 0 12px;padding:11px 12px 7px;border:.5px solid var(--dsw-alias-border-l4);border-radius:13px;background:var(--dsw-alias-bg-layer-2)}
+.dsho-dayTitle{display:flex;align-items:baseline;gap:7px;margin:0 0 5px;font-size:12px;font-weight:650}
+.dsho-dayTitle .cnt{color:var(--dsw-alias-label-tertiary);font-weight:400;font-size:10px}
+.dsho-dayTitle .dsho-todayTag{padding:1px 6px;border-radius:999px;background:color-mix(in srgb,var(--dsho-brand) 9%,transparent);color:var(--dsho-brand-ink);font-size:9px;font-weight:600}
+.dsho-dayEmpty{margin:8px 0 11px;color:var(--dsw-alias-label-tertiary);font-size:11px;text-align:center}
+.dsho-unscheduled{padding-bottom:7px}
+.dsho-unscheduledHead{display:flex;align-items:center;flex-wrap:wrap;gap:7px;margin-bottom:4px}
+.dsho-unscheduledTitle{font-size:12px;font-weight:650}
+.dsho-unscheduledCount{display:inline-flex;align-items:center;justify-content:center;min-width:18px;height:18px;padding:0 5px;border-radius:999px;background:var(--dsw-alias-bg-layer-3);color:var(--dsw-alias-label-secondary);font-size:9px}
+.dsho-unscheduledRule{margin-left:auto;color:var(--dsw-alias-label-tertiary);font-size:9px}
 .dsho-groupLabel{font-size:10.5px;color:var(--dsw-alias-label-tertiary);margin:10px 2px 2px}
 .dsho-groupLabel.overdue{color:var(--dsho-err-ink,var(--dsho-err));font-weight:600}
 
@@ -199,6 +236,6 @@ export function adoptStyles(): void {
   if (typeof document === 'undefined' || document.getElementById(STYLE_ID)) return
   const tag = document.createElement('style')
   tag.id = STYLE_ID
-  tag.textContent = CSS
+  tag.textContent = `${fullCalendarStyles}\n${CSS}`
   document.head.appendChild(tag)
 }

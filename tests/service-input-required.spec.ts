@@ -61,8 +61,8 @@ describe('reportFromWorker：活动任务上报后的 Conversation 状态同步'
 })
 
 
-describe('task_schedule 独立更新', () => {
-  it('创建日程写库后广播一次变更，校验失败不写库不广播', async () => {
+describe('task_todo 独立更新', () => {
+  it('创建待办/日程写库后广播一次变更，回执使用 todos，校验失败不写库不广播', async () => {
     const service = Object.create(OrchestratorService.prototype)
     const conv = createConversation({ id: 'c', childSessionId: 'child', parentSessionId: 'p', title: '日程' })
     const put = vi.fn()
@@ -71,10 +71,12 @@ describe('task_schedule 独立更新', () => {
       serialize: (fn: () => Promise<unknown>) => fn(), conversationByChild: () => conv,
       schedulesOf: () => [], schedules: () => ({ put }), emitChanged,
     })
-    await service.scheduleFromWorker({ create: [{ title: '事项' }] }, 'child')
+    const result = await service.todoFromWorker({ create: [{ title: '事项' }] }, 'child')
+    expect(result).toEqual({ ok: true, todos: [] })
+    expect(result).not.toHaveProperty('schedules')
     expect(put).toHaveBeenCalledOnce()
     expect(emitChanged).toHaveBeenCalledOnce()
-    await expect(service.scheduleFromWorker({ update: [{ id: 'missing', status: 'done' }] }, 'child')).rejects.toThrow()
+    await expect(service.todoFromWorker({ update: [{ id: 'missing', status: 'done' }] }, 'child')).rejects.toThrow()
     expect(put).toHaveBeenCalledOnce()
     expect(emitChanged).toHaveBeenCalledOnce()
   })

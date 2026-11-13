@@ -60,3 +60,6 @@ minimumReleaseAgeExclude:
   - '@deepseek-ai/dsh-working-directory@0.2.1-rc.2'
   - '@deepseek-ai/dsh-workspace@0.2.1-rc.2'
   - '@cmjt/dsh-personal-memory@0.4.6'
+  - '@full-ui/headless-calendar@7.1.5'
+  - '@fullcalendar/core@7.1.5'
+  - '@fullcalendar/react@7.1.5'

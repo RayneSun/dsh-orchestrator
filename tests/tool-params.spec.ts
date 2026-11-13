@@ -7,7 +7,7 @@ import {
   TASK_FAILED_TOOL_PARAMETERS,
   TASK_INPUT_REQUIRED_TOOL_PARAMETERS,
   TASK_RUNNING_TOOL_PARAMETERS,
-  TASK_SCHEDULE_TOOL_PARAMETERS,
+  TASK_TODO_TOOL_PARAMETERS,
 } from '../src/service.ts'
 import {
   dispatchInputSchema,
@@ -15,7 +15,7 @@ import {
   taskFailedInputSchema,
   taskInputRequiredInputSchema,
   taskRunningInputSchema,
-  taskScheduleInputSchema,
+  taskTodoInputSchema,
 } from '../src/types.ts'
 
 interface ContractSchema {
@@ -43,7 +43,7 @@ describe('工具参数描述可被 dsh-tools DSL 编译', () => {
     ['task_completed', taskCompletedInputSchema, TASK_COMPLETED_TOOL_PARAMETERS],
     ['task_failed', taskFailedInputSchema, TASK_FAILED_TOOL_PARAMETERS],
     ['task_input_required', taskInputRequiredInputSchema, TASK_INPUT_REQUIRED_TOOL_PARAMETERS],
-    ['task_schedule', taskScheduleInputSchema, TASK_SCHEDULE_TOOL_PARAMETERS],
+    ['task_todo', taskTodoInputSchema, TASK_TODO_TOOL_PARAMETERS],
   ] as const)('%s 的全部嵌套字段、类型、枚举和静态必填约束与 Host 一致', (_name, input, parameters) => {
     const host = z.toJSONSchema(input, { io: 'input', unrepresentable: 'any' })
     const visible = parameterSchemaSpecToJsonSchema(parameters)
@@ -55,7 +55,7 @@ describe('工具参数描述可被 dsh-tools DSL 编译', () => {
   })
 
   it('task_* 参数能通过 DSL 编译，模型可见字段与协议一致（防 zod/DSL 双写漂移）', () => {
-    for (const parameters of [TASK_RUNNING_TOOL_PARAMETERS, TASK_COMPLETED_TOOL_PARAMETERS, TASK_FAILED_TOOL_PARAMETERS, TASK_INPUT_REQUIRED_TOOL_PARAMETERS, TASK_SCHEDULE_TOOL_PARAMETERS]) {
+    for (const parameters of [TASK_RUNNING_TOOL_PARAMETERS, TASK_COMPLETED_TOOL_PARAMETERS, TASK_FAILED_TOOL_PARAMETERS, TASK_INPUT_REQUIRED_TOOL_PARAMETERS, TASK_TODO_TOOL_PARAMETERS]) {
       expect(() => parameterSchemaSpecToJsonSchema(parameters)).not.toThrow()
     }
     expect(Object.keys(TASK_COMPLETED_TOOL_PARAMETERS)).toEqual(expect.arrayContaining(['header', 'progressNote', 'result', 'artifacts', 'card', 'scheduleId']))
@@ -69,8 +69,8 @@ describe('工具参数描述可被 dsh-tools DSL 编译', () => {
     expect(Object.keys(TASK_FAILED_TOOL_PARAMETERS)).toContain('scheduleId')
     expect(Object.keys(TASK_INPUT_REQUIRED_TOOL_PARAMETERS)).toEqual(expect.arrayContaining(['header', 'progressNote', 'questions']))
     expect(Object.keys(TASK_INPUT_REQUIRED_TOOL_PARAMETERS)).toContain('scheduleId')
-    // task_schedule：create.title / update.id 在 JSON Schema 层静态必填（模型漏填在平台侧就被拦）
-    const schema = parameterSchemaSpecToJsonSchema(TASK_SCHEDULE_TOOL_PARAMETERS as never) as any
+    // task_todo：create.title / update.id 在 JSON Schema 层静态必填（模型漏填在平台侧就被拦）
+    const schema = parameterSchemaSpecToJsonSchema(TASK_TODO_TOOL_PARAMETERS as never) as any
     expect(schema.properties.create.items.required).toContain('title')
     expect(schema.properties.update.items.required).toContain('id')
     expect(schema.properties.create.items.properties).not.toHaveProperty('id')

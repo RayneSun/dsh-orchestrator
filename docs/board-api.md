@@ -138,7 +138,7 @@ QuestionAnswer = {
 
 ## 5. Schedule（用户日程）
 
-主会话 scope 的独立表（domain v3 存储）。一次任务可创建多条；App 可按会话（归属回链）或按时间（日程页）两个维度展示。没有 startAt 的日程只在会话页出现，即使有 endAt，日程页也跳过。
+主会话 scope 的独立表（domain v3 存储）。一次任务可创建多条；App 可按会话（归属回链）或按时间（日程页）两个维度展示。没有 startAt 的待办在日程页底部“未安排”分组出现（包括只有 endAt 的记录），不进入月历色条。
 
 | 字段 | 类型 | 说明 |
 |---|---|---|
@@ -165,7 +165,7 @@ QuestionAnswer = {
 
 - **普通日程（allDay=false/缺省）**：startAt/endAt 必须带时刻（`10-29 09:30`、`2026-10-29T09:00`、完整 ISO 8601 均可），归一化为带本地时区的 ISO 8601。**纯日期输入一律拒绝**（含 `10-25` 月-日简写），不再猜测午夜——`2026-11-04` 与 `2026-11-04 00:00` 从此语义可分。
 - **全天日程（allDay=true）**：startAt 必填完整纯日期 `YYYY-MM-DD`（不省略年、不带时刻）；endAt 可选、尾日包含、≥ startAt。纯日期不落时区，任何设备时区读取均为同一日历日。
-- **模式与时间一起提交**：task_schedule 的 `update` 显式提供 allDay 时必须同时携带对应格式的 startAt（全天带纯日期、普通带时刻），只给 allDay 会被 schema 拒绝。省略 allDay 的时间 patch 按普通带时刻语义解析；更新全天纯日期时必须显式带 `allDay: true` 与 startAt。patch 与存量记录合并后，Host 再校验整条记录的时间一致性。
+- **模式与时间一起提交**：task_todo 的 `update` 显式提供 allDay 时必须同时携带对应格式的 startAt（全天带纯日期、普通带时刻），只给 allDay 会被 schema 拒绝。省略 allDay 的时间 patch 按普通带时刻语义解析；更新全天纯日期时必须显式带 `allDay: true` 与 startAt。patch 与存量记录合并后，Host 再校验整条记录的时间一致性。
 - **先校验再写入**：整批 create / update 校验完成后才开始写入；同一 id 的多个 patch 按顺序合并，归属或时间校验失败时零写入。存储没有跨记录 I/O 事务，磁盘失败或进程崩溃仍可能部分落盘。
 - **互斥**：allDay 与 startAt/endAt 格式一一绑定，不存在"全天 + 时刻"混合记录；remindAt 恒为绝对时刻。
 
@@ -191,12 +191,12 @@ task_running        { header?, progressNote? }
 task_input_required { header?, progressNote?, questions: QuestionItem[] ★ }   阻塞调用，返回用户答案
 task_completed      { header?, progressNote?, result: string ★, artifacts?, card? }   终态，本轮立即结束
 task_failed         { header?, progressNote?, error: string ★, reasonCode? }          终态，本轮立即结束
-task_schedule       { create?: ScheduleNew[], update?: ScheduleUpdate[] }   日程 CRUD，与任务状态无关
+task_todo           { create?: ScheduleNew[], update?: ScheduleUpdate[] }   日程 CRUD，与任务状态无关
 ```
 
 - `task_input_required` 为阻塞调用，返回值即用户答案 `{ answers: [{id, selected, custom?}] }`，Worker 同轮继续。
 - `task_completed / task_failed` 为终态：提交成功后 Worker 本轮不再推理；无活动任务的定时触发轮次只允许 `task_completed`。queued/running 任务本轮未提交终态但子会话仍有活动原生定时任务时，Task 与 Conversation.activeTaskId 保持原状，等待下一轮继续上报；无活动定时任务或查询失败时仍按未提交终态判 `failed`。`input_required` 的阻塞调用不能跨轮次恢复，轮次结束仍按原规则结算并清理问题卡；手动停止与改单不受影响。
-- `task_schedule` 返回最新日程清单（含 id），随时可调用，不产生状态迁移。
+- `task_todo` 返回最新待办/日程清单 `todos`（含 id），随时可调用，不产生状态迁移。
 - `reasonCode`：`permission_denied / configuration / dependency / network / resource / runtime`。
 
 ## 7. 状态映射与展示
@@ -248,9 +248,10 @@ App 渲染建议：列表 + 勾（completed）/ 转（in_progress）/ 空（pend
 
 **日程页（日历页）**：
 
-- 月历：周一起始，‹ / 今天 / › 导航；今天描边、选中日高亮；每天下方显示活动日程的优先级色点（最多 3 个 +「+N」），跨天事项每天出现。
-- 选中日列表：默认今天；标题「M 月 D 日 周X · N 条」；已过期未完成的日程置顶「已过期」分组（红字）；每行下方「来自 {conversationTitle}」来源回链。
-- 无 startAt 的日程不进日程页；两页共用日程行，均显示 P0–P3 优先级胶囊，点行展开详情（备注/链接/附件/联系人/地点胶囊）。
+- 月历：FullCalendar Breezy / Indigo，周一起始，‹ / 今天 / › 导航；今天与选中日高亮；日程按 P0 红、P1 橙、P2 黄、P3 绿显示色条，跨天连续、跨周自动续接，高密度日期折叠为「+N」。
+- 选中日列表：默认今天；标题「M 月 D 日 周X · N 项」；已过期未完成的日程置顶「已过期」分组（红字）；每行下方「来自 {conversationTitle}」来源回链。
+- 未安排：无 startAt 的待办集中在底部，按 P0→P3、同优先级 createdAt 由近及远排序；cancelled 不展示。
+- 两页共用日程行，均显示 P0–P3 优先级胶囊，点行展开详情（备注/链接/附件/联系人/地点胶囊）；月历与两页列表共用同一份 snapshot，用户勾选或 Worker 更新后统一刷新。
 
 ## 11. 同步与兼容性注意
 

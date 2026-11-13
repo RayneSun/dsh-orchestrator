@@ -7,6 +7,7 @@ import { TaskBox, TagChip, ModelCredit, taskStatusLabels, shortTime, durationTex
 import { SchedulePane } from './schedule-pane.tsx'
 import { sortSchedules } from './schedule-ordering.ts'
 import { activeTaskStatuses } from '../types.ts'
+import { BOARD_REVEAL_EVENT } from './task-attention.ts'
 
 import type { ConversationRecord, ScheduleSnapshot, Snapshot, TaskSnapshot } from '../types.ts'
 
@@ -51,6 +52,14 @@ export function Board({ sessionId: propSessionId, useTabInfo, orchestrator, remo
   // 看板/日程双页签：切回看板即清除未读提醒点（lastSeen 记录最近查看时间）。
   const [tab, setTab] = useState<'board' | 'sched'>('board')
   const lastSeenAt = useRef(Date.now())
+
+  useEffect(() => {
+    const reveal = (event: Event) => {
+      if ((event as CustomEvent<string>).detail === sessionId) setTab('board')
+    }
+    window.addEventListener(BOARD_REVEAL_EVENT, reveal)
+    return () => window.removeEventListener(BOARD_REVEAL_EVENT, reveal)
+  }, [sessionId])
 
   const load = useCallback(async (seq: number) => {
     if (!sessionId) return
@@ -182,11 +191,11 @@ export function Board({ sessionId: propSessionId, useTabInfo, orchestrator, remo
   return <div className="dsho-board">
     <h2 className="dsho-title">任务看板 · {snapshot.conversations.length} 个子会话</h2>
     <div className="dsho-tabs" role="tablist">
-      <span role="tab" aria-selected={tab === 'board'} tabIndex={0} className={`dsho-tab${tab === 'board' ? ' on' : ''}`} onClick={() => switchTab('board')}>
+      <button type="button" role="tab" aria-selected={tab === 'board'} className={`dsho-tab${tab === 'board' ? ' on' : ''}`} onClick={() => switchTab('board')}>
         {hasUnseen && <span className={`dsho-notif dsho-notif-${notifKind}`} />}
         会话
-      </span>
-      <span role="tab" aria-selected={tab === 'sched'} tabIndex={0} className={`dsho-tab${tab === 'sched' ? ' on' : ''}`} onClick={() => switchTab('sched')}>日程</span>
+      </button>
+      <button type="button" role="tab" aria-selected={tab === 'sched'} className={`dsho-tab${tab === 'sched' ? ' on' : ''}`} onClick={() => switchTab('sched')}>日程</button>
     </div>
     {toast && <div className="dsho-toast" role="status">{toast}</div>}
     {tab === 'sched' && <SchedulePane

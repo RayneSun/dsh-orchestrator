@@ -1,6 +1,7 @@
 import type { Snapshot, TaskSnapshot } from '../types.ts'
 
 export const BOARD_KIND = 'orchestratorBoard'
+export const BOARD_REVEAL_EVENT = 'orchestrator:board-reveal'
 
 interface AttentionSnapshotClient {
   snapshot(request: { parentSessionId: string }): Promise<

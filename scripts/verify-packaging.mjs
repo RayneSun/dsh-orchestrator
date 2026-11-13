@@ -88,6 +88,8 @@ for (const required of [
   'lib/typert.host.js',
   'lib/typert.remote-client.js',
   'genui-card-skill.md',
+  'docs/vendor/fullcalendar/LICENSE.md',
+  'docs/vendor/temporal-polyfill/LICENSE',
 ]) {
   if (!packed.has(required)) fail(`npm pack output omits ${required}`)
 }

@@ -4,7 +4,7 @@ import remoteContribution from '../remote.ts'
 import { Board } from './Board.tsx'
 import { registerSettingsCard } from './settings-card.tsx'
 import { adoptStyles } from './styles.ts'
-import { BOARD_KIND, watchInputRequired } from './task-attention.ts'
+import { BOARD_KIND, BOARD_REVEAL_EVENT, watchInputRequired } from './task-attention.ts'
 
 const PLUGIN_ID = '@cmjt/dsh-orchestrator'
 const TAB_ID = `${PLUGIN_ID}/board`
@@ -27,7 +27,10 @@ function HeaderButton(props: any): React.ReactElement {
   return <button
     className="dsho-headerButton"
     type="button"
-    onClick={() => props.sidebarRight.openTab(BOARD_KIND, { params: { sessionId } })}
+    onClick={() => {
+      props.sidebarRight.openTab(BOARD_KIND, { params: { sessionId } })
+      window.dispatchEvent(new CustomEvent(BOARD_REVEAL_EVENT, { detail: sessionId }))
+    }}
   >任务看板</button>
 }
 

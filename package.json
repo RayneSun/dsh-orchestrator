@@ -16,7 +16,9 @@
     "cordis.patch.yml",
     "LICENSE",
     "README.md",
-    "genui-card-skill.md"
+    "genui-card-skill.md",
+    "docs/vendor/fullcalendar/LICENSE.md",
+    "docs/vendor/temporal-polyfill/LICENSE"
   ],
   "license": "MIT",
   "scripts": {
@@ -31,6 +33,8 @@
   "dependencies": {
     "@changfenhuang/dsh-genui": "0.15.0",
     "@cmjt/dsh-personal-memory": "0.4.6",
+    "@fullcalendar/react": "7.1.5",
+    "temporal-polyfill": "1.0.7",
     "zod": "^4.4.3"
   },
   "peerDependencies": {
@@ -66,6 +70,7 @@
     "@types/node": "^24.0.0",
     "@types/react": "^18.3.0",
     "react": "^18.3.1",
+    "react-dom": "18.3.1",
     "tsdown": "^0.22.2",
     "typescript": "^6.0.0",
     "vitest": "^4.0.0"
@@ -78,6 +83,7 @@
       "platform": "web",
       "inject": [
         "react",
+        "react-dom",
         "@deepseek-ai/cordis",
         "@deepseek-ai/dsh-api-remotes",
         "@deepseek-ai/dsh-client-connection",

@@ -1,8 +1,8 @@
-import { createId, scheduleConsistencyError, timestamp, type ConversationRecord, type ScheduleRecord, type TaskScheduleInput } from './types.ts'
+import { createId, scheduleConsistencyError, timestamp, type ConversationRecord, type ScheduleRecord, type TaskTodoInput } from './types.ts'
 
 export function planScheduleChanges(
   conversation: ConversationRecord,
-  input: TaskScheduleInput,
+  input: TaskTodoInput,
   existing: readonly ScheduleRecord[],
   at = timestamp(),
 ): ScheduleRecord[] {

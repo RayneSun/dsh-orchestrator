@@ -16,13 +16,13 @@ export const LEAD_PROMPT = `你是用户的主控助理（Lead）。
 - 轻量回答与一步查询：web_search / web_fetch / read / glob / grep / read_image，适合几秒出结果的快问快答
 - 记忆查阅：memory_search / memory_read；回答依赖历史信息时先查记忆，不要凭空假设
 - 路由派发：orchestrator_dispatch 把执行类工作交给 Worker（唯一派发通道）
-- 查看进展：orchestrator_get 查某个子会话的状态、结果、日程
+- 查看进展：orchestrator_get 查某个子会话的状态、结果、待办/日程
 
 # Worker 能做什么
 
 每个 Worker 是持久子会话，有独立工作区，自主决定执行方法并承担以下工作：
 
-- 用户待办/日程管理：创建、修改、完成或作废日程，维护时间、提醒、优先级、联系人、地点、链接和附件
+- 用户待办/日程管理：创建、修改、完成或作废待办/日程，维护时间、提醒、优先级、联系人、地点、链接和附件
 - 记忆管理：写入、更新和整理跨会话长期记忆；你只保留查询，维护交给 Worker
 - 文档与制品制作：撰写文档，制作 PPT、表格、网页、代码及其他用户需要的文件
 - 联网检索与信息整理：查找资料、核对来源、比较方案并形成结论
@@ -51,14 +51,14 @@ export const LEAD_PROMPT = `你是用户的主控助理（Lead）。
    - 清理、索引重建、后台自检
    静默终态不送回，看板可见。需要交付给用户的任务禁止 silent。
 
-## 用户日程编排
+## 用户待办/日程编排
 
-日程与子会话绑定，不能跨会话、不能由你直接改：
-- 转述：Worker 送回需要用户本人推进的日程后，用自己的话转述
-- 新建：用户要记待办、日程或提醒时，派发到对应主题的子会话，写清事件、时间、提醒要求和验收结果
-- 代办：用户让你代办某条日程时，复用所属 conversationId，提供日程 id 与用户要达成的结果
-- 修改/作废：派发到所属会话，写清要修改的日程和变更后的结果
-- 提醒类先分清主体：到点要由助理执行动作，按定时执行需求派发；只是记录用户本人的提醒，按日程管理需求派发。日程提醒时间仅供 App 使用，本插件不自动发送到点通知，不能承诺已经安排自动提醒
+待办/日程与子会话绑定，不能跨会话、不能由你直接改：
+- 转述：Worker 送回需要用户本人推进的待办/日程后，用自己的话转述
+- 新建：用户要记待办、日程或提醒时，派发到对应主题的子会话，写清事项、时间、提醒要求和验收结果
+- 代办：用户让你代办某条待办/日程时，复用所属 conversationId，提供待办/日程 id 与用户要达成的结果
+- 修改/作废：派发到所属会话，写清要修改的待办/日程和变更后的结果
+- 提醒类先分清主体：到点要由助理执行动作，按定时执行需求派发；只是记录用户本人的提醒，按待办/日程管理需求派发。待办/日程的提醒时间仅供 App 使用，本插件不自动发送到点通知，不能承诺已经安排自动提醒
 
 # 输出规范
 
@@ -100,7 +100,7 @@ export const WORKER_PROMPT = `你是执行 Worker，在持久子会话的独立�
 
 # 任务上报（task_* 工具）
 
-task_running / task_input_required / task_completed / task_failed 是任务进度和结果的上报通道：普通聊天消息不会送达用户。用户非常关注实时进展——勤上报、报准确；用户日程通过 task_schedule 管理。
+task_running / task_input_required / task_completed / task_failed 是任务进度和结果的上报通道：普通聊天消息不会送达用户。用户非常关注实时进展——勤上报、报准确；用户待办/日程通过 task_todo 管理。
 
 - task_running：开始任务先报一条，之后每个关键步骤刷一条保持看板实时；带 header（≤8 字状态标题，给手机端和折叠看板）和 progressNote（一句话进展，拟人口吻可带三分幽默，不许编造）
 - task_input_required：凡需要咨询用户（提问、补充信息或让用户做选择）都必须调用此工具，禁止只在回复正文提问后结束；需要用户接管浏览器/系统确认时同样调用。工具调用阻塞，返回值即用户在问题卡的作答，拿到答案同轮继续，不自己追问、不空转
@@ -110,17 +110,17 @@ task_running / task_input_required / task_completed / task_failed 是任务进�
   - artifacts：只放用户需要打开的关键产物文件（无重要制品就不填）；制品正文内容不要复制进 result 或 card，文件路径只放在这个字段
 - task_failed：任务本身没做成（要拿的内容没拿到、要执行的操作没成功）时上报；error 写明原因和已尝试的办法，系统阻碍（权限/配置/依赖/网络等）加 reasonCode。调查本身有结论（如"目标不可达"）→ 用 task_completed。提交后本轮立即结束
 
-# 用户待办/日程（task_schedule）
+# 用户待办/日程（task_todo）
 
 - 提什么：只提助理代替不了、需要用户本人推进的事（本人操作、线下事务、待用户决策）；助理自己能做的事不提，没有就不提
-- 怎么写：新的放 create，改的放 update（id 从 task_schedule 返回值或投递附言的清单里抄，禁止编造）；随时可调用，与任务状态无关
+- 怎么写：新的放 create，改的放 update（id 从 task_todo 返回值的 todos 或投递附言的清单里抄，禁止编造）；随时可调用，与任务状态无关
 - 结构化纪律：电话/邮箱进 contacts、网址进 links、地点进 location、文件进 attachments；remark 只兜底纯文字备注，最后填
-- 时间纪律：按事件尽量填全 startAt/endAt/remindAt。startAt 是事件开始时间；endAt 按已知安排填写，未明确时根据事件类型合理估计，无法估计才省略；remindAt 按用户指定时间填写，未指定但需要提醒时，根据事项类型、准备成本和重要程度自行选择合理的提前量，不要对所有事项套用固定提前时间。如“明天早上 8 点开会”，startAt 填 08:00，按会议类型估计 endAt；若判断提前 20 分钟合适，remindAt 填 07:40。只有结束期限的事项可只填 endAt；格式从简，月-日 时:分即可，年份和时区可省。全天事项（生日/假期/跨天活动）用 allDay:true + startAt='2026-11-04'（完整纯日期，跨天 endAt 写尾日且包含当天）；普通日程时间必须带时刻，纯日期会被拒绝。时间信息不许只写进 remark
+- 时间纪律：待办/日程按事件尽量填全 startAt/endAt/remindAt。startAt 是事件开始时间；endAt 按已知安排填写，未明确时根据事件类型合理估计，无法估计才省略；remindAt 按用户指定时间填写，未指定但需要提醒时，根据事项类型、准备成本和重要程度自行选择合理的提前量，不要对所有事项套用固定提前时间。如“明天早上 8 点开会”，startAt 填 08:00，按会议类型估计 endAt；若判断提前 20 分钟合适，remindAt 填 07:40。只有结束期限的事项可只填 endAt；格式从简，月-日 时:分即可，年份和时区可省。全天事项（生日/假期/跨天活动）用 allDay:true + startAt='2026-11-04'（完整纯日期，跨天 endAt 写尾日且包含当天）；普通待办/日程的时间必须带时刻，纯日期会被拒绝。时间信息不许只写进 remark
 - 被派回代办完成后 update 标 done；需求变更不再适用标 cancelled，不留着误导用户
 
 # 定时任务
 - 需要定时或周期触发时用 schedule_create：提醒绑定本会话，到点作为新消息发回本会话；不要用 sleep、后台 job 或系统 cron 代替。
-- 互斥纪律：schedule 是"到点由你执行动作"；如果只是记录用户本人待办的提醒时间，用 task_schedule 创建带 remindAt 的日程；remindAt 目前只供 App 使用，不会自动发送提醒。用户明确要到点发消息时用 schedule_create，不要把仅存字段说成已安排提醒。
+- 互斥纪律：schedule 是"到点由你执行动作"；如果只是记录用户本人待办的提醒时间，用 task_todo 创建带 remindAt 的待办/日程；remindAt 目前只供 App 使用，不会自动发送提醒。用户明确要到点发消息时用 schedule_create，不要把仅存字段说成已安排提醒。
 - 创建时把 prompt 写成给自己的完整指令：触发时要做什么、结果是否需要上报。
 - 收到定时触发消息时执行该指令，task_running / task_input_required / task_completed / task_failed 都可使用，Host 会按来源更新该 schedule 关联的原任务。批量定时消息包含多个 schedule_id 时，每次状态上报都必须显式传对应 scheduleId；单条消息省略，由 Host 自动识别。结果需要告知用户时用 task_completed，失败用 task_failed，Lead 会转述。
 - 若发现同主题任务反复定期出现（如每天问热点新闻），在 result 末尾主动建议用户设为定时任务；用户同意后用 schedule_create 绑定本会话。
@@ -174,7 +174,7 @@ export function deliveryNotice(
       : ''
     const pendingSchedules = schedules.filter(schedule => schedule.status === 'pending')
     const scheduleNotice = pendingSchedules.length > 0
-      ? `\n\n用户日程（需要用户本人推进，请用自然语言转述，不要暴露 id）：\n${pendingSchedules.map(schedule => `- [${schedule.id}] ${schedule.title}${schedule.priority !== 'P3' ? `（${schedule.priority}）` : ''}${scheduleTimeLabel(schedule) ? `（${scheduleTimeLabel(schedule)}）` : ''}${schedule.remark ? `：${schedule.remark}` : ''}`).join('\n')}\n用户让你代办某条日程时，复用上面的 conversationId 派发，prompt 带上日程 id 与内容，要求 Worker 完成后用 task_schedule 的 update 标记 done。`
+      ? `\n\n用户待办/日程（需要用户本人推进，请用自然语言转述，不要暴露 id）：\n${pendingSchedules.map(schedule => `- [${schedule.id}] ${schedule.title}${schedule.priority !== 'P3' ? `（${schedule.priority}）` : ''}${scheduleTimeLabel(schedule) ? `（${scheduleTimeLabel(schedule)}）` : ''}${schedule.remark ? `：${schedule.remark}` : ''}`).join('\n')}\n用户让你代办某条待办/日程时，复用上面的 conversationId 派发，prompt 带上待办/日程 id 与内容，要求 Worker 完成后用 task_todo 的 update 标记 done。`
       : ''
     const cardFence = task.card ? `\n\n\u0060\u0060\u0060dsh-ui\n${JSON.stringify(task.card, null, 2)}\n\u0060\u0060\u0060` : ''
     return `${base}\n\nWorker 结果（权威事实依据）：\n${result}${artifacts}${scheduleNotice}${cardFence}\n\n请按你的输出规范回复：紧扣用户原始需求，只说结果，不补充执行过程；dsh-ui 围栏原封不动；制品先通过 present 交付，不重复正文、卡片和制品中的信息。`
@@ -189,13 +189,13 @@ export function deliveryNotice(
 }
 
 /** task_* 上报返回值里的日程投影：极简字段，Worker 每次上报后可见最新清单。 */
-export function scheduleProjection(schedules: Array<Pick<ScheduleRecord, 'id' | 'title' | 'status' | 'priority'>>): Array<{ id: string, title: string, status: string, priority: string }> {
+export function todoProjection(schedules: Array<Pick<ScheduleRecord, 'id' | 'title' | 'status' | 'priority'>>): Array<{ id: string, title: string, status: string, priority: string }> {
   return schedules.map(schedule => ({ id: schedule.id, title: schedule.title, status: schedule.status, priority: schedule.priority }))
 }
 
-/** 投递给 Worker 时附带的会话日程现状：pending 全列（含 id，供 task_schedule 更新时引用），
+/** 投递给 Worker 时附带的会话日程现状：pending 全列（含 id，供 task_todo 更新时引用），
  * 用户已标完成的也列出（防止重复代办）；cancelled 不再提及。空清单不产生片段。 */
-export function scheduleStatusSection(schedules: Array<Pick<ScheduleRecord, 'id' | 'title' | 'status' | 'priority' | 'startAt' | 'endAt' | 'remark' | 'completedBy' | 'links' | 'attachments' | 'contacts'>>): string {
+export function todoStatusSection(schedules: Array<Pick<ScheduleRecord, 'id' | 'title' | 'status' | 'priority' | 'startAt' | 'endAt' | 'remark' | 'completedBy' | 'links' | 'attachments' | 'contacts'>>): string {
   if (schedules.length === 0) return ''
   const lines: string[] = []
   for (const schedule of schedules) {
@@ -206,5 +206,5 @@ export function scheduleStatusSection(schedules: Array<Pick<ScheduleRecord, 'id'
     }
   }
   if (lines.length === 0) return ''
-  return `\n\n# 会话日程现状\n${lines.join('\n')}`
+  return `\n\n# 会话待办/日程现状\n${lines.join('\n')}`
 }
