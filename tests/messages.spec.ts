@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { deliveryNotice, LEAD_PROMPT, renderWorkerCapabilityIndex, todoStatusSection, WORKER_PROMPT } from '../src/messages.ts'
+import { deliveryNotice, LEAD_MEMORY_PROMPT, LEAD_PROMPT, renderWorkerCapabilityIndex, todoStatusSection, WORKER_PROMPT } from '../src/messages.ts'
 import { createConversation, createTask, type ConversationRecord, type TaskRecord } from '../src/types.ts'
 
 describe('deliveryNotice 用户待办/日程段', () => {
@@ -85,7 +85,9 @@ describe('todoStatusSection 投递附言', () => {
 describe('prompt 编排约定', () => {
   it('Lead prompt 只描述 Worker 业务能力，不暴露 Worker 工具与上报协议', () => {
     expect(LEAD_PROMPT).toContain('用户待办/日程管理')
-    expect(LEAD_PROMPT).toContain('记忆管理')
+    expect(LEAD_MEMORY_PROMPT).toContain('记忆管理')
+    expect(LEAD_MEMORY_PROMPT).toContain('memory_search / memory_read')
+    expect(LEAD_PROMPT).not.toContain('memory_search')
     expect(LEAD_PROMPT).toContain('制作 PPT')
     expect(LEAD_PROMPT).toContain('联网检索与信息整理')
     expect(LEAD_PROMPT).toContain('DSH-UI 可视化')

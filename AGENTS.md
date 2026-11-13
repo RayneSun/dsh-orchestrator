@@ -139,7 +139,7 @@ uv run --no-project --python /usr/bin/python3 python -c 'import subprocess; subp
 - 依赖固定为 0.4.6，禁止恢复 latest，避免旧 profile lockfile 继续复用有缺陷的 0.4.5；scoped 包的客户端注册与 bundle 引用已由上游修正，orchestrator 不包含第三方产物补丁。
 - 默认数据家：`$DSH_HOME/storages/dsh-personal-memory`，未设环境变量时为 `~/.dsh/storages/dsh-personal-memory`；SQLite 位于数据家下 `.dsh-personal-memory/memory.db`。遵从插件的 homeDir 设置，不再随工作区定位。
 - Lead 使用原生 search/read 与读入，禁写与自动反思/整理；Worker 使用完整原生能力和原生手册，不在 persona 重复写记忆纪律。
-- 门控使用短暂失败有界重试，并在推理前确认策略；复用 `POST /dsh-personal-memory/skip-dreams`（`sessionId / field / value`），地址来自宿主 `webServer.getOrigin()`；先 flush Lead 会话，再设置 write=true、dream=true、inject=false。数据库定位与配置解析由记忆插件负责，包括自定义 projectDir/homeDir；接口失败告警，推理前重试，仍失败则阻止该请求；不回退直接写库。测试使用上游原生路由与 SQLite，覆盖默认和自定义 projectDir。
+- 门控使用短暂失败有界重试，并在推理前确认策略；复用 `POST /dsh-personal-memory/skip-dreams`（`sessionId / field / value`），地址来自宿主 `webServer.getOrigin()`；先 flush Lead 会话，再设置 write=true、dream=true、inject=false。数据库定位与配置解析由记忆插件负责，包括自定义 projectDir/homeDir；接口失败告警，推理前重试，仍失败则阻止该请求；不回退直接写库。插件被手动禁用（宿主返回 404/405 空响应）时跳过门控、留空 `orchestrator:memory` 提示段并正常推理，不能把空响应当 JSON 解析；插件存在但门控失败仍必须 fail-closed。测试使用上游原生路由与 SQLite，覆盖默认和自定义 projectDir、禁用与异常响应。
 - 旧库的扫描与合并由插件原生迁移处理，保留旧文件；新建和恢复 Worker 不再创建记忆链接。
 - 可信插件通过 Node 文件 API 读写 `~/.dsh`；模型文件/命令工具另受会话沙箱约束。Worker 已持久化 danger-full-access（full + never），Lead 文件沙箱保持默认；rc.2 不支持额外增加单个可写根目录，不要通过 chmod 或符号链接绕过沙箱。
 

@@ -96,6 +96,18 @@ describe('Lead 原生记忆只读策略', () => {
     await expect(configureLeadMemory('lead', 'http://localhost')).rejects.toThrow('拒绝操作')
   })
 
+  it.each([404, 405])('插件路由未注册（HTTP %s 空响应）时按已禁用处理，不重试也不解析空 JSON', async (status) => {
+    const fetch = vi.fn(async () => new Response(null, { status }))
+    vi.stubGlobal('fetch', fetch)
+    await expect(configureLeadMemory('lead', 'http://localhost')).resolves.toBe(false)
+    expect(fetch).toHaveBeenCalledTimes(3)
+  })
+
+  it('插件存在但返回无效 JSON 时保留明确错误，不降级为未启用', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('not-json')))
+    await expect(configureLeadMemory('lead', 'http://localhost')).rejects.toThrow('返回了无效 JSON（HTTP 200）')
+  })
+
   it('启动短暂失败后重试整组门控，不遗留部分策略', async () => {
     let calls = 0
     const fetch = vi.fn(async () => new Response(++calls === 2 ? '{"ok":false,"error":"not ready"}' : '{"ok":true}'))
@@ -145,5 +157,30 @@ describe('Lead 原生记忆只读策略', () => {
     fetch.mockImplementation(async () => new Response('{"ok":true}'))
     expect(await beforeStream!({}, next).next()).toEqual({ value: 'ok', done: false })
     expect(next).toHaveBeenCalledOnce()
+  })
+
+  it('记忆插件已禁用时跳过门控、隐藏记忆提示并正常推理', async () => {
+    const service = Object.create(OrchestratorService.prototype)
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(null, { status: 405 })))
+    let beforeStream: (_options: unknown, next: () => AsyncGenerator<string>) => AsyncGenerator<string>
+    const sections = new Map<string, { text: () => string }>()
+    const agent = { session: { id: 'lead' }, ctx: {
+      systemPrompt: { section: (section: { name: string, text: () => string }) => {
+        sections.set(section.name, section)
+        return () => {}
+      } },
+      on: (_name: string, hook: typeof beforeStream) => { beforeStream = hook; return () => {} },
+    } }
+    Object.assign(service, {
+      installed: new Map(), resetInstalled: async () => {},
+      applyLeadToolDenylist: () => {}, registerGenuiCardSkill: () => {}, leadTools: () => [],
+      hostCtx: { sessions: { flush: async () => {} }, get: () => ({ getOrigin: () => 'http://localhost' }), logger: { warn: vi.fn() } },
+    })
+    await service.configureLead(agent)
+    expect(sections.get('orchestrator:memory')!.text()).toBe('')
+    const next = vi.fn(async function* () { yield 'ok' })
+    expect(await beforeStream!({}, next).next()).toEqual({ value: 'ok', done: false })
+    expect(next).toHaveBeenCalledOnce()
+    expect(service.hostCtx.logger.warn).not.toHaveBeenCalled()
   })
 })

@@ -13,7 +13,7 @@ import type {} from '@deepseek-ai/dsh-agent-preset-registry'
 import type {} from '@deepseek-ai/dsh-api-session-controller'
 import type {} from '@deepseek-ai/dsh-session-persistence'
 import type {} from '@deepseek-ai/dsh-system-prompt'
-import { deliveryNotice, renderWorkerCapabilityIndex, revisionPrompt, todoProjection, todoStatusSection, workerPrompt, type WorkerCapabilityIndex } from './messages.ts'
+import { deliveryNotice, LEAD_MEMORY_PROMPT, renderWorkerCapabilityIndex, revisionPrompt, todoProjection, todoStatusSection, workerPrompt, type WorkerCapabilityIndex } from './messages.ts'
 import { type ScheduleServiceLike, type SessionActivityGroup } from './host-contracts.ts'
 import { DISPATCH_TOOL_PARAMETERS, TASK_COMPLETED_TOOL_PARAMETERS, TASK_FAILED_TOOL_PARAMETERS, TASK_INPUT_REQUIRED_TOOL_PARAMETERS, TASK_RUNNING_TOOL_PARAMETERS, TASK_TODO_TOOL_PARAMETERS } from './tool-parameters.ts'
 import type { AnswerQuestionsRequest, AnswerQuestionsResult, SetScheduleStatusRequest, SnapshotRequest } from './remote.ts'
@@ -548,13 +548,20 @@ export class OrchestratorService extends TypertRemoteService {
     // Lead 侧覆盖 genui skill：Lead 不生成卡片，即使 invoke 也读到 card 通道而非围栏教学。
     this.registerGenuiCardSkill(agent, scoped)
     let memoryReady = false
+    let memoryAvailable = false
+    this.keep(agent, scoped.systemPrompt.section({
+      name: 'orchestrator:memory',
+      order: 608,
+      text: () => memoryAvailable ? LEAD_MEMORY_PROMPT : '',
+      interpolate: false,
+    }))
     const ensureMemory = async () => {
       if (memoryReady) return
       const webServer = this.hostCtx.get('webServer') as { getOrigin(): string } | undefined
       if (!webServer) throw new Error('记忆会话门控需要 webServer 服务')
       // 原生接口通过持久化会话定位配置，新建会话先落盘。
       await this.hostCtx.sessions.flush(agent.session)
-      await configureLeadMemory(String(agent.session.id), webServer.getOrigin())
+      memoryAvailable = await configureLeadMemory(String(agent.session.id), webServer.getOrigin())
       memoryReady = true
     }
     this.keep(agent, scoped.on('llm/stream', async function* (_options, next) {
