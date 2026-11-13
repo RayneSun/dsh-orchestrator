@@ -1,7 +1,7 @@
 # 向主会话（Lead）投递消息的方式调研
 
 > 调研基线：DSH 0.2.1-rc.2（2026-10-28）。结论来自 `@deepseek-ai/dsh-agent` 与 `@deepseek-ai/dsh-session` 的类型定义与 README 实读。
-> **当前实现（v0.3.23）：completed / failed / interrupted 经 followup 投递；completed 文本由 `task.result`、制品清单、用户日程附言和可选 `task.card` 的 dsh-ui 围栏组成。Lead 按输出规范精简 result 正文，card 围栏原封不动，制品路径只用于 present，三者不重复。`input_required` 由看板和 Worker 原生问题卡承载，不投递 Lead；任一入口通过 `answerTaskQuestions` 作答后，阻塞的 task_input_required 在同轮返回用户答案。**
+> **当前实现（v0.3.24）：completed / failed / interrupted 经 followup 投递；completed 文本由 `task.result`、制品清单、用户日程附言和可选 `task.card` 的 dsh-ui 围栏组成。Lead 按输出规范精简 result 正文，card 围栏原封不动，制品路径只用于 present，三者不重复。`input_required` 由看板和 Worker 原生问题卡承载，不投递 Lead；任一入口通过 `answerTaskQuestions` 作答后，阻塞的 task_input_required 在同轮返回用户答案。**
 
 ## 背景
 

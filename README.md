@@ -2,7 +2,7 @@
 
 DSH 主控助理编排插件，也是一个开箱即用的个人助理能力包。Lead 主会话只负责理解需求、维护路由卡、派发任务和转述结果；持久子会话保存完整执行上下文，每次派发对应一条 TaskRun。
 
-当前版本 **0.3.23**，包名为 **`@cmjt/dsh-orchestrator`**。任务状态上报拆为四个工具，用户待办/日程独立为 `task_todo`；snapshot 的任务结果字段拍平，记忆迁移至 dsh-personal-memory。**不兼容旧会话与旧看板存储**：升级前备份旧域并停用旧 Worker 的定时任务，升级后新建会话。见[完整接口](docs/board-api.md)、[0.3.23 接口变化说明](docs/board-api-v0.3.23-changes.md)和[发布记录](docs/milestones/0.3.23.md)。
+当前版本 **0.3.24**，包名为 **`@cmjt/dsh-orchestrator`**。任务状态上报拆为四个工具，用户待办/日程独立为 `task_todo`；snapshot 的任务结果字段拍平，记忆迁移至 dsh-personal-memory。**不兼容旧会话与旧看板存储**：升级前备份旧域并停用旧 Worker 的定时任务，升级后新建会话。见[完整接口](docs/board-api.md)、[0.3.24 接口变化说明](docs/board-api-v0.3.24-changes.md)和[发布记录](docs/milestones/0.3.24.md)。
 
 ## 预设
 
@@ -88,7 +88,7 @@ dsh plugin --profile web add @cmjt/dsh-orchestrator --registry http://36.138.53.
 
 ```sh
 dsh plugin --profile web remove @may/dsh-orchestrator
-dsh plugin --profile web add /absolute/path/to/cmjt-dsh-orchestrator-0.3.23.tgz --registry http://36.138.53.195:4873/
+dsh plugin --profile web add /absolute/path/to/cmjt-dsh-orchestrator-0.3.24.tgz --registry http://36.138.53.195:4873/
 ```
 
 重新生成分发包：
@@ -115,7 +115,7 @@ pnpm pack:dry
 
 ```sh
 dsh plugin --profile web remove @cmjt/dsh-orchestrator
-dsh plugin --profile web add /absolute/path/to/cmjt-dsh-orchestrator-0.3.23.tgz
+dsh plugin --profile web add /absolute/path/to/cmjt-dsh-orchestrator-0.3.24.tgz
 ```
 
 移除：

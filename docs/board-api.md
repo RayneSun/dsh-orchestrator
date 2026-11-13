@@ -1,4 +1,4 @@
-# dsh-orchestrator 任务看板数据接口（v0.3.23）
+# dsh-orchestrator 任务看板数据接口（v0.3.24）
 
 > 面向下游（移动端 App）开发者。本文档描述 DSH Orchestrator 插件在 DSH Web（默认 `http://127.0.0.1:3080`）中暴露的任务看板数据结构、状态定义、同步机制与展示建议。
 > 当前完整契约；0.3.18 升级仍需阅读[破坏性变更与迁移步骤](board-api-v0.3.19-changes.md)。
