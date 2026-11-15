@@ -184,7 +184,7 @@ uv run --no-project --python /usr/bin/python3 python -c 'import subprocess; subp
 - **0.3.19 破坏性变更**：Task 顶层保存 result/artifacts/card/error/reasonCode，删除 report/fail。domain v3 不接纳旧域，已删除 migrateRecord 与 compatibleVersions；不要静默丢字段、搬旧包裹数据或修改旧域版本戳。升级前备份旧域，并停用旧 Worker 绑定的宿主定时任务；新建 Lead/Worker 会话。
 - `snapshotResultSchema` 与持久化 schema 同源；hasActiveSchedule 只在 snapshot 扩展，不落库。RPC 方法/请求不变，typert 包身份随 npm 包改为 @cmjt/dsh-orchestrator。
 - 日程由 planScheduleChanges 整批校验后写入，成功后广播一次变更；只保证校验失败零写入，不承诺 I/O 失败的跨记录原子性。
-- 存储仍位于 ~/.dsh/storages/orchestrator/（domain v3，per-record，conversations/tasks/schedules）；旧 orchestrator.json 同样需要备份移出。详见 docs/board-api-v0.3.19-changes.md。
+- 存储仍位于 ~/.dsh/storages/orchestrator/（domain v3，per-record，conversations/tasks/schedules）；旧 orchestrator.json 同样需要备份移出。详见 docs/board-api.md 与 docs/milestones/0.3.19.md。
 - 子会话 transcript：`~/.dsh/sessions/<workspace-encoded>/<childSessionId>/session.v4.jsonl.zstd`，用 `zstd -dc` 解压排查真实轮次；`turn/end` 的 reason 是判断手动停止/改单的依据。
 
 ## 代码约定
@@ -210,4 +210,4 @@ uv run --no-project --python /usr/bin/python3 python -c 'import subprocess; subp
 
 - README.md：用户面说明，发版时随版本号更新。
 - docs/README.md：文档索引；docs/milestones/0.3.24.md：当前变更、验证与已知限制。
-- **正式发版清单（用户授权后）**：先更新版本与文档 → host/client typecheck + 全量测试 → build + verify:packaging → `npm pack` → 中文 commit + annotated tag（若本地里程碑已存在且内容未变则复用）→ push dev 与对应 tag → `gh release create` 必须同时附三个资产：构建产物 tgz（**lib/ 已编译**，源码 tar.gz 装不了）、`board-api.md` 完整接口和 `board-api-v<版本>-changes.md` 差异说明 → 正式版 tgz 装回 web profile 并通过指定脚本以 start_new_session 重启 3080。**GitHub release 之外必须同步发布私有 npm 源**（Verdaccio `http://36.138.53.195:4873/`，scope `@cmjt` 已映射）：`npm publish --registry http://36.138.53.195:4873/` 后用 `npm view @cmjt/dsh-orchestrator --registry http://36.138.53.195:4873/` 验证；两处包内容 shasum 应一致（同一次 `npm pack` 产物）。
+- **正式发版清单（用户授权后）**：先更新版本与文档 → host/client typecheck + 全量测试 → build + verify:packaging → `npm pack` → 中文 commit + annotated tag（若本地里程碑已存在且内容未变则复用）→ push dev 与对应 tag → `gh release create` 必须同时附两个资产：构建产物 tgz（**lib/ 已编译**，源码 tar.gz 装不了）和 `board-api.md` 完整接口 → 正式版 tgz 装回 web profile 并通过指定脚本以 start_new_session 重启 3080。**GitHub release 之外必须同步发布私有 npm 源**（Verdaccio `http://36.138.53.195:4873/`，scope `@cmjt` 已映射）：`npm publish --registry http://36.138.53.195:4873/` 后用 `npm view @cmjt/dsh-orchestrator --registry http://36.138.53.195:4873/` 验证；两处包内容 shasum 应一致（同一次 `npm pack` 产物）。

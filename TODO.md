@@ -2,7 +2,7 @@
 
 ## 当前状态（0.3.19，2026-11-09）
 
-本版完成五工具拆分、结果拍平、记忆插件替换与 npm scope 迁移。当前契约见 [board-api.md](docs/board-api.md)，升级步骤见 [变更说明](docs/board-api-v0.3.19-changes.md)。历史方案仅作决策档案。
+本版完成五工具拆分、结果拍平、记忆插件替换与 npm scope 迁移。当前契约及升级步骤见 [board-api.md](docs/board-api.md)。历史方案仅作决策档案。
 
 ## 历史方案与验收记录
 
