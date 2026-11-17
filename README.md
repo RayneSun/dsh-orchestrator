@@ -12,7 +12,7 @@ DSH 主控助理编排插件，也是一个开箱即用的个人助理能力包�
 Worker 的任务上报协议、安全红线（支付/删除等不可逆操作先确认）、文件边界与整洁约束都固化在预设 persona 中，每次派发只传递细化后的用户需求与验收点（独立工作区由运行时自动绑定，不重复环境声明或指定执行方法）。Lead 额外获得按实际可见范围生成的 Worker 工具与 Skill 能力索引，用于判断能否派发，不暴露为新的模型工具。上报拆为 5 个独立工具，每个工具的 schema 只含该状态合法字段（v0.3.19 起，不兼容旧会话）：
 
 - `task_running`：进行中上报，可带 `header`（最多 8 个字的状态标题）与 `progressNote`（一句话进展）
-- `task_input_required`：必带结构化 `questions`，在看板和子会话渲染同源问题卡；阻塞工具调用，任一入口作答后工具直接返回用户答案，Worker 同轮继续
+- `task_input_required`：必带结构化 `questions`，在看板与子会话展示同源多媒体问题弹窗；看板只显示入口，任一入口作答后阻塞工具返回答案，Worker 同轮继续。问题主体可展示多张图片/音视频，选项可单独附预览；Lead 的同名增强版 `ask_user_question` 也复用该弹窗但不写任务表
 - `task_completed`：终态，必带 `result`（只阐述用户需求的最终结果，不写怎么做，不含过程性内容或文件路径）；结构化明细可传 `card`（dsh-ui 展示卡片 JSON），关键文件可传 `artifacts`；三者分工且不重复，提交后本轮立即结束
 - `task_failed`：终态，必带 `error`，系统阻碍另加 `reasonCode`；提交后本轮立即结束
 - `task_todo`：**用户待办/日程**维护（需要用户本人推进的事），与任务状态无关、随时可调用——新的放 `create`（title 必填，可加 startAt/endAt / remindAt / priority / links / attachments / contacts / location / remark），改的放 `update`（抄 id 标 done 或 cancelled 作废）；日程主会话 scope 独立成表，`conversationId` 归属回链，代办/修改都派回所属子会话处理。看板会话卡片上以日程框展示、用户可画勾。
@@ -53,7 +53,7 @@ Lead 的只读策略通过记忆插件已有的会话门控接口设置，短暂
 - **终态投递开关（设置页）**：插件管理 → 已安装 → `@cmjt/dsh-orchestrator` → 行“配置”，可按状态（completed / failed / interrupted）勾选是否向主会话投递终态消息；默认全部开启。input_required 不参与投递（问题卡只在看板 + 子会话渲染）。改动即时生效。投递只决定“消息是否唤醒主会话回应”：上报的状态与进展总是持久化，roster 与看板照常实时更新——这与 `silent` 的分界一致（silent 是整个会话不投，开关是按状态不投）。关闭期间产生的终态不补投。
 - Lead 紧扣用户原始需求，以 Worker 的 `task.result` 为事实依据只输出结果，不补充子会话执行过程；`task.card` 围栏原封不动；`task.artifacts` 路径自动带工作区前缀并只用于 `present`，三者不重复输出。
 - 定时/周期任务由 Worker 的 schedule 工具创建并绑定其自身子会话；Host 自动把 `schedule_create` 返回的 ID 关联到当前 Task（一个 Task 可关联多个）。到点后按消息中的 scheduleId 更新对应 Task，支持 running / input_required / completed / failed 全生命周期，不重复新增任务；批量定时消息的每次上报都必须传 scheduleId，未关联的来源才创建 ad-hoc Task。只有当前 Task 自己仍有活动 schedule 时，本轮未提交终态才保留 queued/running；其他 Task 的 schedule 不再阻止失败结算。Task 与会话时钟徽标都由原生活动 schedule 实时推导，删除后消失；DSH 侧栏标题不加图标前缀。
-- 等待用户作答期间，手动停止、改单、工具取消和服务卸载会清理等待与原生问题卡；已取消卡片晚到的答案不会答入后续提问。
+- 等待用户作答期间，手动停止、改单、工具取消和服务卸载会清理等待；已取消请求晚到的答案不会答入后续提问。
 - 重启后恢复看板；普通未完成任务（queued / running / input_required）标记 interrupted，工作流回 idle；无法确认持久化状态时标记 failed 并带 runtime 原因；未投递的后台终态会重试唤醒 Lead。
 - 日程变更整批完成归属和时间一致性校验后才开始写入，校验失败不写入任何日程；存储没有跨记录事务，I/O 失败仍可能部分落盘。
 

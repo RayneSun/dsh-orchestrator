@@ -1,8 +1,9 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
-import type { AnswerQuestionsRequest, OrchestratorClient, SnapshotRequest } from '../remote.ts'
+import type { OrchestratorClient, SnapshotRequest } from '../remote.ts'
 import { ScheduleList } from './schedule-list.tsx'
 import { AskCard } from './question-card.tsx'
+import { QuestionDialog, type QuestionRequest } from './question-dialog.tsx'
 import { TaskBox, TagChip, ModelCredit, taskStatusLabels, shortTime, durationText } from './task-box.tsx'
 import { SchedulePane } from './schedule-pane.tsx'
 import { sortSchedules } from './schedule-ordering.ts'
@@ -51,6 +52,7 @@ export function Board({ sessionId: propSessionId, useTabInfo, orchestrator, remo
   const [nowMs, setNowMs] = useState(() => Date.now())
   // 看板/日程双页签：切回看板即清除未读提醒点（lastSeen 记录最近查看时间）。
   const [tab, setTab] = useState<'board' | 'sched'>('board')
+  const [openQuestion, setOpenQuestion] = useState<{ request: QuestionRequest; sessionId: string }>()
   const lastSeenAt = useRef(Date.now())
 
   useEffect(() => {
@@ -97,6 +99,10 @@ export function Board({ sessionId: propSessionId, useTabInfo, orchestrator, remo
       disposeEvent?.()
     }
   }, [load, remoteEvents])
+
+  useEffect(() => {
+    if (openQuestion && snapshot && !snapshot.tasks.some(task => task.id === openQuestion.request.id && task.status === 'input_required')) setOpenQuestion(undefined)
+  }, [snapshot, openQuestion])
 
   const tasksByConversation = useMemo(() => {
     const map = new Map<string, TaskSnapshot[]>()
@@ -154,13 +160,14 @@ export function Board({ sessionId: propSessionId, useTabInfo, orchestrator, remo
   }, [orchestrator, load, showToast])
 
   // 问题卡作答：走 answerTaskQuestions RPC，Host 恢复任务并返回同轮等待的答案。
-  const submitAnswers = useCallback(async (conv: ConversationRecord, taskId: string, answers: AnswerQuestionsRequest['answers']) => {
+  const submitAnswers = useCallback(async (conv: ConversationRecord, taskId: string, answers: import('../types.ts').QuestionAnswer[]) => {
     const result = await orchestrator.answerTaskQuestions({ childSessionId: conv.childSessionId, taskId, answers })
-    if (result.ok) {
+    if (result.ok === false) throw new Error(result.error?.message ?? '提交失败')
+    if (result.value.ok) {
       showToast('已回答，任务继续中')
       void load(++requestSeq.current)
     } else {
-      throw new Error(result.error ?? '提交失败')
+      throw new Error(result.value.error ?? '提交失败')
     }
   }, [orchestrator, load, showToast])
 
@@ -189,6 +196,13 @@ export function Board({ sessionId: propSessionId, useTabInfo, orchestrator, remo
   }
 
   return <div className="dsho-board">
+    {openQuestion && <QuestionDialog key={openQuestion.request.id} request={openQuestion.request} sessionId={openQuestion.sessionId}
+      onHide={() => setOpenQuestion(undefined)} onSubmit={async answers => {
+        const conv = snapshot.conversations.find(item => item.childSessionId === openQuestion.sessionId)
+        if (!conv) throw new Error('来源会话不存在')
+        await submitAnswers(conv, openQuestion.request.id, answers)
+        setOpenQuestion(undefined)
+      }} />}
     <h2 className="dsho-title">任务看板 · {snapshot.conversations.length} 个子会话</h2>
     <div className="dsho-tabs" role="tablist">
       <button type="button" role="tab" aria-selected={tab === 'board'} className={`dsho-tab${tab === 'board' ? ' on' : ''}`} onClick={() => switchTab('board')}>
@@ -221,7 +235,7 @@ export function Board({ sessionId: propSessionId, useTabInfo, orchestrator, remo
       const awaitingInput = tasks.find(task => task.status === 'input_required' && (task.questions?.length ?? 0) > 0)
       const convSchedules = schedulesByConversation.get(conv.id) ?? []
       return <section
-        className={`dsho-conv${active ? ' dsho-conv-active' : ''}${collapsed ? ' dsho-conv-collapsed' : ''}${awaitingInput ? ' dsho-conv-attention' : ''}`}
+        className={`dsho-conv${active && !awaitingInput ? ' dsho-conv-active' : ''}${collapsed ? ' dsho-conv-collapsed' : ''}${awaitingInput ? ' dsho-conv-attention' : ''}`}
         key={conv.id}
       >
         <header
@@ -252,7 +266,7 @@ export function Board({ sessionId: propSessionId, useTabInfo, orchestrator, remo
           }}>打开子会话</button>
         </header>
         {/* 折叠态也恒显：问题卡 + 用户待办（会话头之下、任务区之外） */}
-        {awaitingInput && <AskCard task={awaitingInput} onSubmit={answers => submitAnswers(conv, awaitingInput.id, answers)} />}
+        {awaitingInput && <AskCard key={awaitingInput.id} task={awaitingInput} onOpen={() => setOpenQuestion({ request: { id: awaitingInput.id, taskId: awaitingInput.id, questions: awaitingInput.questions ?? [] }, sessionId: conv.childSessionId })} />}
         {convSchedules.length > 0 && <ScheduleList schedules={convSchedules} onToggle={toggleSchedule} showToast={showToast} onOpenAttachment={(_schedule, path) => void openArtifact(conv, path)} />}
         {collapsed && latest && <div className="dsho-collapsedTime">
           <span>最新任务 · 创建 {shortTime(latest.createdAt)}{(() => { const d = durationText(latest, nowMs); return d ? ` · ${d}` : '' })()}</span>
@@ -261,7 +275,7 @@ export function Board({ sessionId: propSessionId, useTabInfo, orchestrator, remo
         <div className="dsho-body"><div>
           <div className="dsho-bodyInner">
             {conv.workspaceName && <div className="dsho-meta">工作区：{conv.workspaceName}</div>}
-            <TaskBox conv={conv} tasks={tasks} nowMs={nowMs} onOpenArtifact={openArtifact} attentionTaskId={awaitingInput?.id} />
+            <TaskBox conv={conv} tasks={tasks} nowMs={nowMs} onOpenArtifact={openArtifact} />
           </div>
         </div></div>
       </section>

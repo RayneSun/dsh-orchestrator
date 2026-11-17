@@ -44,6 +44,10 @@ describe('Orchestrator agent presets', () => {
       '@deepseek-ai/dsh-skill-filesystem',
       '@deepseek-ai/dsh-tool-todo',
       '@deepseek-ai/dsh-tool-web',
+      '@deepseek-ai/dsh-tool-goal',
+      '@deepseek-ai/dsh-command-goal',
+      '@deepseek-ai/dsh-tool-present',
+      '@deepseek-ai/dsh-plugin-manager/tools',
       '@deepseek-ai/dsh-persona',
       // 子智能体工具组（spawn/fork 与控制面）
       '@deepseek-ai/dsh-tool-subagent',
@@ -52,11 +56,8 @@ describe('Orchestrator agent presets', () => {
       expect(names.has(name)).toBe(true)
     }
     for (const name of [
-      // 不面向终端用户：提问、文件卡片、目标管理（目标由 Orchestrator 负责）
+      // 原生提问由增强问题通道替代；高层编排循环不组合。
       '@deepseek-ai/dsh-tool-ask-user',
-      '@deepseek-ai/dsh-tool-present',
-      '@deepseek-ai/dsh-tool-goal',
-      '@deepseek-ai/dsh-command-goal',
       // 禁止高层编排循环
       '@deepseek-ai/dsh-tool-workflow',
       '@deepseek-ai/dsh-tool-ralph',

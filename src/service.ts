@@ -15,11 +15,13 @@ import type {} from '@deepseek-ai/dsh-session-persistence'
 import type {} from '@deepseek-ai/dsh-system-prompt'
 import { deliveryNotice, LEAD_MEMORY_PROMPT, renderWorkerCapabilityIndex, revisionPrompt, todoProjection, todoStatusSection, workerPrompt, type WorkerCapabilityIndex } from './messages.ts'
 import { type ScheduleServiceLike, type SessionActivityGroup } from './host-contracts.ts'
-import { DISPATCH_TOOL_PARAMETERS, TASK_COMPLETED_TOOL_PARAMETERS, TASK_FAILED_TOOL_PARAMETERS, TASK_INPUT_REQUIRED_TOOL_PARAMETERS, TASK_RUNNING_TOOL_PARAMETERS, TASK_TODO_TOOL_PARAMETERS } from './tool-parameters.ts'
+import { DISPATCH_TOOL_PARAMETERS, QUESTION_TOOL_PARAMETERS, TASK_COMPLETED_TOOL_PARAMETERS, TASK_FAILED_TOOL_PARAMETERS, TASK_INPUT_REQUIRED_TOOL_PARAMETERS, TASK_RUNNING_TOOL_PARAMETERS, TASK_TODO_TOOL_PARAMETERS } from './tool-parameters.ts'
 import type { AnswerQuestionsRequest, AnswerQuestionsResult, SetScheduleStatusRequest, SnapshotRequest } from './remote.ts'
 import { toJson } from './json.ts'
 import { isUnfinishedTask } from './task-lifecycle.ts'
 import { PendingAnswers } from './pending-answers.ts'
+import { normalizeQuestions, validateAnswers } from './questions.ts'
+import { mediaPaths, mediaResponse, resolveMedia } from './question-preview.ts'
 import { planScheduleChanges } from './schedule-changes.ts'
 import { isWorkerToolForbidden } from './worker-policy.ts'
 import { GENUI_CARD_SKILL_CONTENT, GENUI_CARD_SKILL_DESCRIPTION } from './genui-card-skill.ts'
@@ -233,6 +235,7 @@ export class OrchestratorService extends TypertRemoteService {
   private readonly deliveryRerun = new Set<string>()
   /** taskId -> resolver，task_input_required 阻塞等待用户作答。 */
   private readonly pendingAnswers = new PendingAnswers()
+  private readonly directQuestions = new Map<string, { sessionId: string; questions: import('./types.ts').QuestionItem[]; cwd: string }>()
   private readonly pendingTodoSteps = new Map<string, { taskId: string; steps: ProgressStep[] }>()
   private readonly todoTimers = new Map<string, ReturnType<typeof setTimeout>>()
   // 改单 cancel 自身会产生一次 aborted turn/end，需要忽略，不能当成手动停止或任务失败。
@@ -257,6 +260,8 @@ export class OrchestratorService extends TypertRemoteService {
     this.markRemote('snapshot')
     this.markRemote('setScheduleStatus')
     this.markRemote('answerTaskQuestions')
+    this.markRemote('questionRequests')
+    this.markRemote('answerDirectQuestion')
     this.ready = this.start()
   }
 
@@ -276,8 +281,8 @@ export class OrchestratorService extends TypertRemoteService {
   }
 
   /** Standalone tsdown does not run Typert's decorator lowering; use its public decorator API once per instance. */
-  private markRemote(method: 'snapshot' | 'setScheduleStatus' | 'answerTaskQuestions'): void {
-    const prototype = Object.getPrototypeOf(this) as Record<'snapshot' | 'setScheduleStatus', unknown>
+  private markRemote(method: 'snapshot' | 'setScheduleStatus' | 'answerTaskQuestions' | 'questionRequests' | 'answerDirectQuestion'): void {
+    const prototype = Object.getPrototypeOf(this) as Record<typeof method, unknown>
     let initializer: (() => void) | undefined
     Remote(method)(prototype.snapshot as never, {
       kind: 'method',
@@ -294,6 +299,18 @@ export class OrchestratorService extends TypertRemoteService {
     this.domain = domain
     try {
       await this.registerPresets()
+      this.hostCtx.inject(['connection'], ctx => {
+        const connection = ctx.get('connection') as { fetch: { register(route: { path: string; methods: string[]; requestBody: 'buffered'; fetch(request: Request): Promise<Response> }): () => void } }
+        ctx.effect(() => connection.fetch.register({
+          path: '/api/orchestrator/question-media', methods: ['GET'], requestBody: 'buffered',
+          fetch: async request => {
+            const url = new URL(request.url)
+            try {
+              return await this.questionMedia(url.searchParams.get('session') ?? '', url.searchParams.get('id') ?? '', url.searchParams.get('source') ?? '', request.headers.get('range') ?? undefined)
+            } catch { return new Response('not found', { status: 404 }) }
+          },
+        }))
+      })
       this.hostCtx.effect(() => {
         const offPreset = this.hostCtx.on('agent-preset/selected', (sessionId, preset) => {
           if (preset !== LEAD_PRESET) return
@@ -329,6 +346,7 @@ export class OrchestratorService extends TypertRemoteService {
           if (this.scheduleSyncTimer) clearTimeout(this.scheduleSyncTimer)
           if (this.recoveryTimer) clearInterval(this.recoveryTimer)
           this.pendingAnswers.close()
+          this.directQuestions.clear()
           await this.chain.catch(() => undefined)
           await domain.close()
         }
@@ -574,6 +592,7 @@ export class OrchestratorService extends TypertRemoteService {
       this.hostCtx.logger.warn(`orchestrator: Lead 只读记忆策略未建立，推理前将重试：${String(error)}`)
     }
     for (const tool of this.leadTools(agent)) this.keep(agent, scoped.tools.register(tool as any))
+    this.keep(agent, scoped.tools.register(this.questionTool(agent) as any))
   }
 
   /** 注册 runtime 版 genui skill，覆盖 dsh-genui 原版的正文围栏教学。 */
@@ -818,6 +837,78 @@ export class OrchestratorService extends TypertRemoteService {
       return `- ${conv.id} [${conv.state}] ${conv.title}${taskSegment}｜更新 ${formatRosterTime(conv.updatedAt)}${todoSegment}`
     })
     return `Orchestrator roster（dispatch 用 conversationId 复用子会话；get 看详情）：\n${lines.join('\n')}`
+  }
+
+  /** 同名增强提问工具只在选装的会话预设注册，不写入 Task。 */
+  private questionTool(agent: Agent) {
+    return defineTool({
+      name: 'ask_user_question',
+      description: '阻塞提问：支持问题主体多媒体及选项预览。用户作答后返回答案。',
+      parameters: QUESTION_TOOL_PARAMETERS,
+      output: sharedJsonOutput,
+      execute: async (args: { questions: unknown }, exec: ToolRunContext) => {
+        const questions = normalizeQuestions(args.questions)
+        const cwd = agent.session.header.cwd
+        if (mediaPaths(questions).length) {
+          if (!cwd) throw new Error('questions.media: session workspace unavailable')
+          for (const path of mediaPaths(questions)) await resolveMedia(cwd, path)
+        }
+        const id = randomUUID()
+        this.directQuestions.set(id, { sessionId: String(agent.session.id), questions, cwd: cwd ?? '' })
+        this.emitChanged()
+        try {
+          const answers = await this.pendingAnswers.wait(id, exec.signal)
+          return toJson({ answers: answers.map(answer => ({
+            id: answer.id,
+            selected: answer.selected.map(optionId => questions.find(question => question.id === answer.id)?.options?.find(option => option.id === optionId)?.label ?? optionId),
+            ...answer.custom !== undefined ? { custom: answer.custom } : {},
+          })) })
+        } finally {
+          this.directQuestions.delete(id)
+          this.emitChanged()
+        }
+      },
+    })
+  }
+
+  /** 会话弹窗轮询：Worker 直接读 Task，其他模式读临时挂起请求。 */
+  questionRequests(request: { sessionId: string }): Array<{ id: string; taskId?: string; questions: import('./types.ts').QuestionItem[] }> {
+    const { sessionId } = request
+    if (!this.domain) return []
+    const tasks = [...this.tasks().entries()].map(([, task]) => task)
+      .filter(task => task.status === 'input_required' && this.conversationById(task.conversationId)?.childSessionId === sessionId)
+      .map(task => ({ id: task.id, taskId: task.id, questions: task.questions ?? [] }))
+    const direct = [...this.directQuestions.entries()].filter(([, item]) => item.sessionId === sessionId)
+      .map(([id, item]) => ({ id, questions: item.questions }))
+    return [...tasks, ...direct]
+  }
+
+  async answerDirectQuestion(request: { sessionId: string; id: string; answers: QuestionAnswer[] }): Promise<{ ok: boolean; error?: string }> {
+    const { sessionId, id, answers } = request
+    try {
+      await this.serialize(async () => {
+        const item = this.directQuestions.get(id)
+        if (!item || item.sessionId !== sessionId) throw new Error('question is not awaiting input')
+        validateAnswers(item.questions, answers)
+        this.directQuestions.delete(id)
+        this.pendingAnswers.resolve(id, answers)
+        this.emitChanged()
+      })
+      return { ok: true }
+    } catch (error) { return { ok: false, error: String(error) } }
+  }
+
+  async questionMedia(sessionId: string, id: string, source: string, range?: string): Promise<Response> {
+    const direct = this.directQuestions.get(id)
+    const task = this.taskById(id)
+    if (direct && direct.sessionId !== sessionId) return new Response('not found', { status: 404 })
+    if (task && task.status !== 'input_required') return new Response('not found', { status: 404 })
+    const conv = task ? this.conversationById(task.conversationId) : undefined
+    const questions = direct?.sessionId === sessionId ? direct.questions
+      : task?.status === 'input_required' && conv?.childSessionId === sessionId ? task.questions : undefined
+    const cwd = direct?.sessionId === sessionId ? direct.cwd : conv?.workspaceDir
+    if (!questions || !cwd || !mediaPaths(questions).includes(source)) return new Response('not found', { status: 404 })
+    return mediaResponse(cwd, source, range)
   }
 
   private leadTools(agent: Agent) {
@@ -1189,6 +1280,9 @@ export class OrchestratorService extends TypertRemoteService {
         sessionId: childSessionId as SessionId,
         meta: { cwd, agentPreset: WORKER_PRESET },
         agentOptions: await this.workerModelOptions(parent),
+        // agents.create 是底层工厂：写入 session header 不会自动装载预设。
+        // 与 sessionController 的创建路径一致，在发布 Agent 前绑定工具与 persona。
+        setup: async agentCtx => { await this.hostCtx.agentPresets.mount(agentCtx, WORKER_PRESET) },
         signal: AbortSignal.timeout(LAUNCH_ACCEPT_TIMEOUT_MS),
       })
       try {
@@ -1374,7 +1468,12 @@ export class OrchestratorService extends TypertRemoteService {
       if (cardError) throw new Error(`invalid task_completed arguments: ${cardError}`)
     }
     if (input.status === 'input_required') {
-      input = { ...input, questions: input.questions.map((item, index) => ({ ...item, id: item.id ?? `q${index + 1}` })) }
+      input = { ...input, questions: normalizeQuestions(input.questions) }
+      const conv = this.conversationByChild(childSessionId)
+      if (conv && mediaPaths(input.questions).length) {
+        if (!conv.workspaceDir) throw new Error('questions.media: worker workspace unavailable')
+        for (const path of mediaPaths(input.questions)) await resolveMedia(conv.workspaceDir, path)
+      }
     }
     let shouldDeliver = false
     let terminalTaskId: string | undefined
@@ -1665,39 +1764,15 @@ export class OrchestratorService extends TypertRemoteService {
   /**
    * input_required 的阻塞作答：task_input_required 的工具调用本身挂起不返回。
    * 问题卡只在两个地方渲染：
-   * - 子会话：平台原生 ask_user_question（Worker 是 live root，直接对 Worker 挂 ask）
-   * - 任务看板：自定义 AskCard
+   * - 子会话：共享多媒体弹窗
+   * - 任务看板：入口卡打开同一弹窗
    * 主会话完全不参与（不投递、不弹卡）。任一来源作答后 resolve，工具直接返回用户答案。
    */
   private blockAndWaitForAnswers(task: TaskRecord, childSessionId: string, signal?: AbortSignal): Promise<QuestionAnswer[]> {
     const current = this.taskById(task.id)
     if (current?.status === 'running' && current.answers) return Promise.resolve(current.answers)
     if (current?.status !== 'input_required') return Promise.reject(new Error('任务已结束，停止等待用户作答'))
-    const userQuestions = (this.hostCtx as unknown as { get?(key: string): unknown }).get?.('userQuestions') as
-      | { ask(request: { questions: unknown; agent: unknown; signal?: AbortSignal }): Promise<{ answers: Array<{ id: string; selected: string[]; custom?: string }> }> }
-      | undefined
-    const questions = (task.questions ?? []).map(item => ({
-      id: item.id,
-      question: item.question,
-      ...item.header !== undefined ? { header: item.header } : {},
-      ...item.detail !== undefined ? { detail: item.detail } : {},
-      ...item.options !== undefined ? { options: item.options } : {},
-      ...item.multi_select !== undefined ? { multi_select: item.multi_select } : {},
-    }))
-
-    const promise = this.pendingAnswers.wait(task.id, signal)
-    const questionSignal = this.pendingAnswers.signal(task.id)
-    if (userQuestions?.ask && questionSignal) {
-      void this.withAgent(childSessionId, async (agent) => {
-        if (questionSignal.aborted) return
-        const result = await userQuestions.ask({ questions, agent, signal: questionSignal })
-        if (questionSignal.aborted) return
-        await this.answerTaskQuestions({ childSessionId, taskId: task.id, answers: result.answers })
-      }).catch(error => {
-        if (!questionSignal.aborted) this.hostCtx.logger.warn(`orchestrator: worker question card failed: ${String(error)}`)
-      })
-    }
-    return promise
+    return this.pendingAnswers.wait(task.id, signal)
   }
 
   /**
@@ -1720,10 +1795,8 @@ export class OrchestratorService extends TypertRemoteService {
       const task = taskId ? this.taskById(taskId) : undefined
       if (!task || task.status !== 'input_required') return { ok: false as const, error: 'task is not awaiting input' }
       if (task.conversationId !== conv.id) return { ok: false as const, error: 'task does not belong to this conversation' }
-      const known = new Set((task.questions ?? []).map(item => item.id))
-      for (const answer of answers) {
-        if (!known.has(answer.id)) return { ok: false as const, error: `unknown question id: ${answer.id}` }
-      }
+      try { validateAnswers(task.questions ?? [], answers) }
+      catch (error) { return { ok: false as const, error: String(error) } }
       const now = timestamp()
       const resumed = resumeTaskWithAnswers(task, answers, now)
       const hasOtherActiveTask = Boolean(conv.activeTaskId && conv.activeTaskId !== resumed.id)

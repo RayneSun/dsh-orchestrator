@@ -10,7 +10,8 @@
 | [AGENTS](../AGENTS.md) | 环境约束、模块职责、状态机、工具策略与开发门禁 |
 | [看板数据接口](board-api.md) | snapshot、日程勾选、问题作答 RPC 及字段契约；含全部字段与状态定义 |
 | [GenUI 卡片规范](../genui-card-skill.md) | 随包加载的 Worker 运行时文档，规定 task_completed 的 card 展示通道与组件 |
-| [看板全字段展示](board-showcase.html) | v0.3.24 当前 UI、全部任务/日程状态、Snapshot 超集、RPC 与字段映射 |
+| [看板交互设计稿](board-schedule-mock.html) | 会话 / 日程双页、待操作入口、两图直选与三图整体评价弹窗；静态数据，不接后端 |
+| [看板全字段展示](board-showcase.html) | 各任务/日程状态、Snapshot 字段示例、五个远程方法与字段映射；静态数据，不接后端 |
 | [0.3.24 发布记录](milestones/0.3.24.md) | 日历交互升级、待办工具更名与记忆能力按可用性注入 |
 | [0.3.23 发布记录](milestones/0.3.23.md) | 定时多轮上报、待操作提醒与 Lead/Worker 提示优化 |
 | [0.3.22 发布记录](milestones/0.3.22.md) | 活动定时任务跨轮次继续与误判失败修复 |
@@ -20,10 +21,4 @@
 | [0.3.18 里程碑](milestones/0.3.18.md) | A–D、B1–B5 的最终变更、清理统计、门禁和验证边界 |
 | [TODO](../TODO.md) | 当前未处理机会与原始历史方案、验收记录 |
 
-## 历史设计
-
-以下 HTML 是静态设计稿，保留当时布局与样例数据；不代表当前组件或 RPC 契约，也不接真实后端。
-
-- [日程看板设计稿](board-schedule-mock.html)
-
-历史版本记录保留原文；当前接口以 board-api.md 与源码 schema 为准，当前模块归属以 AGENTS.md 为准。
+两份 HTML 展示当前方案的交互与字段，但均为**静态示例**，不代表实时任务数据。下游接口以 [board-api.md](board-api.md) 和源码 schema 为准；历史版本记录保留原文。

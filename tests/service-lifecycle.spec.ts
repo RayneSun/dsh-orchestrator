@@ -4,6 +4,30 @@ import { PendingAnswers } from '../src/pending-answers.ts'
 import { activateConversation } from '../src/state-machine.ts'
 import { createConversation, createTask, taskTodoInputSchema, type ConversationRecord, type TaskRecord } from '../src/types.ts'
 
+it('创建 Worker 时先挂载预设，而不只写入 session header', async () => {
+  const mount = vi.fn(async () => ({ id: 'may-orchestrator-worker' }))
+  const create = vi.fn(async (options: { setup: (ctx: object) => Promise<void> }) => {
+    await options.setup({})
+    return { agent: { session: { id: 'worker' } } }
+  })
+  const service = Object.create(OrchestratorService.prototype)
+  Object.assign(service, {
+    hostCtx: {
+      agents: { withoutInitiator: (run: () => Promise<void>) => run(), create },
+      agentPresets: { mount },
+      sessionTitle: { rename: vi.fn() },
+    },
+    workerModelOptions: vi.fn(async () => ({})),
+    syncedTitles: new Map(),
+  })
+  await service.createWorkerAgent('worker', '/tmp/worker', {}, '测试')
+  expect(create).toHaveBeenCalledWith(expect.objectContaining({
+    meta: { cwd: '/tmp/worker', agentPreset: 'may-orchestrator-worker' },
+    setup: expect.any(Function),
+  }))
+  expect(mount).toHaveBeenCalledWith({}, 'may-orchestrator-worker')
+})
+
 function harness() {
   const conversation = activateConversation(createConversation({
     id: 'conversation', childSessionId: 'worker', parentSessionId: 'lead', title: '演示',
@@ -16,12 +40,7 @@ function harness() {
   const tasks = new Map<string, TaskRecord>([[task.id, task]])
   const tables = { conversations, tasks, schedules: new Map() }
   const service = Object.create(OrchestratorService.prototype)
-  const nativeSignals: AbortSignal[] = []
   const scheduleList = vi.fn(async () => [])
-  const ask = vi.fn(({ signal }: { signal: AbortSignal }) => {
-    nativeSignals.push(signal)
-    return new Promise((_resolve, reject) => signal.addEventListener('abort', () => reject(new Error('aborted')), { once: true }))
-  })
   Object.assign(service, {
     ready: Promise.resolve(), chain: Promise.resolve(),
     domain: { table: (name: keyof typeof tables) => ({
@@ -30,7 +49,7 @@ function harness() {
       put: async (id: string, value: never) => { tables[name].set(id, value) },
     }) },
     hostCtx: {
-      get: (name: string) => name === 'userQuestions' ? { ask } : name === 'schedule' ? { list: scheduleList } : undefined,
+      get: (name: string) => name === 'schedule' ? { list: scheduleList } : undefined,
       logger: { warn: vi.fn(), info: vi.fn() },
     },
     pendingAnswers: new PendingAnswers(), revisionTurnEnds: new Map(),
@@ -40,8 +59,8 @@ function harness() {
     interruptWorker: vi.fn(), deliverToWorker: vi.fn(), renameWorkerSession: vi.fn(),
   })
   const call = (method: string, ...args: unknown[]) => service[method](...args)
-  const waitForQuestions = async () => vi.waitFor(() => expect(nativeSignals).toHaveLength(1))
-  return { service, call, conversation, task, conversations, tasks, tables, ask, scheduleList, nativeSignals, waitForQuestions }
+  const waitForQuestions = async () => vi.waitFor(() => expect(tasks.get('task')?.status).toBe('input_required'))
+  return { service, call, conversation, task, conversations, tasks, tables, scheduleList, waitForQuestions }
 }
 
 describe('Worker 轮次结束结算', () => {
@@ -71,7 +90,7 @@ describe('Worker 轮次结束结算', () => {
     await rejected
     expect(fixture.tasks.get('task')).toMatchObject({ status: 'failed', error: '子会话结束前未提交终态上报' })
     expect(fixture.conversations.get('conversation')).toMatchObject({ state: 'failed', activeTaskId: null })
-    expect(fixture.nativeSignals[0].aborted).toBe(true)
+    expect(fixture.service.pendingAnswers.signal('task')).toBeUndefined()
   })
 })
 
@@ -95,44 +114,40 @@ describe('任务模型元数据落库', () => {
 })
 
 describe('阻塞问答生命周期', () => {
-  it('Worker 原生问题卡作答后同轮返回答案', async () => {
+  it('Worker 弹窗作答后同轮返回答案', async () => {
     const fixture = harness()
-    fixture.ask.mockResolvedValue({ answers: [{ id: 'q1', selected: ['A'] }] })
-    expect(await fixture.call('reportFromWorker', 'input_required', { questions: [{ question: '继续吗？' }] }, 'worker'))
-      .toEqual({ ok: true, status: 'input_required_answered', answers: [{ id: 'q1', selected: ['A'] }] })
+    const waiting = fixture.call('reportFromWorker', 'input_required', { questions: [{ question: '继续吗？', options: [{ label: 'A' }] }] }, 'worker')
+    await fixture.waitForQuestions()
+    expect(await fixture.service.answerTaskQuestions({ childSessionId: 'worker', answers: [{ id: 'q1', selected: ['o1'] }] })).toMatchObject({ ok: true })
+    expect(await waiting).toEqual({ ok: true, status: 'input_required_answered', answers: [{ id: 'q1', selected: ['o1'] }] })
     expect(fixture.tasks.get('task')?.status).toBe('running')
     expect(fixture.service.pendingAnswers.signal('task')).toBeUndefined()
   })
 
-  it('已取消的原生问题卡晚到答案不会答入下一次提问', async () => {
+  it('已取消的旧问题答案不会答入下一次提问', async () => {
     const fixture = harness()
-    let finish: (value: unknown) => void
-    fixture.ask.mockImplementation(() => new Promise(resolve => { finish = resolve }))
     const abort = new AbortController()
     const waiting = fixture.call('reportFromWorker', 'input_required', { questions: [{ question: '旧问题？' }] }, 'worker', abort.signal)
     const rejected = expect(waiting).rejects.toThrow('任务已中断')
-    await vi.waitFor(() => expect(fixture.ask).toHaveBeenCalledOnce())
+    await fixture.waitForQuestions()
     abort.abort()
     await rejected
     const next = { ...fixture.task, id: 'next', status: 'input_required' as const, questions: [{ id: 'q1', question: '新问题？' }] }
     fixture.tasks.set(next.id, next)
     fixture.conversations.set('conversation', { ...fixture.conversation, lastTaskId: next.id, activeTaskId: next.id })
-    const answer = vi.spyOn(fixture.service, 'answerTaskQuestions')
-    finish({ answers: [{ id: 'q1', selected: ['旧答案'] }] })
-    await new Promise(setImmediate)
-    expect(answer).not.toHaveBeenCalled()
+    expect((await fixture.service.answerTaskQuestions({ childSessionId: 'worker', taskId: 'task', answers: [{ id: 'other', custom: '旧答案' }] })).ok).toBe(false)
     expect(fixture.tasks.get(next.id)?.status).toBe('input_required')
   })
 
-  it('看板作答唤醒同一工具调用并取消原生问题卡', async () => {
+  it('看板作答唤醒同一工具调用', async () => {
     const fixture = harness()
     const waiting = fixture.call('reportFromWorker', 'input_required', { questions: [{ question: '选哪个？' }] }, 'worker')
     await fixture.waitForQuestions()
-    expect(await fixture.service.answerTaskQuestions({ childSessionId: 'worker', answers: [{ id: 'q1', selected: ['A'] }] }))
+    expect(await fixture.service.answerTaskQuestions({ childSessionId: 'worker', answers: [{ id: 'q1', custom: 'A' }] }))
       .toEqual({ ok: true, taskId: 'task' })
-    expect(await waiting).toEqual({ ok: true, status: 'input_required_answered', answers: [{ id: 'q1', selected: ['A'] }] })
+    expect(await waiting).toEqual({ ok: true, status: 'input_required_answered', answers: [{ id: 'q1', selected: [], custom: 'A' }] })
     expect(fixture.tasks.get('task')?.status).toBe('running')
-    expect(fixture.nativeSignals[0].aborted).toBe(true)
+    expect(fixture.service.pendingAnswers.signal('task')).toBeUndefined()
   })
 
   it('等待时手动停止结算任务、清理问题卡且拒绝过期答案', async () => {
@@ -144,7 +159,6 @@ describe('阻塞问答生命周期', () => {
     await rejected
     expect(fixture.tasks.get('task')?.status).toBe('interrupted')
     expect(fixture.conversations.get('conversation')?.state).toBe('idle')
-    expect(fixture.nativeSignals[0].aborted).toBe(true)
     expect((await fixture.service.answerTaskQuestions({ childSessionId: 'worker', answers: [{ id: 'q1' }] })).ok).toBe(false)
   })
 
@@ -159,7 +173,6 @@ describe('阻塞问答生命周期', () => {
     expect(fixture.tasks.get('task')?.status).toBe('interrupted')
     expect(fixture.conversations.get('conversation')?.activeTaskId).not.toBe('task')
     expect(fixture.service.interruptWorker).toHaveBeenCalledWith('worker')
-    expect(fixture.nativeSignals[0].aborted).toBe(true)
   })
 
   it('工具取消信号及时释放等待，不等 turn/end 才取消问题卡', async () => {
@@ -170,18 +183,16 @@ describe('阻塞问答生命周期', () => {
     await fixture.waitForQuestions()
     abort.abort()
     await rejected
-    expect(fixture.nativeSignals[0].aborted).toBe(true)
     expect(fixture.service.pendingAnswers.signal('task')).toBeUndefined()
   })
 
-  it('服务停止释放全部等待及原生问题卡', async () => {
+  it('服务停止释放全部等待', async () => {
     const fixture = harness()
     const waiting = fixture.call('reportFromWorker', 'input_required', { questions: [{ question: '继续吗？' }] }, 'worker')
     const rejected = expect(waiting).rejects.toThrow('编排服务已停止')
     await fixture.waitForQuestions()
     fixture.service.pendingAnswers.close()
     await rejected
-    expect(fixture.nativeSignals[0].aborted).toBe(true)
   })
 
   it.each([true, false])('重启中断等待任务，兼容 activeTaskId 是否保留：%s', async (hasActiveTask) => {

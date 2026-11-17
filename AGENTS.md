@@ -9,11 +9,13 @@
 - **Lead**（主会话，预设 `may-orchestrator-lead`）：理解需求、路由、派发、转发结果。保留 DSH 自带工具；`LEAD_TOOL_DENY` 只隐藏个人记忆写/管理与 GenUI 直接渲染工具。记忆来自 `@cmjt/dsh-personal-memory@0.4.6`，原生 `memory_search/read` 保留，其余记忆工具隐藏。写入手册对 Lead 遮蔽；`memory-policy.ts` 通过记忆插件原生 HTTP 接口设置会话门控：inject=false（允许读入与查询）、write=true/dream=true（停止写入、反思与自动整理）。不导入数据库 API，不解析记忆存储配置，不重建影子工具或工作区记忆链接。
 - **Worker**（持久**根会话**，预设 `may-orchestrator-worker`）：执行任务。不是 subagent——通过 `agents.create` 创建（无 origin/delegationDepth），与主会话同为一等会话，schedule 等仅 depth-0 可用的宿主能力对 Worker 开放。工具**黑名单**制（只禁编排循环/直接提问/直接 GenUI 渲染及验证），其余宿主与用户安装的工具默认可用。
 - 两层领域模型：**Conversation**（持久子会话/工作流）1—N **TaskRun**（一次派发）。
-- 技术栈：pnpm + TypeScript + Cordis + Zod + tsdown + vitest。4 个入口：主插件、client（看板 React）、typert host/remote（snapshot / setScheduleStatus / answerTaskQuestions RPC）。
+- 技术栈：pnpm + TypeScript + Cordis + Zod + tsdown + vitest。4 个入口：主插件、client（看板 React）、typert host/remote（看板与提问 RPC）。
+
+底层 agents.create 不会仅凭 meta.agentPreset 装载预设：创建 Worker 时须通过 setup 调用 agentPresets.mount，否则 bash/read/write 等预设工具不会进入模型可见清单。冷恢复由平台 sessionController 装载。
 
 ## 本机环境与硬性约束
 
-- DSH CLI 全局包：`@deepseek-ai/dsh@0.2.1-rc.2`（`/opt/homebrew/lib/node_modules`，读 API 定义从这里查）。**CLI 是 web 的运行时**，升级 CLI 用全局 npm；**GUI（`/Applications/DeepSeek Harness.app`）绝不能动**。
+- DSH CLI 全局包：当前本机 `@deepseek-ai/dsh@0.2.2-rc.1`（`/opt/homebrew/lib/node_modules`，读 API 定义从这里查）。**CLI 是 web 的运行时**，升级 CLI 用全局 npm；**GUI（`/Applications/DeepSeek Harness.app`）绝不能动**。
 - 真实 web profile：`~/.dsh/profiles/web`。
 - **重启 web 必须用脚本**：`/Users/lixuchuan/work/harness/start-dsh-web.sh`（设置 NODE_EXTRA_CA_CERTS、清代理，内部 `exec dsh web --host 127.0.0.1 --port 3080`）。不要直接 `dsh web`。脚本需用 `start_new_session` 方式彻底脱离当前会话启动，否则进程会被回收。
 - 执行权限遵循当前环境；无需额外审批时直接操作。GitHub 访问不稳定，push/release 失败时按用户约定请求开代理。
@@ -72,14 +74,14 @@ uv run --no-project --python /usr/bin/python3 python -c 'import subprocess; subp
 | `native-schedules.ts` | 原生 schedule_create 调用结果配对、单条/批量定时消息来源解析 |
 | `model-info.ts` | DSH assistant message 模型元数据提取、Task 合并与看板展示名计算 |
 | `state-machine.ts` / `task-lifecycle.ts` | 纯状态迁移与投递开关 / 未完成任务判定（含 input_required） |
-| `service.ts` / `pending-answers.ts` | 宿主协调、串行写入、投递恢复 / 作答等待与取消清理 |
+| `service.ts` / `pending-answers.ts` / `questions.ts` / `question-preview.ts` | 宿主协调 / 作答等待 / 问答校验 / 安全媒体访问 |
 | `schedule-changes.ts` | 日程整批规划、归属及合并校验，不执行持久化 |
-| `tool-parameters.ts` / `remote.ts` / `host-contracts.ts` | 模型参数 DSL / 三个 RPC 契约 / 宿主结构接口；service 保留 DSL 重导出 |
+| `tool-parameters.ts` / `remote.ts` / `host-contracts.ts` | 模型参数 DSL / 看板与提问 RPC 契约 / 宿主结构接口；service 保留 DSL 重导出 |
 | `messages.ts` / `presets.ts` / `lead-policy.ts` / `worker-policy.ts` | 提示词、预设与工具策略 |
 | `storage.ts` / `workspaces.ts` / `memory-policy.ts` | 存储域、子工作区路径、Lead 原生记忆只读策略 |
 | `client/Board.tsx` | 会话与日程页签、数据刷新和回调协调 |
 | `client/task-attention.ts` | 任务新进入 input_required 时自动唤起看板；已可见时只保留高亮 |
-| `client/question-card.tsx` / `task-box.tsx` | 问题作答 / 任务时间线及详情 |
+| `client/question-card.tsx` / `question-dialog.tsx` / `task-box.tsx` | 看板提问入口 / 共享多媒体作答弹窗 / 任务时间线及详情 |
 | `client/schedule-list.tsx` / `schedule-pane.tsx` | 两页共用日程行 / FullCalendar Breezy 月历、选中日与未安排分组 |
 | `client/schedule-calendar.ts` / `schedule-ordering.ts` / `fullcalendar-styles.ts` | 月历事件与包含式尾日适配 / 日程排序 / 主题 CSS 构建期内联 |
 
@@ -104,7 +106,7 @@ uv run --no-project --python /usr/bin/python3 python -c 'import subprocess; subp
 - 投递：`sessionController.resolveAgent` 恢复冷会话 → `agent.followup(message)`（source.kind='orchestrator'）→ `sessions.flush` 确认落盘后才算投递成功（与 dsh-schedule 的提醒投递同一机制）。
 - 中断：`agent.cancel({kind:'parent'})`（fire-and-return，单独 try/catch，失败不拖垮新任务）。
 - 完成驱动：监听子会话 `turn/end`。`classifyWorkerTurnEnd`：`aborted.reason.kind=user` → 用户手动停止（interrupted + 投递非失败通知）；`kind=parent` → 改单中断。无终态上报就结束的轮次按失败处理。
-- 等待管理：`PendingAnswers` 按 taskId 保存 Promise 与原生卡取消信号，作答、工具取消、手动停止、改单与服务卸载均清理监听和原生卡；已取消卡片晚到的答案不得答入后续提问。重启时 queued/running/input_required 均按未完成任务恢复为已有 interrupted，Conversation 回 idle，不新增状态或投递。
+- 等待管理：`PendingAnswers` 按请求 ID 保存 Promise，作答、工具取消、手动停止、改单与服务卸载均清理等待；已取消请求晚到的答案不得答入后续提问。重启时 queued/running/input_required 均按未完成任务恢复为已有 interrupted，Conversation 回 idle，不新增状态或投递。
 
 ### 改单（同一工作流补充/修改需求）时序
 
@@ -118,7 +120,7 @@ uv run --no-project --python /usr/bin/python3 python -c 'import subprocess; subp
 
 ### 工具权限
 
-- Lead **预设挂载面**（presets.ts）：显式挂载自带插件 tool-web（web_search/web_fetch）、tool-fs-search（glob/grep，必配 `sampleOverCapGlobResults`）、tool-fs（read/write/edit/read_image）、tool-present（Worker artifacts 的主会话制品卡交付）、tool-todo（必配 `allowParallelInProgress`）、tool-goal、tool-ask-user。0.2.7 起 tool-web 曾被误删，"一步查询"长期是空头承诺，0.3.16 补回。不挂 bash/terminal/jobs/schedule/session-query/skill/mcp-resources/subagent/teams/worktree——执行与编排都在 Worker 侧；缺必配 config 会新建会话即报 agent-preset/invalid。
+- Lead **预设挂载面**（presets.ts）：显式挂载自带插件 tool-web（web_search/web_fetch）、tool-fs-search（glob/grep，必配 `sampleOverCapGlobResults`）、tool-fs（read/write/edit/read_image）、tool-present（Worker artifacts 的主会话制品卡交付）、tool-todo（必配 `allowParallelInProgress`）、tool-goal；增强版 `ask_user_question` 由编排服务注册，不挂载同名原生工具。0.2.7 起 tool-web 曾被误删，"一步查询"长期是空头承诺，0.3.16 补回。不挂 bash/terminal/jobs/schedule/session-query/skill/mcp-resources/subagent/teams/worktree——执行与编排都在 Worker 侧；缺必配 config 会新建会话即报 agent-preset/invalid。
 - Lead：**黑名单裁剪**，按注册表过滤记忆写/管理与 GenUI 直接渲染工具，自带工具升级新增不被误藏。记忆工具全部由 dsh-personal-memory 原生注册；仅保留 search/read，其余交给 Worker。orchestrator 不导入记忆插件实现，只通过原生会话门控接口设置策略。
 - Worker：按 `isWorkerToolForbidden`（worker-policy.ts）枚举工具并 `scoped.tools.restrict({ deny })`，失败时回退 `guard`。编排/派生类禁止项见 `workerForbiddenPatterns`（workflow/ralph/orchestrator），直接向用户提问类见 `workerQuestionPatterns`（ask_user 系，命中时引导改走 task_input_required）；新增"禁止类"工具只改这两张表。子智能体工具由 Worker 预设的 delegation 组显式组合（与平台 standard 预设同款，spawn/fork 后端驻留宿主平面）。
 - **工具清单巡检（每次相关改动必做）**：改 lead-policy/service 工具面相关代码、或 DSH/插件升级后，重新枚举全局工具（扫 DSH core + profile 插件的 defineTool 名字）与 `DSH_CORE_TOOL_BASELINE` 快照对比。运行时也有兜底：Lead 挂载时 `unrecognizedGlobalTools` 发现基线外且未命中 deny 的名字会打 warn。发现新工具 → 确认归属 → 自带的更新基线、第三方的评估加入 LEAD_TOOL_DENY（或确认放行）。用户主动装新插件同样适用。
@@ -163,7 +165,7 @@ uv run --no-project --python /usr/bin/python3 python -c 'import subprocess; subp
 ### Worker 上报协议
 
 - **5 个独立工具（v0.3.19 起，单工具 `task_update` 已删除）**：`task_running` / `task_input_required` / `task_completed` / `task_failed` / `task_todo`。每个工具的 zod input schema（`taskReportInputSchemas` / `taskTodoInputSchema`）只含该工具合法字段，schema 结构即校验——不再有 allowlist / superRefine 交叉校验（单工具 + 条件必填被模型多次踩坑，拆分是根治）。四个状态工具可带 header（≤8 字极简状态标题）和 progressNote（一句话进展）；task_todo 不带进度字段。
-  - `task_input_required`：必填 `questions[]`，结构化问卷 `{id?, question, header?, detail?, options?, multi_select?}`，Worker 的 id 可省略，Host 补 q1/q2/…，snapshot 与作答后的 answers 使用该 id。阻塞工具调用，返回值即用户答案。
+  - `task_input_required`：必填 `questions[]`；问题主体可带 `media[]`，选项可带 `preview`。Host 补问题/选项 ID，答案的 selected 使用选项 ID。子会话与看板打开同款弹窗，工具阻塞至回答。Lead 的增强版 `ask_user_question` 独立挂载，不写 Task。
   - `task_completed`：必填 `result`（只阐述用户需求的最终结果，不写怎么做，不含过程性内容或文件路径）；可选 `artifacts`（关键制品的子工作区相对路径，投递时自动加工作区前缀，仅供 Lead 调用 present）与 `card`（dsh-ui 结构化明细 JSON，Host 序列化围栏后由 Lead 原封不动输出）；正文、卡片和制品不重复。
   - `task_failed`：必填 `error`，系统阻碍加 `reasonCode`。
   - `task_todo`：日程 CRUD（`create`/`update` 分桶，create.title / update.id 在 DSL 层静态必填——分支规则必须由结构而非文案表达）；返回最新日程清单投影，与任务状态无关、不产生状态迁移。

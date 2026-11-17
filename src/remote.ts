@@ -1,6 +1,6 @@
 import { z } from 'zod'
 import type { Snapshot } from './types.ts'
-import { snapshotResultSchema } from './types.ts'
+import { questionAnswerSchema, questionItemInputSchema, snapshotResultSchema } from './types.ts'
 export { snapshotResultSchema } from './types.ts'
 
 export const snapshotRequestSchema = z.object({
@@ -33,6 +33,14 @@ export const answerQuestionsResultSchema = z.object({
   error: z.string().optional(),
 }).strict()
 
+export const questionRequestsRequestSchema = z.object({ sessionId: z.string().min(1) }).strict()
+export const questionRequestsResultSchema = z.array(z.object({
+  id: z.string(), taskId: z.string().optional(), questions: z.array(questionItemInputSchema),
+}).strict())
+export const answerDirectQuestionRequestSchema = z.object({
+  sessionId: z.string().min(1), id: z.string().min(1), answers: z.array(questionAnswerSchema).min(1),
+}).strict()
+
 export type SnapshotRequest = z.input<typeof snapshotRequestSchema>
 export type SetScheduleStatusRequest = z.input<typeof setScheduleStatusRequestSchema>
 export type AnswerQuestionsRequest = z.input<typeof answerQuestionsRequestSchema>
@@ -41,7 +49,9 @@ export type AnswerQuestionsResult = z.infer<typeof answerQuestionsResultSchema>
 export interface OrchestratorClient {
   snapshot(request: SnapshotRequest): Promise<Snapshot>
   setScheduleStatus(request: SetScheduleStatusRequest): Promise<z.infer<typeof setScheduleStatusResultSchema>>
-  answerTaskQuestions(request: AnswerQuestionsRequest): Promise<AnswerQuestionsResult>
+  answerTaskQuestions(request: AnswerQuestionsRequest): Promise<{ ok: true; value: AnswerQuestionsResult } | { ok: false; error?: { message?: string } }>
+  questionRequests(request: z.input<typeof questionRequestsRequestSchema>): Promise<{ ok: true; value: z.infer<typeof questionRequestsResultSchema> } | { ok: false; error?: { message?: string } }>
+  answerDirectQuestion(request: z.input<typeof answerDirectQuestionRequestSchema>): Promise<{ ok: true; value: { ok: boolean; error?: string } } | { ok: false; error?: { message?: string } }>
 }
 
 const PACKAGE = '@cmjt/dsh-orchestrator'
@@ -80,6 +90,8 @@ export const TYPERT_REMOTE = {
     buildDescriptor('@cmjt/dsh-orchestrator#orchestrator/snapshot', 'snapshot', 'SnapshotRequest', snapshotRequestSchema, snapshotResultSchema),
     buildDescriptor('@cmjt/dsh-orchestrator#orchestrator/setScheduleStatus', 'setScheduleStatus', 'SetScheduleStatusRequest', setScheduleStatusRequestSchema, setScheduleStatusResultSchema),
     buildDescriptor('@cmjt/dsh-orchestrator#orchestrator/answerTaskQuestions', 'answerTaskQuestions', 'AnswerQuestionsRequest', answerQuestionsRequestSchema, answerQuestionsResultSchema),
+    buildDescriptor('@cmjt/dsh-orchestrator#orchestrator/questionRequests', 'questionRequests', 'QuestionRequestsRequest', questionRequestsRequestSchema, questionRequestsResultSchema),
+    buildDescriptor('@cmjt/dsh-orchestrator#orchestrator/answerDirectQuestion', 'answerDirectQuestion', 'AnswerDirectQuestionRequest', answerDirectQuestionRequestSchema, z.object({ ok: z.boolean(), error: z.string().optional() }).strict()),
   ],
 }
 

@@ -29,7 +29,6 @@ export function buildPresetDefinitions(): PresetDefinition[] {
     isolate: { workflowEngine: true },
     config: [
       { id: 'tool-subagent-control', name: '@deepseek-ai/dsh-tool-subagent-control' },
-      { id: 'tool-subagent-list-agents', name: '@deepseek-ai/dsh-tool-subagent-control/list-agents' },
       {
         id: 'tool-subagent',
         name: '@deepseek-ai/dsh-tool-subagent',
@@ -80,7 +79,7 @@ export function buildPresetDefinitions(): PresetDefinition[] {
         { id: 'tool-fs', name: '@deepseek-ai/dsh-tool-fs' },
         { id: 'tool-present', name: '@deepseek-ai/dsh-tool-present' },
         { id: 'tool-todo', name: '@deepseek-ai/dsh-tool-todo', config: { allowParallelInProgress: false } },
-        { id: 'tool-ask-user', name: '@deepseek-ai/dsh-tool-ask-user' },
+        // ask_user_question 由 questionTool 在选装该能力的会话中注册；避免与原生工具撞名。
         compaction,
       ],
     },
@@ -107,6 +106,8 @@ export function buildPresetDefinitions(): PresetDefinition[] {
           config: { sampleOverCapGlobResults: false },
         },
         { id: 'tool-jobs', name: '@deepseek-ai/dsh-tool-jobs' },
+        { id: 'command-goal', name: '@deepseek-ai/dsh-command-goal' },
+        { id: 'tool-goal', name: '@deepseek-ai/dsh-tool-goal' },
         delegation,
         // 定时/周期提醒：Worker 是根会话（delegationDepth=0），schedule 绑定并触发回本子会话。
         { id: 'tool-schedule', name: '@deepseek-ai/dsh-tool-schedule' },
@@ -114,6 +115,8 @@ export function buildPresetDefinitions(): PresetDefinition[] {
         { id: 'tool-skill', name: '@deepseek-ai/dsh-tool-skill' },
         { id: 'tool-todo', name: '@deepseek-ai/dsh-tool-todo', config: { allowParallelInProgress: true } },
         { id: 'tool-web', name: '@deepseek-ai/dsh-tool-web', config: { fetch: true, searchTimeoutMs: 60_000 } },
+        { id: 'present', name: '@deepseek-ai/dsh-tool-present' },
+        { id: 'tool-plugin-manager', name: '@deepseek-ai/dsh-plugin-manager/tools' },
         compaction,
       ],
     },

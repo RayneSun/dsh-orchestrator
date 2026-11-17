@@ -1,12 +1,14 @@
 # dsh-orchestrator 任务看板数据接口（v0.3.24）
 
 > 面向下游（移动端 App）开发者。本文档描述 DSH Orchestrator 插件在 DSH Web（默认 `http://127.0.0.1:3080`）中暴露的任务看板数据结构、状态定义、同步机制与展示建议。
-> 当前完整契约；0.3.18 升级仍需阅读 [v0.3.19 发布记录](milestones/0.3.19.md)与下方破坏性变更说明。
+> 当前完整契约与字段变更均在本文；历史发布记录仅供追溯。
 
 **⚠️ v0.3.18 → v0.3.19 破坏性变化（下游必读）**：
 1. **Task 字段拍平**：`task.report = { result, artifacts?, card? }` 拆为顶层 `task.result / task.artifacts / task.card`；`task.fail = { error, reasonCode? }` 拆为顶层 `task.error / task.reasonCode`。旧包裹字段不再输出。
-2. **Worker 上报协议拆分**：单工具 `task_update` 拆为 5 个工具——`task_running / task_input_required / task_completed / task_failed / task_schedule`；`schedules` 不再挂在状态上报上，改为独立 `task_schedule` 工具。状态枚举与 snapshot 结构除上述拍平外不变。
+2. **Worker 上报协议拆分**：单工具 `task_update` 拆为状态工具 `task_running / task_input_required / task_completed / task_failed`，待办/日程由独立工具管理（当前名为 `task_todo`）；`schedules` 不再挂在状态上报中。状态枚举与 snapshot 结构除上述拍平外不变。
 3. **不兼容旧会话**：升级后domain v3 不加载旧域的 Conversation/Task/Schedule；旧 ID 不可复用，升级前备份旧域并停用旧 Worker 定时任务。三个 RPC 方法名与请求不变，snapshot 的 Task 字段结构已变化。
+
+**0.3.24 后待发布的提问协议变更**：问题和选项新增媒体预览，Host 为问题/选项补 `id`；新作答的 `answers[].selected` 改存选项 ID，不再存 label。旧任务读盘时会补问题/选项 ID，但旧答案中的 label 原样保留，不会伪造为新 ID。下游读取历史答案时需同时识别两种值；完整字段、作答链路及迁移说明见 §4、§11。
 
 ## 1. 接入方式
 
@@ -44,7 +46,15 @@
 | 远程方法 | `orchestrator/answerTaskQuestions` |
 | 请求 | `{ "childSessionId": "<子会话 sessionId>", "taskId"?: "<问题所属 taskId>", "answers": QuestionAnswer[] }` |
 | 响应 | `{ "ok": true, "taskId": "task_<uuid>" }`，失败为 `{ "ok": false, "error": string }` |
-| 行为 | 串行幂等：显式 taskId 时只接受该任务，旧客户端省略时回退最新任务；目标任务必须仍是 `input_required`，先答先赢。Host resolve 挂起的工具调用并 abort 另一侧问题卡；定时任务与另一个 activeTask 并存时不会抢占 activeTaskId。 |
+| 行为 | 显式 taskId 时只接受该任务；目标任务必须仍是 `input_required`，先答先赢。Host resolve 挂起的工具调用；定时任务与另一个 activeTask 并存时不会抢占 activeTaskId。selected 使用 option.id。 |
+
+**questionRequests**（会话内待答请求）：请求 `{ "sessionId": "<会话 sessionId>" }`，响应 `[{ "id": string, "taskId"?: string, "questions": QuestionItem[] }]`。Worker 的 `id/taskId` 均为任务 ID；Lead 会话请求没有 `taskId`，`id` 是临时请求 ID。未等待时返回空数组。
+
+**answerDirectQuestion**（Lead 会话作答）：请求 `{ "sessionId": string, "id": string, "answers": QuestionAnswer[] }`，响应 `{ "ok": boolean, "error"?: string }`。传入 `questionRequests` 给出的请求 ID；回答不写 Task/snapshot，模型工具返回的 `selected` 是选项 **label**，与 RPC 请求里的选项 **id** 不同。
+
+**媒体预览 GET**：`/api/orchestrator/question-media?session=…&id=…&source=…`。三个查询参数分别是会话 ID、上述请求 ID、问题中声明的相对路径；仅请求仍在等待且路径属于该问题时可读取。成功返回媒体 MIME 与 `Accept-Ranges: bytes`，支持单段 `Range`（206）；非法范围 416，不存在/无权访问 404。客户端应对路径和查询参数 URL 编码，不自行拼接本机绝对路径。
+
+上述 RPC 在 Web Remote 客户端另包一层传输结果：成功为 `{ok:true,value:<响应>}`，传输失败为 `{ok:false,error:{message?:string}}`；不要把传输层 `ok` 与方法自身的 `ok` 混淆。
 
 ### 1.3 变更通知
 
@@ -120,21 +130,30 @@ Task 是子会话内的一条工作记录（一次 dispatch / 一次改单，或
 
 ```ts
 QuestionItem = {
-  id: string           // Worker 输入可省略；Host 补 q1/q2/…，snapshot 与作答后的 answers 使用该 id
-  question: string     // 问题正文
-  header?: string      // 短标题/分组
-  detail?: string      // 补充说明
-  options?: { label: string, description?: string }[]
-  multi_select?: boolean
+  id: string           // 输入可省略；Host 按顺序补 q1/q2/…；最长 40 字符
+  question: string     // 必填，问题正文，最多 2000 字符
+  header?: string      // 分组标题，最多 60 字符
+  detail?: string      // 补充说明，最多 1000 字符
+  media?: MediaItem[]  // 问题主体素材，最多 12 项；如三图整体评价
+  options?: { id: string, label: string, description?: string, preview?: MediaItem }[] // 最多 10 项
+  multi_select?: boolean // 默认 false；无 options 时为自由输入
 }
 QuestionAnswer = {
-  id: string
-  selected: string[]   // 选中 option.label；单选最多 1 个
-  custom?: string      // 自定义输入
+  id: string           // 对应 QuestionItem.id
+  selected: string[]   // RPC/Task 记录中为 option.id；默认 []，最多 10 项
+  custom?: string      // 自定义回答或补充原因，最多 2000 字符
 }
 ```
 
-问题卡只出现在两处：任务看板、Worker 子会话内由 `userQuestions.ask` 创建的原生问题卡（主会话不参与投递，`answerTaskQuestions` 同源路由，任一处作答另一处自动消失）。停止、改单、工具取消或服务卸载会清理等待，已取消原生卡晚到的答案不会进入后续提问；Host 重启后遗留 `input_required` 转为已有 `interrupted`，Conversation 回 `idle`，不投递 Lead。
+选项的 `label` 必填（最多 100 字符），`description` 最多 300 字符；`id` 输入可省略，Host 在每道题内按顺序补 `o1/o2/…`（最长 40 字符）。一次调用需提交 1–10 道题，问题 ID、同题的选项 ID 和 label 不得重复。每题必须有一份回答，`selected` 不得重复或越出该题选项；单选最多一项，多选由 `multi_select` 开启；不选时须提供非空 `custom`。模型无需手填任何 ID，客户端按归一化后的请求作答。
+
+`MediaItem = { kind: 'image' | 'audio' | 'video' | 'file', source: string, caption?: string, poster?: string }`。媒体可放在问题主体 `media[]`，或选项的 `preview`；同一素材不要重复放两处。两者都使用调用会话工作区相对路径，`source/poster` 最长 500 字符，禁止绝对路径和 `..`；`caption` 最多 200 字符。`poster` 用于视频封面。Host 在等待前验证资源存在、realpath 不越界、普通文件且不超过 100 MiB；仅支持 PNG/JPEG/WebP/GIF、MP3/WAV/OGG、MP4/WebM、PDF/TXT 后缀。URL/内联 HTML 尚未开放，输入 `kind: 'url'/'html'` 会被拒绝；不执行嵌入脚本。
+
+选项预览中的图片可直接点击整张选项卡选中（键盘 Enter/空格同理）；问题主体的图片可单独打开，音视频播放和文件打开不等于作答。看板仅显示问题入口，完整弹窗与会话内共享；用户可收起稍后回答，**收起不取消等待**。一处作答后其他入口消失。媒体加载失败应保留文字问题及选项。
+
+**Worker**：`task_input_required({questions:[...]})` 将 Task 置为 `input_required`，阻塞到用户回答；看板/Worker 会话都调用同一作答路由。工具返回包含 `ok: true`、`status: "input_required_answered"` 和 `answers`；例如 `{ "ok": true, "status": "input_required_answered", "answers": [{ "id": "q1", "selected": ["o2"] }] }`，Worker 同轮继续。**Lead 会话**：增强版 `ask_user_question` 输入同样的 `questions`，复用弹窗但不写 Task/snapshot；工具返回 `{ "answers": [...] }`，其中 `selected` 为选项 label。Lead 会话问题不进入任务看板。两种工具均无产品级超时；停止、改单、工具取消或服务卸载会解除等待，不能承诺进程重启后恢复原工具 Promise；Host 重启后遗留 `input_required` 转为 `interrupted`，不投递 Lead。
+
+示例：二选一时把图片放在各选项的 `preview` 中，点击图片即选该项；评估三张图片的**整体**风格时把三张放在 `media[]`，选项仅写「可行／不可行」。同一素材不应在问题主体与选项内重复渲染。
 
 ## 5. Schedule（用户日程）
 
@@ -179,7 +198,7 @@ QuestionAnswer = {
 |---|---|---|
 | queued | 已入队，Worker 轮次未开始 | — |
 | running | 执行中 | header / progressNote / progressSteps |
-| input_required | 待用户操作（阻塞工具，看板 + 子会话原生卡双入口作答） | questions 必填 |
+| input_required | 待用户操作（阻塞工具，看板 + 子会话共享弹窗双入口作答） | questions 必填 |
 | completed | 完成 | result 必填 |
 | failed | 失败（含系统阻碍） | error 必填；系统阻碍加 reasonCode |
 | interrupted | 改单接管、用户手动停止或重启恢复 | cancelledReason |
@@ -187,14 +206,14 @@ QuestionAnswer = {
 **Worker 上报协议（v0.3.19 起 5 个独立工具，单工具 `task_update` 已删除）**：
 
 ```txt
-task_running        { header?, progressNote? }
-task_input_required { header?, progressNote?, questions: QuestionItem[] ★ }   阻塞调用，返回用户答案
-task_completed      { header?, progressNote?, result: string ★, artifacts?, card? }   终态，本轮立即结束
-task_failed         { header?, progressNote?, error: string ★, reasonCode? }          终态，本轮立即结束
+task_running        { header?, progressNote?, scheduleId? }
+task_input_required { header?, progressNote?, scheduleId?, questions: QuestionItem[] ★ }   阻塞调用，返回用户答案
+task_completed      { header?, progressNote?, scheduleId?, result: string ★, artifacts?, card? }   终态，本轮立即结束
+task_failed         { header?, progressNote?, scheduleId?, error: string ★, reasonCode? }          终态，本轮立即结束
 task_todo           { create?: ScheduleNew[], update?: ScheduleUpdate[] }   日程 CRUD，与任务状态无关
 ```
 
-- `task_input_required` 为阻塞调用，返回值即用户答案 `{ answers: [{id, selected, custom?}] }`，Worker 同轮继续。
+- `task_input_required` 为阻塞调用，返回值含 `{ ok: true, status: "input_required_answered", answers: [{id, selected, custom?}] }`，Worker 同轮继续。四个状态工具都可带 `scheduleId`：只在原生定时消息触发的轮次有效；单条来源可省略，批量来源每次上报必填对应 ID。普通派发任务不得填写。
 - `task_completed / task_failed` 为终态：提交成功后 Worker 本轮不再推理；无活动任务的定时触发轮次只允许 `task_completed`。queued/running 任务本轮未提交终态但子会话仍有活动原生定时任务时，Task 与 Conversation.activeTaskId 保持原状，等待下一轮继续上报；无活动定时任务或查询失败时仍按未提交终态判 `failed`。`input_required` 的阻塞调用不能跨轮次恢复，轮次结束仍按原规则结算并清理问题卡；手动停止与改单不受影响。
 - `task_todo` 返回最新待办/日程清单 `todos`（含 id），随时可调用，不产生状态迁移。
 - `reasonCode`：`permission_denied / configuration / dependency / network / resource / runtime`。
@@ -241,7 +260,7 @@ App 渲染建议：列表 + 勾（completed）/ 转（in_progress）/ 空（pend
 
 1. **会话卡片**：chevron + 属性图标（🚫/⏰）+ title + 最新任务状态徽标 + 打开子会话按钮。
 2. **折叠态**：保留问题卡与日程框；可保留“最新任务 · 创建时间 · 耗时”一行。任务体/工作区收起。
-3. **问题卡**：位于日程框上方，warn 色框；单选切换、多选叠加、custom 输入、提交后卡片消失。
+3. **问题入口**：位于日程框上方，warn 色入口卡；点击后打开与会话内相同的弹窗。弹窗支持单选、多选、custom 输入，选项预览图片可直接点选；作答后入口消失。
 4. **日程框**：位于工作区行上方；折叠/展开恒显；框头 `日程 · N 项待处理`（0 项为“全部完成”）；done/cancelled 灰显划线；优先级胶囊 P0/P1/P2/P3，颜色红/橙/黄/绿；时间窗/提醒渲染为胶囊。
 5. **任务框**：圈住多轮；默认折叠只显示最新一轮，框头 `N 轮 · 显示最新`，可展开全部。
 6. **任务行**：状态徽标 + subject（有卡片时附卡片徽标）；下一行 `header: progressNote`（running 带 shimmer）；失败可展开错误；completed/input_required 可展开结果/作答；completed 的卡片可展开原始 JSON 预览；浅灰脚注包含创建时间、实时耗时和右对齐的“本次结果由…提供”，路由不一致时悬浮可分别查看传入/返回模型。
@@ -256,12 +275,18 @@ App 渲染建议：列表 + 勾（completed）/ 转（in_progress）/ 空（pend
 ## 11. 同步与兼容性注意
 
 - snapshot 使用当前严格 schema；不做旧版本记录迁移。
+- **0.3.24 后待发布的多媒体提问字段升级（破坏性）**：
+  - `QuestionItem.media?: MediaItem[]`、`options[].preview?: MediaItem` 新增；`MediaItem` 的 `kind/source/caption?/poster?` 与安全边界见 §4。媒体为可选字段，纯文本提问不必提供。
+  - `QuestionItem.id` 和 `options[].id` 由 Host 补齐；新作答的 `Task.answers[].selected`、`answerTaskQuestions.answers[].selected` 及 `answerDirectQuestion.answers[].selected` 均传选项 **ID**，不传 label。历史已落库答案中的 label 保留原值；读取历史 Task 时要兼容 ID/label 两种值，不可把历史 label 误认为新选项 ID。
+  - 新增 `questionRequests`、`answerDirectQuestion` RPC 及受控媒体 GET 路由（§1.2）；Lead 会话增强提问不会生成 Task，也不会出现在 snapshot。Worker `task_input_required` 仍阻塞至用户回答，作答入口从原生文字卡升级为会话与看板共用弹窗。
+  - 下游迁移：展示前按新增的 `media/preview` 判别资源，作答时始终发送规范化 `option.id`；读取旧记录答案时仅用于留痕展示，不拿历史 label 重新提交。URL/HTML 预览尚未支持，不应向接口发送。
+- **v0.3.23 → v0.3.24**：Worker 的 `task_schedule` 更名 `task_todo`，无旧工具别名；其返回清单叫 `todos`。snapshot、存储表和看板 RPC 继续叫 `schedules`，下游无需调整字段名。
 - **v0.3.18 → v0.3.19（破坏性）**：
   - `task.report` / `task.fail` 包裹层删除：`report.result / report.artifacts / report.card` → `task.result / task.artifacts / task.card`；`fail.error / fail.reasonCode` → `task.error / task.reasonCode`。
-  - Worker 协议：单工具 `task_update` 拆为 `task_running / task_input_required / task_completed / task_failed / task_schedule`；状态上报不再携带 `schedules`。
+  - Worker 协议：单工具 `task_update` 拆为四个状态工具；待办/日程由独立工具管理，状态上报不再携带 `schedules`。当时名为 `task_schedule`，后续更名见上方 v0.3.24 记录。
   - domain v3 不接纳 v1/v2 数据，升级前备份并移出旧域；保留备份及原 DSH transcript，新版需新建会话。
 - **v0.3.17 → v0.3.18**：snapshot / RPC 和存储格式不变，无新增 status，无 schema 迁移。`Snapshot` 与 RPC 请求类型从原有 Zod schema 推导；`snapshotResultSchema` 移至 types.ts，remote.ts 保留重导出。生命周期修复会使遗留等待任务在重启后进入已有 interrupted 状态。
-- 以下为历史变更记录，包含当时的方案用语；当前问题卡只有看板与 Worker 原生卡两个入口，以 §4 为准。
+- 以下为历史变更记录，包含当时的方案用语；当前问题卡以 §4 为准。
 - **v0.3.13 → v0.3.14 破坏性变化**：
   - `TaskStatus` 删除 `blocked`；系统阻碍并入 `failed.fail.reasonCode`。
   - `task.error / task.reasonCode / task.remediation` 删除；改为 `task.fail = { error, reasonCode? }`。
@@ -270,7 +295,6 @@ App 渲染建议：列表 + 勾（completed）/ 转（in_progress）/ 空（pend
   - `task.summary` 删除；`Conversation.outline.summary` 由 Host 自动维护。
   - `task_update` Worker 状态删除 `blocked`；`fail` 对象必填；`userTodos` 全状态开放。
   - 新增 `answerTaskQuestions` RPC；问题卡可三处作答。
-- **v0.3.16 → v0.3.17 破坏性变化**：
 - **v0.3.16 → v0.3.17 新增字段**：
   - `TaskReport.card?: Record<string, unknown>`：dsh-ui 展示卡片 JSON；仅 `status=completed` 时存在。App 可先渲染原生控件，无法识别时降级为 JSON 预览或忽略。
   - 终态投递给 Lead 的文本会包含 Worker `result` 和序列化后的 `dsh-ui` 围栏；App 若解析主会话文本，需保留围栏原文以供 dsh-genui 客户端渲染。

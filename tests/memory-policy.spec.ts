@@ -120,7 +120,7 @@ describe('Lead 原生记忆只读策略', () => {
     const service = Object.create(OrchestratorService.prototype)
     const fetch = vi.fn(async () => new Response('{"ok":true}'))
     vi.stubGlobal('fetch', fetch)
-    const agent = { session: { id: 'lead' }, ctx: { systemPrompt: { section: () => () => {} }, on: () => () => {} } }
+    const agent = { session: { id: 'lead' }, ctx: { tools: { register: () => () => {} }, systemPrompt: { section: () => () => {} }, on: () => () => {} } }
     const flush = vi.fn(async (session) => {
       expect(session).toBe(agent.session)
       expect(fetch).not.toHaveBeenCalled()
@@ -142,6 +142,7 @@ describe('Lead 原生记忆只读策略', () => {
     vi.stubGlobal('fetch', fetch)
     let beforeStream: (_options: unknown, next: () => AsyncGenerator<string>) => AsyncGenerator<string>
     const agent = { session: { id: 'lead' }, ctx: {
+      tools: { register: () => () => {} },
       systemPrompt: { section: () => () => {} },
       on: (_name: string, hook: typeof beforeStream) => { beforeStream = hook; return () => {} },
     } }
@@ -165,6 +166,7 @@ describe('Lead 原生记忆只读策略', () => {
     let beforeStream: (_options: unknown, next: () => AsyncGenerator<string>) => AsyncGenerator<string>
     const sections = new Map<string, { text: () => string }>()
     const agent = { session: { id: 'lead' }, ctx: {
+      tools: { register: () => () => {} },
       systemPrompt: { section: (section: { name: string, text: () => string }) => {
         sections.set(section.name, section)
         return () => {}

@@ -52,7 +52,7 @@ if (!client.includes('require("react")') && !client.includes("require('react')")
 const { TYPERT: host } = await import(new URL('../lib/typert.host.js', import.meta.url))
 const { TYPERT_REMOTE: remote } = await import(new URL('../lib/typert.remote-client.js', import.meta.url))
 if (host?.face !== 'host') fail('host typert face missing')
-const expectedIds = ['snapshot', 'setScheduleStatus', 'answerTaskQuestions']
+const expectedIds = ['snapshot', 'setScheduleStatus', 'answerTaskQuestions', 'questionRequests', 'answerDirectQuestion']
   .map(method => `${pkg.name}#orchestrator/${method}`).sort()
 for (const [label, manifest, descriptors] of [
   ['host', host, host?.invocations],

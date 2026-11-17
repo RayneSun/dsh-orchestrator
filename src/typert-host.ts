@@ -25,6 +25,16 @@ export const TYPERT = {
         name: 'answerTaskQuestions',
         signature: 'answerTaskQuestions(request: AnswerQuestionsRequest): Promise<AnswerQuestionsResult>',
         tags: [],
+      }, {
+        kind: 'method' as const,
+        name: 'questionRequests',
+        signature: 'questionRequests(request: QuestionRequestsRequest): Promise<QuestionRequestsResult>',
+        tags: [],
+      }, {
+        kind: 'method' as const,
+        name: 'answerDirectQuestion',
+        signature: 'answerDirectQuestion(request: AnswerDirectQuestionRequest): Promise<AnswerDirectQuestionResult>',
+        tags: [],
       }],
       types: [],
     }],

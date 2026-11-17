@@ -165,7 +165,7 @@ describe('定时完成按 scheduleId 覆盖原 Task', () => {
     await vi.waitFor(() => expect(fixture.tasks.get('task-a')?.status).toBe('input_required'))
     expect(fixture.conversations.get('conversation')).toMatchObject({ state: 'input_required', activeTaskId: 'task-a' })
     expect(await fixture.service.answerTaskQuestions({
-      childSessionId: 'worker', taskId: 'task-a', answers: [{ id: 'q1', selected: ['继续'] }],
+      childSessionId: 'worker', taskId: 'task-a', answers: [{ id: 'q1', selected: ['o1'] }],
     })).toEqual({ ok: true, taskId: 'task-a' })
     expect(await waiting).toMatchObject({ status: 'input_required_answered' })
     expect(fixture.tasks.get('task-a')).toMatchObject({ status: 'running' })
@@ -201,7 +201,7 @@ describe('定时完成按 scheduleId 覆盖原 Task', () => {
     }, 'worker')
     await vi.waitFor(() => expect(fixture.tasks.get('task-a')?.status).toBe('input_required'))
     expect(await fixture.service.answerTaskQuestions({
-      childSessionId: 'worker', taskId: 'task-a', answers: [{ id: 'q1', selected: ['确认'] }],
+      childSessionId: 'worker', taskId: 'task-a', answers: [{ id: 'q1', selected: ['o1'] }],
     })).toEqual({ ok: true, taskId: 'task-a' })
     expect(await waiting).toMatchObject({ status: 'input_required_answered' })
     expect(fixture.tasks.get('task-a')?.status).toBe('running')

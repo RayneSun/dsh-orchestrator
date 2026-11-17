@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>看板 + 日程 mock · 真实 UI 语言</title>
+<title>任务看板 · 会话、日程与提问 Demo</title>
 <!-- FullCalendar 7.1.5 (MIT) · Breezy / Indigo，本地资源仅用于此 Demo -->
 <link rel="stylesheet" href="./vendor/fullcalendar/fullcalendar.min.css">
 <style>
@@ -52,7 +52,6 @@
 .dsho-tasks{list-style:none;margin:0;padding:0}
 .dsho-task{border-top:.5px dashed var(--dsw-alias-border-l2);padding:10px 13px;display:flex;flex-direction:column;gap:5px;border-radius:8px}
 .dsho-task:first-child{border-top:none}
-.dsho-task-attention{background:color-mix(in srgb,var(--dsho-warn) 7%,transparent);box-shadow:inset 3px 0 0 var(--dsho-warn),inset 0 0 0 1px color-mix(in srgb,var(--dsho-warn) 30%,transparent)}
 .dsho-taskHead{display:flex;align-items:center;gap:8px;font-size:12px}
 .dsho-taskSubject{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--dsw-alias-label-primary)}
 .dsho-note{margin:0;color:var(--dsw-alias-label-secondary);font-size:12px;line-height:1.5}
@@ -92,25 +91,65 @@
 .dsho-taskBox .dsho-task{padding:9px 11px}
 /* 问题卡：warn 色系，看板侧作答入口 */
 .dsho-ask{box-sizing:border-box;max-width:100%;overflow:hidden;margin:10px 13px 0;border:1px solid color-mix(in srgb,var(--dsho-warn) 35%,transparent);border-radius:10px;background:color-mix(in srgb,var(--dsho-warn) 5%,transparent);padding:10px 12px}
-.dsho-askHead{display:flex;align-items:center;gap:6px;font-size:11px;font-weight:600;color:var(--dsho-warn);margin-bottom:6px}
+.dsho-askEntry{animation:dsho-ask-flash 1.1s ease-in-out 2}
+@keyframes dsho-ask-flash{0%,100%{box-shadow:none}50%{border-color:var(--dsho-warn);box-shadow:0 0 0 3px color-mix(in srgb,var(--dsho-warn) 18%,transparent)}}
 .dsho-askIcon{flex:none;width:14px;height:14px;border-radius:50%;background:var(--dsho-warn);color:#fff;display:inline-flex;align-items:center;justify-content:center;font-size:9px}
-.dsho-askItem+.dsho-askItem{margin-top:8px;padding-top:8px;border-top:.5px dashed var(--dsho-line)}
-.dsho-askQ{font-size:12.5px;font-weight:550;color:var(--dsw-alias-label-primary);line-height:1.5}
-.dsho-askQ b{font-weight:650}
-.dsho-askDetail{font-size:11.5px;color:var(--dsw-alias-label-secondary);margin-top:2px;line-height:1.5}
-.dsho-askOpts{display:flex;flex-wrap:wrap;gap:6px;margin-top:7px}
-.dsho-opt{font:inherit;cursor:pointer;font-size:11.5px;line-height:1;padding:5px 10px;border-radius:999px;border:1px solid var(--dsho-line);background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-label-secondary);transition:all .15s}
-.dsho-opt:hover{border-color:var(--dsho-brand);color:var(--dsho-brand-ink)}
-.dsho-opt-sel{background:var(--dsho-brand);border-color:var(--dsho-brand);color:#fff;font-weight:600}
-.dsho-opt-sel:hover{color:#fff}
-.dsho-askCustom{display:block;box-sizing:border-box;margin-top:7px;width:100%;max-width:100%;min-width:0;border:1px solid var(--dsho-line);border-radius:8px;padding:6px 9px;font:inherit;font-size:11.5px;color:var(--dsw-alias-label-primary);background:var(--dsw-alias-bg-layer-2);outline:none}
-.dsho-askCustom:focus{border-color:var(--dsho-brand)}
-.dsho-askError{margin-top:7px;font-size:11.5px;color:var(--dsho-err-ink)}
-.dsho-askSubmit{margin-top:8px;font:inherit;cursor:pointer;border:none;border-radius:7px;background:var(--dsho-brand);color:#fff;font-size:11.5px;font-weight:600;padding:6px 14px}
-.dsho-askSubmit:hover{filter:brightness(1.08)}
-.dsho-askSubmit:disabled{opacity:.6;cursor:default}
+.dsho-askEntry{display:flex;align-items:center;gap:9px;width:calc(100% - 26px);text-align:left;font:inherit;cursor:pointer;color:var(--dsw-alias-label-primary)}
+.dsho-askEntry:hover{border-color:var(--dsho-warn);background:color-mix(in srgb,var(--dsho-warn) 10%,var(--dsw-alias-bg-layer-2,light-dark(#fff,#202124)))}
+.dsho-askEntry>span:nth-child(2){flex:1;min-width:0;display:grid;gap:2px}
+.dsho-askEntry b{font-size:12px;font-weight:650;line-height:1.4}
+.dsho-askEntry small{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--dsw-alias-label-secondary);font-size:11px}
+.dsho-askEntry>span:last-child{color:var(--dsho-warn);font-size:11px;font-weight:650;white-space:nowrap}
+.dsho-qBackdrop{position:fixed;inset:0;z-index:10000;display:flex;align-items:center;justify-content:center;overflow:hidden;padding:16px;background:rgb(16 24 39 / 52%);backdrop-filter:blur(5px)}
+.dsho-qDialog{box-sizing:border-box;flex:none;width:min(600px,100%);border:1px solid var(--dsw-alias-border-l4,light-dark(#e5e9ef,#414650));border-radius:16px;padding:18px 20px;background:var(--dsw-alias-bg-layer-2,light-dark(#fff,#202124));color:var(--dsw-alias-label-primary,light-dark(#202124,#eee));box-shadow:0 24px 70px rgb(0 0 0 / 25%);font:inherit;font-size:13px;line-height:1.5;overflow-wrap:anywhere}
+.dsho-qHead,.dsho-qFoot{display:flex;align-items:center;justify-content:space-between;gap:12px}
+.dsho-qHead{font-size:11px;font-weight:600;color:var(--dsw-alias-label-secondary)}
+.dsho-qHead button{display:grid;place-items:center;width:28px;height:28px;border:0;border-radius:7px;background:transparent;color:inherit;font-size:21px;line-height:1;cursor:pointer}
+.dsho-qHead button:hover{background:var(--dsw-alias-interactive-bg-hover,light-dark(#edf2f8,#343c48));color:var(--dsw-alias-label-primary)}
+.dsho-qKicker{display:block;margin-top:9px;color:var(--dsho-warn,light-dark(#a76108,#e8a04c));font-size:11px;font-weight:700}
+.dsho-qDialog h2{font-size:17px;line-height:1.4;margin:8px 0 5px;font-weight:650}
+.dsho-qDetail{margin:0;color:var(--dsw-alias-label-secondary);white-space:pre-wrap}
+.dsho-qMedia{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin:12px 0}
+.dsho-mediaItem{min-width:0;border:1px solid var(--dsw-alias-border-l4);border-radius:10px;overflow:hidden;background:var(--dsw-alias-bg-layer-3);font-size:12px}
+.dsho-mediaItem a:has(img){display:block}
+.dsho-mediaItem img{display:block;width:100%;height:96px;object-fit:cover}
+.dsho-mediaItem video{display:block;width:100%;max-height:180px;object-fit:contain}
+.dsho-mediaItem audio{width:100%}
+.dsho-mediaItem small{display:block;padding:5px 8px;color:var(--dsw-alias-label-secondary)}
+.dsho-mediaItem>a:not(:has(img)){display:block;padding:9px}
+.dsho-mediaError{padding:12px;color:#b3261e;font-size:12px}
+.dsho-qOptions{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(240px,100%),1fr));gap:10px;margin:12px 0}
+.dsho-qOption{min-width:0;border:1px solid var(--dsw-alias-border-l4,light-dark(#e1e5eb,#414650));border-radius:10px;overflow:hidden;background:var(--dsw-alias-bg-layer-2,light-dark(#fff,#202124));cursor:pointer;transition:border-color .15s,box-shadow .15s}
+.dsho-qOption:hover{border-color:var(--dsho-brand,#3985d5);background:color-mix(in srgb,var(--dsho-brand,#3985d5) 5%,var(--dsw-alias-bg-layer-2,light-dark(#fff,#202124)));box-shadow:0 3px 12px rgb(30 100 190 / 10%)}
+.dsho-qOption.selected{border-color:var(--dsho-brand,#3985d5);box-shadow:inset 0 0 0 1px var(--dsho-brand,#3985d5)}
+.dsho-qOption:focus-visible,.dsho-qFoot button:focus-visible,.dsho-qRestore:focus-visible{outline:2px solid var(--dsho-brand,#3985d5);outline-offset:2px}
+.dsho-qOptionHead{display:flex;align-items:flex-start;gap:9px;padding:9px 11px;font-size:12.5px}
+.dsho-qOptionHead>span:last-child{min-width:0}
+.dsho-qOptionDot{flex:none;display:grid;place-items:center;width:16px;height:16px;margin-top:2px;border:1.5px solid var(--dsw-alias-border-l2,#aab2bd);border-radius:50%}
+.dsho-qOption.selected .dsho-qOptionDot{border-color:var(--dsho-brand,#3985d5)}
+.dsho-qOption.selected .dsho-qOptionDot:after{content:'';width:8px;height:8px;border-radius:50%;background:var(--dsho-brand,#3985d5)}
+.dsho-qOption[role=checkbox] .dsho-qOptionDot{border-radius:4px}
+.dsho-qOption[role=checkbox].selected .dsho-qOptionDot:after{border-radius:2px}
+.dsho-qOption small{display:block;margin-top:2px;color:var(--dsw-alias-label-secondary)}
+.dsho-qOption>.dsho-mediaItem{border:0;border-bottom:1px solid var(--dsw-alias-border-l4);border-radius:0}
+.dsho-qOption>.dsho-mediaItem img{height:112px;object-fit:cover}
+.dsho-qDialog textarea{box-sizing:border-box;width:100%;min-height:58px;resize:vertical;padding:8px 10px;border:1px solid var(--dsw-alias-border-l4);border-radius:8px;background:var(--dsw-alias-bg-layer-3);color:inherit;font:inherit;font-size:12.5px}
+.dsho-qDialog textarea:focus{outline:2px solid color-mix(in srgb,var(--dsho-brand,#3985d5) 28%,transparent);border-color:var(--dsho-brand,#3985d5)}
+.dsho-qError{color:#b3261e;font-size:12px}
+.dsho-qFoot{margin-top:12px}
+.dsho-qFoot>div{display:flex;gap:8px}
+.dsho-qFoot button,.dsho-qRestore{border:1px solid var(--dsw-alias-border-l4,light-dark(#dce2e8,#414650));border-radius:8px;padding:7px 12px;background:var(--dsw-alias-bg-layer-3,light-dark(#fff,#292d35));color:inherit;cursor:pointer;font:inherit;font-size:12px;transition:background .15s,border-color .15s,transform .15s}
+.dsho-qFoot button:hover{border-color:var(--dsho-brand,#3985d5);background:color-mix(in srgb,var(--dsho-brand,#3985d5) 8%,var(--dsw-alias-bg-layer-3,light-dark(#fff,#292d35)))}
+.dsho-qFoot>div button:last-child{background:var(--dsho-brand,#2879c7);color:#fff;border-color:var(--dsho-brand,#2879c7)}
+.dsho-qFoot>div button:last-child:hover{filter:brightness(1.1)}
+.dsho-qFoot button:disabled{opacity:.55;cursor:wait}
+.dsho-qRestore{position:fixed;bottom:22px;right:22px;z-index:10000;max-width:min(320px,calc(100vw - 44px));overflow:hidden;text-overflow:ellipsis;white-space:nowrap;box-shadow:0 7px 24px rgb(0 0 0 / 20%);border:2px solid transparent;border-radius:999px;padding:9px 16px;background:linear-gradient(var(--dsw-alias-bg-layer-2,light-dark(#fff,#292d35)),var(--dsw-alias-bg-layer-2,light-dark(#fff,#292d35))) padding-box,linear-gradient(90deg,#e5a64d,#f8db92,#e5a64d,#f8db92) border-box;background-size:100% 100%,300% 100%;animation:dsho-qMarquee 2.6s linear infinite}
+.dsho-qRestore:hover{transform:translateY(-2px);color:var(--dsho-warn,light-dark(#a76108,#e8a04c));box-shadow:0 9px 28px rgb(0 0 0 / 25%)}
+@keyframes dsho-qMarquee{to{background-position:0 0,100% 0}}
+@media (prefers-reduced-motion:reduce){.dsho-qRestore{animation:none}}
+@media (max-width:560px){.dsho-qDialog{padding:15px}.dsho-qDialog h2{font-size:16px}}
 .dsho-detail-err{background:color-mix(in srgb,var(--dsho-err) 5%,transparent)}
-/* 子会话 task_update 摘要行（非 input_required 调用的极简渲染） */
+/* 子会话 task_* 摘要行（非提问工具的极简渲染） */
 .dsho-wRow{display:flex;align-items:center;gap:7px;padding:4px 8px;font-size:12px;color:var(--dsw-alias-label-secondary);min-width:0}
 .dsho-wRowTitle{flex:none;font-weight:600;color:var(--dsw-alias-label-primary)}
 .dsho-wRowStatus{flex:none;font-size:10.5px;border:.5px solid var(--dsho-line);border-radius:999px;padding:0 7px}
@@ -200,7 +239,7 @@ body { margin: 0; background: var(--dsw-alias-bg-layer-1); font-family: -apple-s
 .mock-demoBar button:hover{background:#eff1f3}
 .mock-demoBar .mock-demoPrimary{border-color:#d9a05f;background:#fff7ed;color:#93500b}
 [hidden]{display:none!important}
-@media (prefers-reduced-motion:reduce){.dsho-conv-attention::after{animation:none;opacity:.08}}
+@media (prefers-reduced-motion:reduce){.dsho-conv-attention{animation:none;box-shadow:0 0 0 3px color-mix(in srgb,var(--dsho-warn) 22%,transparent)}}
 
 /* tabs：沿用 headerButton 语言 */
 .dsho-tabs { display: flex; gap: 6px; margin-left: auto; }
@@ -267,6 +306,18 @@ body { margin: 0; background: var(--dsw-alias-bg-layer-1); font-family: -apple-s
 .dsho-unscheduledCount{display:inline-flex;align-items:center;justify-content:center;min-width:18px;height:18px;padding:0 5px;border-radius:999px;background:var(--dsw-alias-bg-layer-3);color:var(--dsw-alias-label-secondary);font-size:9px}
 .dsho-unscheduledRule{margin-left:auto;color:var(--dsw-alias-label-tertiary);font-size:9px}
 .dsho-created{flex:none;padding:0 6px;border:.5px solid var(--dsho-line);border-radius:999px;color:var(--dsw-alias-label-tertiary);font-size:9px;line-height:15px;white-space:nowrap}
+/* 多媒体问题弹窗：问题主体媒体与选项预览分别呈现；整张选项卡可点。 */
+.demo-art{width:100%;height:112px;background:#edf1f5}
+.demo-art.a{background:radial-gradient(circle at 74% 23%,#ffde9d 0 13%,transparent 14%),linear-gradient(145deg,#193666 12%,#3c86a6 60%,#f0b26a 60%)}
+.demo-art.b{background:radial-gradient(circle at 30% 40%,#eb674d 0 18%,transparent 19%),linear-gradient(35deg,#edc6a1 30%,#f4e6ce 30% 64%,#477061 65%)}
+.demo-art.c{background:radial-gradient(circle at 68% 60%,#e3bff1 0 19%,transparent 20%),linear-gradient(135deg,#432f70,#7a66b1 60%,#db9ac0)}
+.dsho-qMedia .demo-art{height:96px;border:1px solid var(--dsho-line);border-radius:8px}
+.dsho-qOption>.demo-art{border-bottom:1px solid var(--dsho-line)}
+.dsho-qOption{font:inherit;color:inherit;text-align:left}
+.dsho-qDialog textarea{resize:none}
+.dsho-qBackdrop[hidden],.dsho-qRestore[hidden]{display:none}
+.dsho-qRestore{font:inherit}
+.dsho-qFoot{font-size:12px}
 </style>
 </head>
 <body>
@@ -274,27 +325,58 @@ body { margin: 0; background: var(--dsw-alias-bg-layer-1); font-family: -apple-s
   <div class="mock-demoText"><b>待操作提醒演示</b><span id="demoState">看板已打开，仅高亮目标任务</span></div>
   <button id="demoToggle" onclick="toggleBoardDemo()">收起看板</button>
   <button class="mock-demoPrimary" onclick="simulateInputRequired()">模拟进入待操作</button>
+  <button id="overallCase" type="button" onclick="openQuestion(&quot;overall&quot;)">试试三图整体评价</button>
 </div>
 <div class="mock-wrap dsho-board" id="boardPanel" style="min-height:auto">
 
   <h2 class="dsho-title" style="display:flex;align-items:center">
-    任务看板
+    任务看板 · 2 个子会话
     <span class="dsho-tabs">
-      <span class="dsho-tab on" id="tab-board" onclick="switchTab('board')"><span class="dsho-notif dsho-notif-completed" id="notif"></span>看板</span>
+      <span class="dsho-tab on" id="tab-board" onclick="switchTab('board')"><span class="dsho-notif dsho-notif-completed" id="notif"></span>会话</span>
       <span class="dsho-tab" id="tab-sched" onclick="switchTab('sched')">日程</span>
     </span>
   </h2>
 
-  <!-- ═══ 看板 tab（与线上一致的会话卡结构）═══ -->
+  <!-- 会话页：问题只显示入口；完整作答使用共享弹窗 -->
   <div class="dsho-pane on" id="pane-board">
 
     <section class="dsho-conv dsho-conv-active">
       <div class="dsho-convHead" onclick="toggleConv(this)">
         <span class="dsho-chevron"></span>
         <span class="dsho-convTitle">体检机构对比</span>
-        <span class="dsho-badge dsho-badge-idle">空闲</span>
+        <span class="dsho-badge dsho-badge-completed">已完成</span>
         <button class="dsho-open" onclick="event.stopPropagation()">打开子会话</button>
       </div>
+        <div class="dsho-todos">
+          <div class="dsho-todosHead">用户待办/日程 <span class="dsho-todosCount">2 条</span></div>
+          <div class="dsho-todo" onclick="toggleTodo(this)">
+            <button class="dsho-todoCheck" onclick="checkTodo(this, event)">✓</button>
+            <div class="dsho-todoBody">
+              <div class="dsho-todoLine">
+                <span class="dsho-todoTitle">向财务确认发票抬头要求</span>
+                <span class="dsho-todoPriority dsho-todoPriority-P1">P1</span>
+                <span class="dsho-todoTime dsho-todoTime-over">已过期 11-12 12:00</span>
+              </div>
+              <div class="dsho-todoDetail">
+                <div class="dsho-dRow"><span class="dsho-dIcon">📝</span><span class="dsho-dText">抬头开公司还是个人、是否要税号、是否接受普票</span></div>
+              </div>
+            </div>
+          </div>
+          <div class="dsho-todo" onclick="toggleTodo(this)">
+            <button class="dsho-todoCheck" onclick="checkTodo(this, event)">✓</button>
+            <div class="dsho-todoBody">
+              <div class="dsho-todoLine">
+                <span class="dsho-todoTitle">电话核实西电体检院区</span>
+                <span class="dsho-todoPriority dsho-todoPriority-P2">P2</span>
+                <span class="dsho-todoTime dsho-todoTime-soon">11-14 09:00 → 18:00</span>
+              </div>
+              <div class="dsho-todoDetail">
+                <div class="dsho-dRow"><span class="dsho-dIcon">📝</span><span class="dsho-dText">确认周末号源与发票抬头；地址待电话核实</span></div>
+                <div class="dsho-dRow"><span class="dsho-dIcon">👤</span><span class="dsho-dChips"><span class="dsho-chip dsho-chip-person"><b>西电集团医院</b> <em>029-84225996</em></span></span></div>
+              </div>
+            </div>
+          </div>
+        </div>
       <div class="dsho-body"><div>
         <ul class="dsho-tasks">
           <li class="dsho-task">
@@ -322,68 +404,29 @@ body { margin: 0; background: var(--dsw-alias-bg-layer-1); font-family: -apple-s
           </li>
         </ul>
 
-        <div class="dsho-todos">
-          <div class="dsho-todosHead">日程 <span class="dsho-todosCount">2 条待办</span></div>
-          <div class="dsho-todo" onclick="toggleTodo(this)">
-            <button class="dsho-todoCheck" onclick="checkTodo(this, event)">✓</button>
-            <div class="dsho-todoBody">
-              <div class="dsho-todoLine">
-                <span class="dsho-todoTitle">向财务确认发票抬头要求</span>
-                <span class="dsho-todoPriority dsho-todoPriority-P1">P1</span>
-                <span class="dsho-todoTime dsho-todoTime-over">10-27 12:00</span>
-              </div>
-              <div class="dsho-todoDetail">
-                <div class="dsho-dRow"><span class="dsho-dIcon">📝</span><span class="dsho-dText">抬头开公司还是个人、是否要税号、是否接受普票</span></div>
-                <div class="dsho-dRow"><span class="dsho-dIcon">📞</span><span class="dsho-dChips"><span class="dsho-chip dsho-chip-person"><b>爱康高新分院</b> <em>4000890999 转 2902</em></span></span></div>
-              </div>
-            </div>
-          </div>
-          <div class="dsho-todo" onclick="toggleTodo(this)">
-            <button class="dsho-todoCheck" onclick="checkTodo(this, event)">✓</button>
-            <div class="dsho-todoBody">
-              <div class="dsho-todoLine">
-                <span class="dsho-todoTitle">电话核实西电体检院区</span>
-                <span class="dsho-todoPriority dsho-todoPriority-P2">P2</span>
-                <span class="dsho-todoTime dsho-todoTime-soon">10-28 18:00</span>
-              </div>
-              <div class="dsho-todoDetail">
-                <div class="dsho-dRow"><span class="dsho-dIcon">📝</span><span class="dsho-dText">大庆路 450 号还是丰登路 97 号、周末放号、公司抬头</span></div>
-              </div>
-            </div>
-          </div>
-        </div>
       </div></div>
+
     </section>
 
     <section class="dsho-conv dsho-conv-attention" id="attentionConversation">
       <div class="dsho-convHead" onclick="toggleConv(this)">
         <span class="dsho-chevron"></span>
-        <span class="dsho-convTitle">家庭事务</span>
+        <span class="dsho-convTitle">视觉风格方案</span>
         <span class="dsho-badge dsho-badge-input_required">待你操作</span>
         <button class="dsho-open" onclick="event.stopPropagation()">打开子会话</button>
       </div>
+      <button class="dsho-ask dsho-askEntry" id="askEntry" type="button" onclick="openQuestion(&quot;choose&quot;)"><span class="dsho-askIcon">?</span><span><b>待你操作</b><small>你更喜欢哪张封面图？</small></span><span>回答 ›</span></button>
       <div class="dsho-body"><div>
         <ul class="dsho-tasks">
-          <li class="dsho-task dsho-task-attention" id="attentionTask">
+          <li class="dsho-task" id="attentionTask">
             <div class="dsho-taskHead">
               <span class="dsho-badge dsho-badge-input_required">待你操作</span>
-              <span class="dsho-taskSubject">订周末蛋糕</span>
+              <span class="dsho-taskSubject">确认视觉风格</span>
             </div>
             <div class="dsho-taskFoot"><span>创建 10-29 15:40</span><span class="dsho-dur">耗时 1m12s</span></div>
           </li>
         </ul>
-        <div class="dsho-ask">
-          <div class="dsho-askHead"><span class="dsho-askIcon">?</span>子会话向你提问 · 订周末蛋糕</div>
-          <div class="dsho-askItem">
-            <div class="dsho-askQ"><b>蛋糕口味：</b>希望预订哪一种？</div>
-            <div class="dsho-askDetail">选好口味后，子会话会继续完成预订。</div>
-            <div class="dsho-askOpts">
-              <button class="dsho-opt" onclick="selectDemoOption(this)">巧克力</button>
-              <button class="dsho-opt" onclick="selectDemoOption(this)">水果</button>
-              <button class="dsho-opt" onclick="selectDemoOption(this)">抹茶</button>
-            </div>
-          </div>
-        </div>
+
       </div></div>
     </section>
 
@@ -429,9 +472,130 @@ body { margin: 0; background: var(--dsw-alias-bg-layer-1); font-family: -apple-s
   </div>
 </div>
 
+<div class="dsho-qBackdrop" id="questionBackdrop" role="presentation" hidden>
+  <section class="dsho-qDialog" id="questionDialog" role="dialog" aria-modal="true" aria-labelledby="questionTitle">
+    <header class="dsho-qHead"><span>待你回答 · 1/1</span><button type="button" id="hideQuestion" aria-label="收起问题">×</button></header>
+    <small class="dsho-qKicker">风格确认</small>
+    <h2 id="questionTitle"></h2><p class="dsho-qDetail" id="questionDetail"></p>
+    <div class="dsho-qMedia" id="questionMedia"></div><div class="dsho-qOptions" id="questionOptions"></div>
+    <textarea id="questionCustom" rows="2" maxlength="2000" placeholder="补充原因（可选）"></textarea>
+    <footer class="dsho-qFoot"><button type="button" id="laterQuestion">稍后回答</button><div><button type="button" id="submitQuestion" disabled>提交回答</button></div></footer>
+  </section>
+</div>
+<button class="dsho-qRestore" id="restoreQuestion" type="button" hidden>待你回答 · 风格确认</button>
+
 <script src="./vendor/fullcalendar/fullcalendar.global.min.js"></script>
 <script src="./vendor/fullcalendar/breezy.global.min.js"></script>
 <script>
+  const QUESTION_CASES = {
+    choose: {
+      question: '你更喜欢哪张封面图？',
+      detail: '直接点击图片即可选择，也可以补充偏好。', media: [],
+      options: [
+        { id: 'o1', label: '方案 A', description: '清爽科技', preview: 'a' },
+        { id: 'o2', label: '方案 B', description: '温暖自然', preview: 'b' },
+      ],
+    },
+    overall: {
+      question: '这三张图的整体风格可行吗？',
+      detail: '请看整体视觉方向，而不是逐张选择。', media: ['a', 'b', 'c'],
+      options: [
+        { id: 'o1', label: '可行', description: '沿这个方向继续' },
+        { id: 'o2', label: '不可行', description: '需要换一个方向' },
+      ],
+    },
+  };
+  let questionKind = 'choose', selectedOption = '';
+  function fitQuestion() {
+    const dialog = document.getElementById('questionDialog');
+    dialog.style.transform = 'scale(' + Math.min(1, (innerWidth - 32) / dialog.offsetWidth, (innerHeight - 32) / dialog.offsetHeight) + ')';
+  }
+  new ResizeObserver(fitQuestion).observe(document.getElementById('questionDialog'));
+  addEventListener('resize', fitQuestion);
+  function renderQuestion() {
+    const item = QUESTION_CASES[questionKind];
+    document.getElementById('questionTitle').textContent = item.question;
+    document.getElementById('questionDetail').textContent = item.detail;
+    document.getElementById('questionMedia').innerHTML = item.media.map(style => '<div class="demo-art ' + style + '"></div>').join('');
+    document.getElementById('questionMedia').hidden = !item.media.length;
+    const root = document.getElementById('questionOptions');
+    root.replaceChildren();
+    for (const option of item.options) {
+      const card = document.createElement('div');
+      card.className = 'dsho-qOption' + (option.preview ? '' : ' flat');
+      card.tabIndex = 0;
+      card.setAttribute('role', 'radio');
+      card.setAttribute('aria-checked', String(option.id === selectedOption));
+      if (option.id === selectedOption) card.classList.add('selected');
+      if (option.preview) {
+        const preview = document.createElement('div');
+        preview.className = 'demo-art ' + option.preview;
+        card.append(preview);
+      }
+      const head = document.createElement('div');
+      head.className = 'dsho-qOptionHead';
+      const dot = document.createElement('span');
+      dot.className = 'dsho-qOptionDot';
+      dot.setAttribute('aria-hidden', 'true');
+      const text = document.createElement('span');
+      const label = document.createElement('b');
+      label.textContent = option.label;
+      const description = document.createElement('small');
+      description.textContent = option.description;
+      text.append(label, description);
+      head.append(dot, text);
+      card.append(head);
+      card.onclick = () => {
+        selectedOption = option.id;
+        root.querySelectorAll('.dsho-qOption').forEach(node => {
+          node.classList.toggle('selected', node === card);
+          node.setAttribute('aria-checked', String(node === card));
+        });
+        document.getElementById('submitQuestion').disabled = false;
+      };
+      card.onkeydown = event => {
+        if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); card.click(); }
+      };
+      root.append(card);
+    }
+    document.getElementById('submitQuestion').disabled = !selectedOption && !document.getElementById('questionCustom').value.trim();
+  }
+  function openQuestion(kind = questionKind) {
+    if (kind !== questionKind) selectedOption = '';
+    questionKind = kind;
+    renderQuestion();
+    document.getElementById('questionBackdrop').hidden = false;
+    document.getElementById('restoreQuestion').hidden = true;
+    requestAnimationFrame(fitQuestion);
+  }
+  function hideQuestion() {
+    document.getElementById('questionBackdrop').hidden = true;
+    document.getElementById('restoreQuestion').hidden = document.getElementById('askEntry').hidden;
+  }
+  document.getElementById('hideQuestion').onclick = hideQuestion;
+  document.getElementById('laterQuestion').onclick = hideQuestion;
+  document.getElementById('restoreQuestion').onclick = () => openQuestion();
+  document.getElementById('questionCustom').oninput = event => {
+    document.getElementById('submitQuestion').disabled = !selectedOption && !event.target.value.trim();
+  };
+  document.getElementById('questionBackdrop').onmousedown = event => {
+    if (event.target === event.currentTarget) hideQuestion();
+  };
+  addEventListener('keydown', event => { if (event.key === 'Escape') hideQuestion(); });
+  document.getElementById('submitQuestion').onclick = () => {
+    const choice = QUESTION_CASES[questionKind].options.find(option => option.id === selectedOption);
+    hideQuestion();
+    document.getElementById('askEntry').hidden = true;
+    document.getElementById('restoreQuestion').hidden = true;
+    document.getElementById('attentionConversation').classList.remove('dsho-conv-attention');
+    document.querySelectorAll('#attentionConversation .dsho-badge').forEach(badge => {
+      badge.className = 'dsho-badge dsho-badge-running';
+      badge.textContent = '进行中';
+    });
+    document.getElementById('demoState').textContent = choice
+      ? '设计稿：已选择 ' + choice.label + '；真实调用会由 Host 返回 option.id=' + selectedOption
+      : '设计稿：已提交自定义回答，真实调用会由 Host 返回 custom';
+  };
   function toggleBoardDemo() {
     const panel = document.getElementById('boardPanel');
     panel.hidden = !panel.hidden;
@@ -446,18 +610,16 @@ body { margin: 0; background: var(--dsw-alias-bg-layer-1); font-family: -apple-s
       document.getElementById('demoToggle').textContent = '收起看板';
       switchTab('board');
     }
-    const task = document.getElementById('attentionTask');
+    const entry = document.getElementById('askEntry');
+    entry.hidden = false;
     const conversation = document.getElementById('attentionConversation');
-    task.classList.remove('dsho-task-attention');
+    entry.classList.remove('dsho-askEntry');
     conversation.classList.remove('dsho-conv-attention');
-    void task.offsetWidth;
-    task.classList.add('dsho-task-attention');
+    void entry.offsetWidth;
+    entry.classList.add('dsho-askEntry');
     conversation.classList.add('dsho-conv-attention');
+    document.querySelectorAll('#attentionConversation .dsho-badge').forEach(badge => { badge.className = 'dsho-badge dsho-badge-input_required'; badge.textContent = '待你操作'; });
     document.getElementById('demoState').textContent = wasClosed ? '任务进入待操作：已自动弹出看板并高亮' : '任务进入待操作：看板保持原状，仅重新高亮';
-  }
-  function selectDemoOption(button) {
-    button.parentElement.querySelectorAll('.dsho-opt').forEach(option => option.classList.remove('dsho-opt-sel'));
-    button.classList.add('dsho-opt-sel');
   }
   function switchTab(name) {
     document.getElementById('pane-board').classList.toggle('on', name === 'board');
@@ -478,15 +640,15 @@ body { margin: 0; background: var(--dsw-alias-bg-layer-1); font-family: -apple-s
   const TODO_COLORS = { P0: '#d5483f', P1: '#d97706', P2: '#a87900', P3: '#2f8f57' };
   const DEMO_TODAY = '2026-11-13';
   const calendarEvents = [
-    { id: 'e2', title: '产品发布保障', start: '2026-11-13', end: '2026-11-16', priority: 'P0', time: '今天 20:00 → 11-16 08:00', source: '产品发布', remark: '跨周事项：FullCalendar 自动续接到下一周。' },
-    { id: 'e3', title: '提交周报', start: '2026-11-12', end: '2026-11-12', priority: 'P2', time: '18:00', source: '工作事务' },
-    { id: 'e4', title: '给妈妈订周末蛋糕', start: '2026-11-13', end: '2026-11-13', priority: 'P3', time: '20:00', source: '家庭事务' },
-    { id: 'e5', title: '电话回访', start: '2026-11-11', end: '2026-11-11', priority: 'P3', time: '15:30', source: '客户维护' },
-    { id: 'e6', title: '部门周会', start: '2026-11-16', end: '2026-11-16', priority: 'P1', time: '10:00 → 11:30', source: '工作事务' },
-    { id: 'e7', title: '团队秋游', start: '2026-11-21', end: '2026-11-22', priority: 'P3', time: '11-21 08:30 → 11-22 17:00', source: '团队活动' },
-    { id: 'e8', title: '客户演示', start: '2026-11-13', end: '2026-11-13', priority: 'P1', time: '14:00 → 15:00', source: '客户维护' },
-    { id: 'e9', title: '设计评审', start: '2026-11-13', end: '2026-11-13', priority: 'P2', time: '16:00 → 17:00', source: '产品发布' },
-    { id: 'e10', title: '发布复盘', start: '2026-11-13', end: '2026-11-13', priority: 'P3', time: '18:30 → 19:00', source: '产品发布' },
+    { id: 'e2', title: '产品发布保障', startAt: '2026-11-13T20:00:00+08:00', endAt: '2026-11-16T08:00:00+08:00', priority: 'P0', time: '今天 20:00 → 11-16 08:00', source: '产品发布', remark: '跨周事项：FullCalendar 自动续接到下一周。' },
+    { id: 'e3', title: '提交周报', startAt: '2026-11-12T18:00:00+08:00', priority: 'P2', time: '18:00', source: '工作事务' },
+    { id: 'e4', title: '给妈妈订周末蛋糕', startAt: '2026-11-13T20:00:00+08:00', priority: 'P3', time: '20:00', source: '家庭事务' },
+    { id: 'e5', title: '电话回访', startAt: '2026-11-11T15:30:00+08:00', priority: 'P3', time: '15:30', source: '客户维护' },
+    { id: 'e6', title: '部门周会', startAt: '2026-11-16T10:00:00+08:00', endAt: '2026-11-16T11:30:00+08:00', priority: 'P1', time: '10:00 → 11:30', source: '工作事务' },
+    { id: 'e7', title: '团队秋游', startAt: '2026-11-21T08:30:00+08:00', endAt: '2026-11-22T17:00:00+08:00', priority: 'P3', time: '11-21 08:30 → 11-22 17:00', source: '团队活动' },
+    { id: 'e8', title: '客户演示', startAt: '2026-11-13T14:00:00+08:00', endAt: '2026-11-13T15:00:00+08:00', priority: 'P1', time: '14:00 → 15:00', source: '客户维护' },
+    { id: 'e9', title: '设计评审', startAt: '2026-11-13T16:00:00+08:00', endAt: '2026-11-13T17:00:00+08:00', priority: 'P2', time: '16:00 → 17:00', source: '产品发布' },
+    { id: 'e10', title: '发布复盘', startAt: '2026-11-13T18:30:00+08:00', endAt: '2026-11-13T19:00:00+08:00', priority: 'P3', time: '18:30 → 19:00', source: '产品发布' },
   ];
   const unscheduledEvents = [
     { id: 'u1', title: '确认搬家报价', priority: 'P0', createdAt: '2026-11-12T09:20:00+08:00', created: '创建 11-12 09:20', source: '家庭事务' },
@@ -498,6 +660,7 @@ body { margin: 0; background: var(--dsw-alias-bg-layer-1); font-family: -apple-s
   const pad2 = n => String(n).padStart(2, '0');
   const keyOf = date => `${date.getFullYear()}-${pad2(date.getMonth() + 1)}-${pad2(date.getDate())}`;
   const dateOf = key => { const [y, m, d] = key.split('-').map(Number); return new Date(y, m - 1, d); };
+  const calendarDate = value => value.slice(0, 10);
   const addDays = (date, amount) => { const next = new Date(date); next.setDate(next.getDate() + amount); return next; };
   let selectedDate = DEMO_TODAY;
 
@@ -525,7 +688,7 @@ body { margin: 0; background: var(--dsw-alias-bg-layer-1); font-family: -apple-s
     height: 'auto',
     headerToolbar: false,
     borderless: true,
-    dayMaxEventRows: 4,
+    dayMaxEventRows: 5,
     dayHeaderClass: 'dsho-dowCell',
     dayHeaderContent(info) {
       const labels = ['日', '一', '二', '三', '四', '五', '六'];
@@ -546,9 +709,9 @@ body { margin: 0; background: var(--dsw-alias-bg-layer-1); font-family: -apple-s
     events: calendarEvents.map(item => ({
       id: item.id,
       title: item.title,
-      start: item.start,
-      // FullCalendar 的全天 end 为排他日期，示例数据中的 end 为包含当日。
-      end: keyOf(addDays(dateOf(item.end), 1)),
+      start: calendarDate(item.startAt),
+      // 月历色条按日投影；源数据保留原始时刻。FullCalendar 全天 end 为排他日。
+      end: keyOf(addDays(dateOf(calendarDate(item.endAt ?? item.startAt)), 1)),
       allDay: true,
       color: TODO_COLORS[item.priority],
       contrastColor: '#fff',
@@ -600,11 +763,16 @@ body { margin: 0; background: var(--dsw-alias-bg-layer-1); font-family: -apple-s
 
   function renderSelectedDay() {
     const date = dateOf(selectedDate);
-    const items = calendarEvents.filter(item => item.start <= selectedDate && item.end >= selectedDate)
-      .sort((a, b) => a.priority.localeCompare(b.priority) || a.time.localeCompare(b.time));
+    const items = calendarEvents.filter(item => calendarDate(item.startAt) <= selectedDate && calendarDate(item.endAt ?? item.startAt) >= selectedDate)
+      .sort((a, b) => a.startAt.localeCompare(b.startAt));
     const weekdays = ['日', '一', '二', '三', '四', '五', '六'];
     document.getElementById('selectedDayTitle').innerHTML = `${date.getMonth() + 1}月${date.getDate()}日 周${weekdays[date.getDay()]}<span class="cnt">· ${items.length} 项</span>${selectedDate === DEMO_TODAY ? '<span class="dsho-todayTag">今天</span>' : ''}`;
-    document.getElementById('selectedDayTodos').innerHTML = items.length ? items.map(item => todoRow(item, item.time)).join('') : '<div class="dsho-dayEmpty">这一天没有待办/日程</div>';
+    const overdue = items.filter(item => (item.endAt ?? item.startAt) < DEMO_TODAY);
+    const current = items.filter(item => !overdue.includes(item));
+    document.getElementById('selectedDayTodos').innerHTML = items.length
+      ? (overdue.length ? '<div class="dsho-groupLabel overdue">已过期</div>' + overdue.map(item => todoRow(item, item.time)).join('') : '')
+        + (current.length ? '<div class="dsho-groupLabel">当日事项</div>' + current.map(item => todoRow(item, item.time)).join('') : '')
+      : '<div class="dsho-dayEmpty">这一天没有待办/日程</div>';
   }
 
   function renderUnscheduled() {

@@ -168,10 +168,20 @@ export const deliverySchema = z.discriminatedUnion('state', [
   }).strict(),
 ])
 
-/** 问题选项：与平台 ask_user_question 同构（推荐项放首位，label 后缀 "(Recommended)"）。 */
+/** 问题主体与选项共用媒体资源；URL/HTML 留待安全渲染实现后开放。 */
+export const questionMediaSchema = z.object({
+  kind: z.enum(['image', 'audio', 'video', 'file']),
+  source: relativePathSchema,
+  caption: trimmed.max(200).optional(),
+  poster: relativePathSchema.optional(),
+}).strict()
+
+/** 模型无需提供 ID；Host 为选项分配稳定 ID。 */
 const questionOptionSchema = z.object({
+  id: trimmed.max(40).optional(),
   label: trimmed.max(100),
   description: trimmed.max(300).optional(),
+  preview: questionMediaSchema.optional(),
 }).strict()
 
 /** input_required 的结构化问题（Worker 上报输入）：id 可省略，Host 自动补 q1/q2/… 并在返回值回显。 */
@@ -180,15 +190,33 @@ export const questionItemInputSchema = z.object({
   question: trimmed.max(2_000),
   header: trimmed.max(60).optional(),
   detail: trimmed.max(1_000).optional(),
+  media: z.array(questionMediaSchema).max(12).optional(),
   options: z.array(questionOptionSchema).max(10).optional(),
   multi_select: z.boolean().optional(),
 }).strict()
 
 /** 持久化的问题（id 已由 Host 补齐）。 */
-const questionItemObjectSchema = questionItemInputSchema.required({ id: true })
+const questionItemObjectSchema = questionItemInputSchema.required({ id: true }).extend({
+  options: z.array(questionOptionSchema.required({ id: true })).max(10).optional(),
+})
 export type QuestionItem = z.infer<typeof questionItemObjectSchema>
 
-/** 看板与 Worker 原生卡共用的作答项。 */
+// 旧记录的问题/选项没有 ID；读盘时补齐，与新请求的 Host 分配规则一致。
+const storedQuestionsSchema = z.preprocess(value => Array.isArray(value) ? value.map((question, index) => {
+  if (!question || typeof question !== 'object') return question
+  const item = question as Record<string, unknown>
+  return {
+    ...item,
+    id: item.id ?? 'q' + (index + 1),
+    options: Array.isArray(item.options) ? item.options.map((option, optionIndex) =>
+      option && typeof option === 'object'
+        ? { ...option, id: (option as Record<string, unknown>).id ?? 'o' + (optionIndex + 1) }
+        : option,
+    ) : item.options,
+  }
+}) : value, z.array(questionItemObjectSchema).max(10))
+
+/** 看板与会话弹窗共用的作答项。 */
 export const questionAnswerSchema = z.object({
   id: trimmed,
   selected: z.array(trimmed.max(100)).max(10).default([]),
@@ -235,8 +263,8 @@ const baseTaskSchema = z.object({
   header: z.string().optional(),
   progressNote: z.string().optional(),
   /** input_required 的结构化问题（id 已由 Host 补齐）。 */
-  questions: z.array(questionItemObjectSchema).max(10).optional(),
-  /** 看板与 Worker 原生卡的作答留痕。 */
+  questions: storedQuestionsSchema.optional(),
+  /** 看板与会话弹窗的作答留痕。 */
   answers: z.array(questionAnswerSchema).max(10).optional(),
   /** completed 终态：result 是无路径的简短结论，card 放结构化明细，artifacts 提供关键文件入口，三者不重复。 */
   result: z.string().optional(),

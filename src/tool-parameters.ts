@@ -19,6 +19,41 @@ const HEADER_PARAM = { type: 'string', description: '极度精简的状态标题
 const PROGRESS_NOTE_PARAM = { type: 'string', description: '一行精简进展（看板直接显示；信息优先，可带三分幽默）' } as const
 const SCHEDULE_ID_PARAM = { type: 'string', description: '批量定时消息中必填：本次上报对应消息里的 schedule_id；单条定时消息和普通任务省略' } as const
 
+const MEDIA_PARAM = {
+  type: 'object', additionalProperties: false,
+  properties: {
+    kind: { type: 'string', required: true, enum: ['image', 'audio', 'video', 'file'], description: '预览类型；url/html 暂未开放' },
+    source: { type: 'string', required: true, description: '当前会话工作区内的相对路径；不可越界' },
+    caption: { type: 'string', description: '媒体说明' },
+    poster: { type: 'string', description: '视频封面，工作区相对路径' },
+  },
+} as const
+
+export const QUESTION_TOOL_PARAMETERS = {
+  questions: {
+    type: 'array', required: true, description: '一次问清；问题与选项 ID 可省略，Host 自动分配',
+    items: {
+      type: 'object', additionalProperties: false,
+      properties: {
+        id: { type: 'string', description: '问题 ID，通常省略' },
+        question: { type: 'string', required: true, description: '直接向用户展示的问题' },
+        header: { type: 'string', description: '简短分组标题' },
+        detail: { type: 'string', description: '补充说明' },
+        media: { type: 'array', items: MEDIA_PARAM, description: '问题主体展示的素材；如多张待评价图片，不等于选项；已在选项预览展示的内容不要重复放这里' },
+        options: { type: 'array', description: '选择项；无选项时为自由输入', items: {
+          type: 'object', additionalProperties: false, properties: {
+            id: { type: 'string', description: '选项 ID，通常省略' },
+            label: { type: 'string', required: true, description: '选项文字' },
+            description: { type: 'string', description: '补充说明' },
+            preview: MEDIA_PARAM,
+          },
+        } },
+        multi_select: { type: 'boolean', description: '允许多选，默认 false' },
+      },
+    },
+  },
+} as const
+
 /** 日程条目（create/update 共用结构，分别导出常量避免双写漂移）。 */
 const SCHEDULE_ITEM_PROPERTIES = {
   title: { type: 'string', required: true, description: '待办/日程标题（极简，≤30 字）' },
@@ -113,32 +148,5 @@ export const TASK_INPUT_REQUIRED_TOOL_PARAMETERS = {
   header: HEADER_PARAM,
   progressNote: PROGRESS_NOTE_PARAM,
   scheduleId: SCHEDULE_ID_PARAM,
-  questions: {
-    type: 'array',
-    required: true,
-    description: '结构化问题（一次问清，id 可省略会自动分配并在返回值回显）',
-    items: {
-      type: 'object',
-      additionalProperties: false,
-      properties: {
-        id: { type: 'string', description: '问题 id，省略则自动分配 q1/q2/…' },
-        question: { type: 'string', required: true, description: '问题正文（可直接展示给用户）' },
-        header: { type: 'string', description: '短标题/分组（如"确认"）' },
-        detail: { type: 'string', description: '补充说明（不出现在选项里）' },
-        options: {
-          type: 'array',
-          description: '可选项；推荐项放首位并在 label 末尾加 (Recommended)',
-          items: {
-            type: 'object',
-            additionalProperties: false,
-            properties: {
-              label: { type: 'string', required: true, description: '短选项文案' },
-              description: { type: 'string', description: '一句话说明该选项的影响' },
-            },
-          },
-        },
-        multi_select: { type: 'boolean', description: '是否可多选，默认单选' },
-      },
-    },
-  },
+  questions: QUESTION_TOOL_PARAMETERS.questions,
 } as const

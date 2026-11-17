@@ -80,6 +80,7 @@ describe('Lead roster 提示词', () => {
     })
     vi.stubGlobal('fetch', vi.fn(async () => new Response('{"ok":true}')))
     const agent = { session: { id: 'lead' }, ctx: {
+      tools: { register: () => () => {} },
       systemPrompt: { section: (section: { name: string, text: () => string, interpolate?: boolean }) => {
         sections.set(section.name, section)
         return () => {}

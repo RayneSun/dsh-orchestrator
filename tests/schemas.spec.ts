@@ -31,6 +31,16 @@ describe('工具输入 Zod 校验', () => {
     expect(snapshot.tasks[0].hasActiveSchedule).toBe(true)
   })
 
+  it('旧问题记录缺少 ID 时按位置补齐，不丢失历史答案', () => {
+    const task = createTask({
+      id: 'task', parentSessionId: 'parent', conversationId: 'conv', predecessorTaskId: null,
+      subject: '旧提问', prompt: '执行',
+    })
+    const parsed = taskSchema.parse({ ...task, questions: [{ question: '选择？', options: [{ label: '甲' }, { label: '乙' }] }], answers: [{ id: 'q1', selected: ['甲'] }] })
+    expect(parsed.questions?.[0]).toMatchObject({ id: 'q1', options: [{ id: 'o1' }, { id: 'o2' }] })
+    expect(parsed.answers?.[0].selected).toEqual(['甲'])
+  })
+
   it('接受完整 dispatch 参数并规范化空白', () => {
     const parsed = dispatchInputSchema.parse({
       subject: '  查询天气  ',
