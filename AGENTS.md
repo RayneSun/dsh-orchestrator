@@ -4,9 +4,9 @@
 
 ## 项目是什么
 
-`@cmjt/dsh-orchestrator`：DSH（DeepSeek Harness，基线 `0.2.1-rc.2`）的编排插件。
+`@cmjt/dsh-orchestrator`：DSH（DeepSeek Harness，最低 `0.2.2-rc.1`）的编排插件。
 
-- **Lead**（主会话，预设 `may-orchestrator-lead`）：理解需求、路由、派发、转发结果。保留 DSH 自带工具；`LEAD_TOOL_DENY` 只隐藏个人记忆写/管理与 GenUI 直接渲染工具。记忆来自 `@cmjt/dsh-personal-memory@0.4.6`，原生 `memory_search/read` 保留，其余记忆工具隐藏。写入手册对 Lead 遮蔽；`memory-policy.ts` 通过记忆插件原生 HTTP 接口设置会话门控：inject=false（允许读入与查询）、write=true/dream=true（停止写入、反思与自动整理）。不导入数据库 API，不解析记忆存储配置，不重建影子工具或工作区记忆链接。
+- **Lead**（主会话，预设 `may-orchestrator-lead`）：理解需求、路由、派发、转发结果。继承工具使用 `capabilities.ts` 生成的封闭 allow；新增未批准的继承工具默认不可见。记忆来自 `@cmjt/dsh-personal-memory@0.4.6`，原生 `memory_search/read` 保留，其余记忆工具隐藏。完整 persona 排除普通系统提示段，不挂 AGENTS/todo/技能入口；`memory-policy.ts` 通过记忆插件原生 HTTP 接口设置会话门控：inject=false（允许读入与查询）、write=true/dream=true（停止写入、反思与自动整理）。不导入数据库 API，不解析记忆存储配置，不重建影子工具或工作区记忆链接。
 - **Worker**（持久**根会话**，预设 `may-orchestrator-worker`）：执行任务。不是 subagent——通过 `agents.create` 创建（无 origin/delegationDepth），与主会话同为一等会话，schedule 等仅 depth-0 可用的宿主能力对 Worker 开放。工具**黑名单**制（只禁编排循环/直接提问/直接 GenUI 渲染及验证），其余宿主与用户安装的工具默认可用。
 - 两层领域模型：**Conversation**（持久子会话/工作流）1—N **TaskRun**（一次派发）。
 - 技术栈：pnpm + TypeScript + Cordis + Zod + tsdown + vitest。4 个入口：主插件、client（看板 React）、typert host/remote（看板与提问 RPC）。
@@ -53,13 +53,13 @@ uv run --no-project --python /usr/bin/python3 python -c 'import subprocess; subp
 
 验证要在**新会话**里做；旧会话可能有历史脏数据。
 
-## rc.2 平台要点（与 alpha.1 的差异）
+## 当前平台要点（0.2.2-rc.1；包含早期 rc.2 行为）
 
 - **prompt 严格插值**：persona suffix 只注册 `provider`/`model` 变量，`{{cwd}}` 等未注册变量直接抛 `unknown prompt variable`（曾导致 Worker 启动即崩）。不要在 persona/suffix 里手写模板变量。
 - **cwd 自动注入**：平台 `dsh-working-directory` 给每个会话注入 `Current working directory: <path>` 上下文（dsh-base 默认加载），无需也不许在提示词里重复声明工作目录。
 - **zod 钉 4.4.3**：rc.2 把 zod 从 4.6.7 回钉 4.4.3；`pnpm-workspace.yaml` 的 `overrides.zod=4.4.3` 防止与 `dsh-storage-domain.defineDomain` 形成双实例类型冲突（pnpm v11 不读 package.json 的 pnpm 字段，必须放 pnpm-workspace.yaml；同文件还有 rc 新包的 `minimumReleaseAgeExclude`）。
 - **根会话能力**：schedule（dsh-tool-schedule）、session-query 等只对 depth-0 会话开放；Worker 根会话化后可用。ralph/workflow 等新编排工具已被 Worker 黑名单覆盖。
-- **systemPrompt section/variable API**：`scoped.systemPrompt.section({name, order, text, interpolate:false})` 用于注入 roster 与遮蔽无关段落；`ctx.systemPrompt.variable()` 仅 agent scope 可用。
+- **systemPrompt section/variable API**：Lead persona 使用 `complete:true/includeRuntimeContext:false`；roster/能力索引用 `context({required:true,interpolate:false})`，Worker 仍用 scoped section 遮蔽少数无关段落；`ctx.systemPrompt.variable()` 仅 agent scope 可用。
 - **权限预设**：`ctx.permissionPresets.set(session, 'danger-full-access')` 按会话同时切换沙箱模式与审批策略（durable，log-only 事件，重复调用 no-op）；预设表在 dsh-base cordis.patch.yml（read-only / workspace-write / danger-full-access）。
 - **concludeTurn**：工具 execute 第二参 `ToolRunContext.concludeTurn()` 给成功结果打 `concludesTurn` 标记，dsh-agent-loop 提交该结果批次后直接结束本轮，不再发起下一次推理；失败结果永远不带标记（模型可重试）。
 - `.npmrc` 的 `verify-deps-before-run=false`：防止 pnpm 在 CI 环境下误判依赖过期而清空 node_modules。
@@ -77,7 +77,7 @@ uv run --no-project --python /usr/bin/python3 python -c 'import subprocess; subp
 | `service.ts` / `pending-answers.ts` / `questions.ts` / `question-preview.ts` | 宿主协调 / 作答等待 / 问答校验 / 安全媒体访问 |
 | `schedule-changes.ts` | 日程整批规划、归属及合并校验，不执行持久化 |
 | `tool-parameters.ts` / `remote.ts` / `host-contracts.ts` | 模型参数 DSL / 看板与提问 RPC 契约 / 宿主结构接口；service 保留 DSL 重导出 |
-| `messages.ts` / `presets.ts` / `lead-policy.ts` / `worker-policy.ts` | 提示词、预设与工具策略 |
+| `messages.ts` / `presets.ts` / `capabilities.ts` / `modes.ts` / `lead-policy.ts` / `worker-policy.ts` | 提示词、预设、Lead 能力表、执行模式与工具策略 |
 | `storage.ts` / `workspaces.ts` / `memory-policy.ts` | 存储域、子工作区路径、Lead 原生记忆只读策略 |
 | `client/Board.tsx` | 会话与日程页签、数据刷新和回调协调 |
 | `client/task-attention.ts` | 任务新进入 input_required 时自动唤起看板；已可见时只保留高亮 |
@@ -96,7 +96,7 @@ uv run --no-project --python /usr/bin/python3 python -c 'import subprocess; subp
 - Conversation 状态：`provisioning / running / idle / input_required / failed`。
 - 终态投递（delivery outbox）由状态机在迁移时统一挂起，**不要**在创建任务或别处预挂 `delivery: pending`（否则看板对运行中任务误报"同步中"）。
 - **终态投递开关**：`OrchestratorService.static Config`（schemastery）声明 3 个 volatile 布尔（deliverOnCompleted/Failed/Interrupted，默认全部 true；input_required 恒不投递，无对应开关或死字段）。volatile 改动经 loader `_commitVolatile` 即时生效、不重启 fiber；服务构造器第二参数接收 volatile 引用（`.get()` 实时读）。判定收敛在纯函数 `deliveryEnabledFor(toggles, status)` 与 `gateTaskDelivery(task, toggles)`（state-machine.ts），挂接点：reportFromWorker 两处 transitionTask 后、onWorkerTurnEnd（manual_stop/failed）、failLaunch、deliverPendingTask 兜底（关闭时清掉存量 pending，不补投）。语义分界：开关只影响"消息是否回投主会话"，上报的状态与进展总是持久化并更新 roster/看板——silent 是整会话不投，开关是按状态不投。
-- **Worker 默认模型**：Config 另有 volatile `workerProvider/workerModel/workerReasoningEffort`（空串=未设置）；设置卡片从 `remote.session.modelCatalog()` 渲染模型与推理强度下拉框。新 Worker 优先使用目录中可用的默认设置，否则沿用 Lead pending → 最近请求头 → 全局默认；旧 Worker 仅在原模型明确不在目录时通过 `agents.selectForNextRequest` 重选，目录查询失败不乱切换，也不重建会话。
+- **Worker 默认模型**：Config 另有 volatile `workerProvider/workerModel/workerReasoningEffort`（空串=未设置）；设置卡片从 `remote.session.modelCatalog()` 渲染模型与推理强度下拉框。新 Worker 优先使用目录中可用的默认设置，否则沿用 Lead pending → 最近请求头 → 全局默认；旧 Worker 仅在原模型明确不在目录时通过 `agent.model.current()/select()` 检查/重选，目录查询失败不乱切换，也不重建会话。
 - **设置页（客户端）**：`src/client/settings-card.tsx` 注册 `plugins.row.config` 槽（key `<包名>#<行id>` = `@cmjt/dsh-orchestrator#may-dsh-orchestrator`），入口：插件管理 → 已安装 → 本包 → 行"配置"。SettingsFormModel+Switch 模式仿 dsh-ciri；`@deepseek-ai/dsh-client-ui-primitives`/`dsh-client-store` 是前端 ModuleLoader 运行时 external（package.json `dsh.client.external` + tsdown neverBundle + vitest alias 桩）；`dsh.client.immediately: true` 保证插件管理页打开时槽位已注册。
 - 所有状态修改走 `service.serialize()` 串行链；涉及改单必须"旧任务 interrupted + reviseConversation 原子切 activeTaskId"先落盘，再做外部调用。
 
@@ -118,14 +118,20 @@ uv run --no-project --python /usr/bin/python3 python -c 'import subprocess; subp
 4. `deliverToWorker` 注入 `revisionPrompt(task)`；followup 排队，在被中止轮次收敛为 idle 后开新一轮。
 5. cancel 异步带来的旧轮次 `turn/end aborted(kind=parent)` 由守卫吞掉，防止误判为手动停止或 failed。
 
+### 执行模式
+
+- `modes.ts` 是模式定义唯一入口，目前仅启用 `general`；不注册 PPT 预设、技能或模型可见模式。将来可提供 persona 与追加插件，仍共用 Worker 生命周期和 deny。
+- `Conversation.mode` 缺字段默认 general；dispatch.mode 可选且不能 default，否则复用会话会被覆盖。新建省略→general、复用省略→沿用、显式不同→写入/中断前报错。
+- 创建 header 的 agentPreset 与 setup.mount 从同一模式解出；冷恢复未知模式保留记录、活动任务 failed(configuration)、会话 failed，并在装配时阻止推理，不能静默降为通用。
+
 ### 工具权限
 
-- Lead **预设挂载面**（presets.ts）：显式挂载自带插件 tool-web（web_search/web_fetch）、tool-fs-search（glob/grep，必配 `sampleOverCapGlobResults`）、tool-fs（read/write/edit/read_image）、tool-present（Worker artifacts 的主会话制品卡交付）、tool-todo（必配 `allowParallelInProgress`）、tool-goal；增强版 `ask_user_question` 由编排服务注册，不挂载同名原生工具。0.2.7 起 tool-web 曾被误删，"一步查询"长期是空头承诺，0.3.16 补回。不挂 bash/terminal/jobs/schedule/session-query/skill/mcp-resources/subagent/teams/worktree——执行与编排都在 Worker 侧；缺必配 config 会新建会话即报 agent-preset/invalid。
-- Lead：**黑名单裁剪**，按注册表过滤记忆写/管理与 GenUI 直接渲染工具，自带工具升级新增不被误藏。记忆工具全部由 dsh-personal-memory 原生注册；仅保留 search/read，其余交给 Worker。orchestrator 不导入记忆插件实现，只通过原生会话门控接口设置策略。
+- Lead：`capabilities.ts` 同时生成 preset 插件行与继承 allow：read/read_image、glob/grep、web_search/web_fetch、present，记忆启用时加 memory_search/read。tool-fs 显式关闭 write/edit/applyPatch；不挂 todo、skill、AGENTS 或命令执行插件。自身 scope 的 orchestrator_dispatch/get 与增强 ask_user_question 不进入 allow。
+- 策略装配：先关推理闸门并装空 allow，再清理旧注册；有界重试安装新 allow 后释放临时掩码。必需首方工具缺失不能静默求交：日志说明后退化 allow:[]（仅自身路由/提问）；空 allow 失败阻止请求。Lead 不监听 tools/change；重装按会话串行，agent 退出及插件卸载清理注册。
+- complete 只取代普通 section；optional context 被抑制、required context（含 cwd）保留。第三方直接改消息或在 agent 自身 scope 注册工具仍不受继承掩码控制；不修改第三方 bundle，不宣称完整隔离。
 - Worker：按 `isWorkerToolForbidden`（worker-policy.ts）枚举工具并 `scoped.tools.restrict({ deny })`，失败时回退 `guard`。编排/派生类禁止项见 `workerForbiddenPatterns`（workflow/ralph/orchestrator），直接向用户提问类见 `workerQuestionPatterns`（ask_user 系，命中时引导改走 task_input_required）；新增"禁止类"工具只改这两张表。子智能体工具由 Worker 预设的 delegation 组显式组合（与平台 standard 预设同款，spawn/fork 后端驻留宿主平面）。
-- **工具清单巡检（每次相关改动必做）**：改 lead-policy/service 工具面相关代码、或 DSH/插件升级后，重新枚举全局工具（扫 DSH core + profile 插件的 defineTool 名字）与 `DSH_CORE_TOOL_BASELINE` 快照对比。运行时也有兜底：Lead 挂载时 `unrecognizedGlobalTools` 发现基线外且未命中 deny 的名字会打 warn。发现新工具 → 确认归属 → 自带的更新基线、第三方的评估加入 LEAD_TOOL_DENY（或确认放行）。用户主动装新插件同样适用。
 - 不要用白名单限制 Worker；仅禁止上述类别，用户后装工具（MCP/浏览器/技能）默认可用。
-- orchestrator 不再捆绑 BrowserSkill、Computer Use 或 QQ 邮箱，Lead 也不保留对应的工具名/前缀遮蔽与 QQ 邮箱提示段抑制。核心工具基线 57 项，含 plugin_manager / plugin_market。
+- orchestrator 不再捆绑 BrowserSkill、Computer Use 或 QQ 邮箱，Lead 也不保留对应的工具名/前缀遮蔽与 QQ 邮箱提示段抑制。不维护宿主全量工具基线或陌生名称告警；新增允许能力只改能力表并验证真实插件注册。
 - 会话权限：Worker 在 configureWorker 时切 `danger-full-access`（沙箱全开放+审批 never）：后台无人值守，默认 workspace-write+ask 会把敏感操作永远卡在审批上；Lead 保持默认。**注意**：cordis 4 的 context proxy 对未 inject 的服务属性访问直接抛错（cannot get property without inject），permissionPresets/schedule 这类不在 static inject 里的可选服务必须用 `ctx.get(name)` 访问，否则 silently 失效（权限切换曾因此从未生效，定时标记同步同因）。
 
 ### 定时任务
@@ -141,7 +147,7 @@ uv run --no-project --python /usr/bin/python3 python -c 'import subprocess; subp
 - 依赖固定为 0.4.6，禁止恢复 latest，避免旧 profile lockfile 继续复用有缺陷的 0.4.5；scoped 包的客户端注册与 bundle 引用已由上游修正，orchestrator 不包含第三方产物补丁。
 - 默认数据家：`$DSH_HOME/storages/dsh-personal-memory`，未设环境变量时为 `~/.dsh/storages/dsh-personal-memory`；SQLite 位于数据家下 `.dsh-personal-memory/memory.db`。遵从插件的 homeDir 设置，不再随工作区定位。
 - Lead 使用原生 search/read 与读入，禁写与自动反思/整理；Worker 使用完整原生能力和原生手册，不在 persona 重复写记忆纪律。
-- 门控使用短暂失败有界重试，并在推理前确认策略；复用 `POST /dsh-personal-memory/skip-dreams`（`sessionId / field / value`），地址来自宿主 `webServer.getOrigin()`；先 flush Lead 会话，再设置 write=true、dream=true、inject=false。数据库定位与配置解析由记忆插件负责，包括自定义 projectDir/homeDir；接口失败告警，推理前重试，仍失败则阻止该请求；不回退直接写库。插件被手动禁用（宿主返回 404/405 空响应）时跳过门控、留空 `orchestrator:memory` 提示段并正常推理，不能把空响应当 JSON 解析；插件存在但门控失败仍必须 fail-closed。测试使用上游原生路由与 SQLite，覆盖默认和自定义 projectDir、禁用与异常响应。
+- 门控使用短暂失败有界重试，并在推理前确认策略；复用 `POST /dsh-personal-memory/skip-dreams`（`sessionId / field / value`），地址来自宿主 `webServer.getOrigin()`；先 flush Lead 会话，再设置 write=true、dream=true、inject=false。数据库定位与配置解析由记忆插件负责，包括自定义 projectDir/homeDir；接口失败告警，推理前重试，仍失败则阻止该请求；不回退直接写库。插件被手动禁用（宿主返回 404/405 空响应）时跳过门控、不暴露记忆查询并正常推理；记忆纪律已合入完整 LEAD_PROMPT，不另注册记忆段；不能把空响应当 JSON 解析；插件存在但门控失败仍必须 fail-closed。测试使用上游原生路由与 SQLite，覆盖默认和自定义 projectDir、禁用与异常响应。
 - 旧库的扫描与合并由插件原生迁移处理，保留旧文件；新建和恢复 Worker 不再创建记忆链接。
 - 可信插件通过 Node 文件 API 读写 `~/.dsh`；模型文件/命令工具另受会话沙箱约束。Worker 已持久化 danger-full-access（full + never），Lead 文件沙箱保持默认；rc.2 不支持额外增加单个可写根目录，不要通过 chmod 或符号链接绕过沙箱。
 
@@ -150,10 +156,10 @@ uv run --no-project --python /usr/bin/python3 python -c 'import subprocess; subp
 - dispatch 的 `prompt` 只写需求和验收点。cwd 由平台注入，禁止重复工作目录/路径声明，禁止粘贴内部 ID。
 - dispatch 返回给 Lead 的只需 `conversationId`（后续复用）；不要返回 taskId/childSessionId。
 - list/get 的输出做投影（leadTools/listWorkflows），不要把整条数据库记录给模型。
-- roster 系统提示词每工作流一行：会话 ID/状态/标题 + 当前或最近需求、任务状态与进展/结果 + 更新时间和日程摘要；动态文本每次渲染实时读取任务记录，不使用 outline 主题链。看板（Board.tsx）可以展示更多内部字段，但不要在主会话输出内部概念。
+- roster required context 每工作流一行（含 mode）：会话 ID/状态/标题 + 当前或最近需求、任务状态与进展/结果 + 更新时间和日程摘要；动态文本每次渲染实时读取任务记录，不使用 outline 主题链。看板（Board.tsx）可以展示更多内部字段，但不要在主会话输出内部概念。
 - Worker 注入只有两种文案：`workerPrompt`（正常）和 `revisionPrompt`（改单），都在 messages.ts。
 
-### Lead 行为约束（messages.ts LEAD_PROMPT）
+### Lead 行为约束（messages.ts LEAD_PROMPT；改造前原文保存于 docs/prompt-snapshots/）
 
 - 闲聊、概念解释、当前对话内可答的问题**直接回答，不调任何工具**；需要实际执行（联网/文件/命令/浏览器）才派发。
 - background 派发后只回一句简短自然确认（"好，这就改"）；禁止"任务正在后台进行/Worker 完成后我会发给你"等系统腔；不暴露 Worker/Conversation/TaskRun 等词；不提前承诺交付物。

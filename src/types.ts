@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { executionModeIds, type ExecutionMode } from './modes.ts'
 import { normalizeTimePoint, resolveScheduleTimes } from './schedule-time.ts'
 export { normalizeTimePoint, normalizeDateOnly, isDateOnly, resolveScheduleTimes, scheduleConsistencyError } from './schedule-time.ts'
 
@@ -229,6 +230,8 @@ const baseConversationSchema = z.object({
   childSessionId: trimmed,
   parentSessionId: trimmed,
   title: trimmed,
+  // 保留未知值供恢复阶段诊断；旧记录缺字段视为 general。
+  mode: trimmed.default('general'),
   workspaceName: z.string().trim().min(1).max(100).optional(),
   workspaceDir: z.string().trim().min(1).optional(),
   outline: outlineSchema,
@@ -338,12 +341,14 @@ export function createConversation(input: {
   childSessionId: string
   parentSessionId: string
   title: string
+  mode?: ExecutionMode
   workspaceName?: string
   workspaceDir?: string
 }): ConversationRecord {
   const ts = timestamp()
   return {
     ...input,
+    mode: input.mode ?? 'general',
     outline: emptyOutline(),
     activeTaskId: null,
     lastTaskId: null,
@@ -394,6 +399,7 @@ export const workspaceNameSchema = z.string().trim()
 
 export const dispatchInputSchema = z.object({
   subject: z.string().trim().min(1).max(200),
+  mode: z.enum(executionModeIds).optional(),
   workspaceName: workspaceNameSchema.optional(),
   prompt: z.string().trim().min(1).max(100_000),
   conversationId: z.string().trim().min(1).optional(),

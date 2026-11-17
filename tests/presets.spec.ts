@@ -10,12 +10,14 @@ describe('Orchestrator agent presets', () => {
     expect(presets.map(preset => preset.id)).toEqual([LEAD_PRESET, WORKER_PRESET])
   })
 
-  it('每个 agent-instructions 行都提供必需的 maxBytes', () => {
-    for (const preset of presets) {
-      const rows = preset.plugins.filter(row => row.name === '@deepseek-ai/dsh-agent-instructions')
-      expect(rows).toHaveLength(1)
-      expect(rows[0]!.config).toMatchObject({ maxBytes: 65536 })
-    }
+  it('只有执行会话挂载 AGENTS，Lead 使用自包含完整 persona 且文件只读', () => {
+    const lead = byId.get(LEAD_PRESET)!.plugins
+    expect(lead.find(row => row.id === 'persona')!.config).toMatchObject({ complete: true, includeRuntimeContext: false })
+    expect(lead.find(row => row.id === 'tool-fs')!.config).toMatchObject({ read: true, readImage: true, write: false, edit: false, applyPatch: false })
+    for (const id of ['agent-instructions', 'tool-todo', 'tool-skill', 'skill-filesystem']) expect(lead.some(row => row.id === id)).toBe(false)
+    const instructions = byId.get(WORKER_PRESET)!.plugins.filter(row => row.id === 'agent-instructions')
+    expect(instructions).toHaveLength(1)
+    expect(instructions[0].config).toMatchObject({ maxBytes: 65536 })
   })
 
   it('压缩插件放在独立 isolate group 中', () => {

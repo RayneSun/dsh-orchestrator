@@ -13,7 +13,7 @@ import type {} from '@deepseek-ai/dsh-agent-preset-registry'
 import type {} from '@deepseek-ai/dsh-api-session-controller'
 import type {} from '@deepseek-ai/dsh-session-persistence'
 import type {} from '@deepseek-ai/dsh-system-prompt'
-import { deliveryNotice, LEAD_MEMORY_PROMPT, renderWorkerCapabilityIndex, revisionPrompt, todoProjection, todoStatusSection, workerPrompt, type WorkerCapabilityIndex } from './messages.ts'
+import { deliveryNotice, renderWorkerCapabilityIndex, revisionPrompt, todoProjection, todoStatusSection, workerPrompt, type WorkerCapabilityIndex } from './messages.ts'
 import { type ScheduleServiceLike, type SessionActivityGroup } from './host-contracts.ts'
 import { DISPATCH_TOOL_PARAMETERS, QUESTION_TOOL_PARAMETERS, TASK_COMPLETED_TOOL_PARAMETERS, TASK_FAILED_TOOL_PARAMETERS, TASK_INPUT_REQUIRED_TOOL_PARAMETERS, TASK_RUNNING_TOOL_PARAMETERS, TASK_TODO_TOOL_PARAMETERS } from './tool-parameters.ts'
 import type { AnswerQuestionsRequest, AnswerQuestionsResult, SetScheduleStatusRequest, SnapshotRequest } from './remote.ts'
@@ -25,14 +25,15 @@ import { mediaPaths, mediaResponse, resolveMedia } from './question-preview.ts'
 import { planScheduleChanges } from './schedule-changes.ts'
 import { isWorkerToolForbidden } from './worker-policy.ts'
 import { GENUI_CARD_SKILL_CONTENT, GENUI_CARD_SKILL_DESCRIPTION } from './genui-card-skill.ts'
-import { LEAD_SUPPRESSED_SECTIONS, leadToolDenyList, unrecognizedGlobalTools } from './lead-policy.ts'
+import { installLeadToolPolicy } from './lead-policy.ts'
+import { executionMode, resolveExecutionMode } from './modes.ts'
 import { configureLeadMemory } from './memory-policy.ts'
 import { normalizeProgressSteps } from './progress.ts'
 import { parseScheduledTurn, scheduleCreateCallId, scheduleCreateResult, type ScheduledTurnContext } from './native-schedules.ts'
 import { readModelAttribution, withModelAttribution, type ModelAttribution } from './model-info.ts'
 import { buildChildWorkspace } from './workspaces.ts'
 import { orchestratorDomain } from './storage.ts'
-import { buildPresetDefinitions, LEAD_PRESET, WORKER_PRESET } from './presets.ts'
+import { buildPresetDefinitions, LEAD_PRESET } from './presets.ts'
 import {
   activateConversation,
   appendOutlineSubject,
@@ -106,7 +107,7 @@ interface PendingScheduleCall {
 /** schedule/changed 在任务创建/更新、删除、投递时都会触发，合并后再核对，避免每轮触发都全量 list。 */
 const SCHEDULE_SYNC_DEBOUNCE_MS = 500
 
-/** 平台 modelSelection 投影与默认模型服务的本地结构化类型（不新增包导入）。 */
+/** 配置及公开 agent.model 选择共用的模型字段。 */
 type ReasoningEffort = NonNullable<Agent['options']>['reasoningEffort']
 interface ModelSelectionLike {
   provider?: string
@@ -116,16 +117,6 @@ interface ModelSelectionLike {
 type ExactModelSelection = ModelSelectionLike & { provider: string, model: string }
 function hasExactModel(selection: ModelSelectionLike | null | undefined): selection is ExactModelSelection {
   return Boolean(selection?.provider && selection.model)
-}
-interface SessionProjectionsLike {
-  stateOf(session: unknown, key: string): { pending?: ModelSelectionLike | null } | undefined
-}
-interface AgentDefaultModelLike {
-  currentSelection(): ModelSelectionLike
-}
-interface AgentModelSelectionRegistryLike {
-  selectionFor(agent: Agent): { current: ModelSelectionLike }
-  selectForNextRequest(agent: Agent, selection: ExactModelSelection): void
 }
 /** Worker 子会话用空 section 遮蔽的全局系统提示段（同名 scoped section shadow 全局）。 */
 const WORKER_SUPPRESSED_SECTIONS = ['harness:source', 'app:web-surface', 'ui:deliverable-file-references', 'genui:fence'] as const
@@ -210,7 +201,6 @@ export class OrchestratorService extends TypertRemoteService {
   static inject = [
     'agents', 'sessions', 'storageDomain',
     'sessionController', 'sessionPersistence', 'agentPresets', 'sessionTitle',
-    'sessionProjections', 'agentDefaultModel',
   ]
 
   /**
@@ -231,6 +221,7 @@ export class OrchestratorService extends TypertRemoteService {
   private domain: DomainType | undefined
   private chain: Promise<unknown> = Promise.resolve()
   private readonly installed = new Map<string, Array<() => unknown>>()
+  private leadConfigurations?: Map<string, Promise<void>>
   private readonly delivering = new Map<string, number>()
   private readonly deliveryRerun = new Set<string>()
   /** taskId -> resolver，task_input_required 阻塞等待用户作答。 */
@@ -324,6 +315,9 @@ export class OrchestratorService extends TypertRemoteService {
             this.hostCtx.logger.warn(`orchestrator: configure agent failed: ${String(error)}`)
           })
         })
+        const offDisposed = this.hostCtx.on('agent/disposed', ({ agent }) => {
+          void this.resetInstalled(String(agent.session.id))
+        })
         // 定时任务标记：schedule 服务每次提交变更（创建/更新/删除/投递）后广播，防抖后全量核对。
         const offScheduleChanged = (this.hostCtx.on as (name: string, listener: () => void) => () => void)
           .call(this.hostCtx, 'schedule/changed', () => this.queueScheduleMarkSync())
@@ -341,12 +335,15 @@ export class OrchestratorService extends TypertRemoteService {
         return async () => {
           offPreset()
           offCreated()
+          offDisposed()
           offScheduleChanged()
           offActivity()
           if (this.scheduleSyncTimer) clearTimeout(this.scheduleSyncTimer)
           if (this.recoveryTimer) clearInterval(this.recoveryTimer)
           this.pendingAnswers.close()
           this.directQuestions.clear()
+          await Promise.allSettled(this.leadConfigurations?.values() ?? [])
+          await Promise.allSettled([...this.installed.keys()].map(key => this.resetInstalled(key)))
           await this.chain.catch(() => undefined)
           await domain.close()
         }
@@ -543,49 +540,54 @@ export class OrchestratorService extends TypertRemoteService {
   }
 
   private async configureLead(agent: Agent): Promise<void> {
-    await this.resetInstalled(String(agent.session.id))
-    await this.refreshWorkerCapabilities()
+    const key = String(agent.session.id)
+    const pending = this.leadConfigurations ??= new Map()
+    const previous = pending.get(key) ?? Promise.resolve()
+    const run = previous.catch(() => undefined).then(() => this.installLead(agent))
+    pending.set(key, run)
+    try { await run }
+    finally { if (pending.get(key) === run) pending.delete(key) }
+  }
+
+  private async installLead(agent: Agent): Promise<void> {
     const scoped = agent.ctx
-    this.keep(agent, scoped.systemPrompt.section({
-      name: 'orchestrator:worker-capabilities',
-      order: 609,
-      text: () => renderWorkerCapabilityIndex(this.workerCapabilities),
-      interpolate: false,
-    }))
-    this.keep(agent, scoped.systemPrompt.section({
-      name: 'orchestrator:roster',
-      order: 610,
-      text: () => this.renderRoster(String(agent.session.id)),
-      interpolate: false,
-    }))
-    // 遮蔽与主控无关的全局提示段（记忆写入手册、GenUI 围栏教学）。
-    for (const sectionName of LEAD_SUPPRESSED_SECTIONS) {
-      this.keep(agent, scoped.systemPrompt.section({ name: sectionName, order: 0, text: '', interpolate: false }))
-    }
-    this.applyLeadToolDenylist(agent)
-    // Lead 侧覆盖 genui skill：Lead 不生成卡片，即使 invoke 也读到 card 通道而非围栏教学。
-    this.registerGenuiCardSkill(agent, scoped)
+    let configured = false
     let memoryReady = false
     let memoryAvailable = false
-    this.keep(agent, scoped.systemPrompt.section({
-      name: 'orchestrator:memory',
-      order: 608,
-      text: () => memoryAvailable ? LEAD_MEMORY_PROMPT : '',
-      interpolate: false,
-    }))
     const ensureMemory = async () => {
       if (memoryReady) return
       const webServer = this.hostCtx.get('webServer') as { getOrigin(): string } | undefined
       if (!webServer) throw new Error('记忆会话门控需要 webServer 服务')
-      // 原生接口通过持久化会话定位配置，新建会话先落盘。
       await this.hostCtx.sessions.flush(agent.session)
       memoryAvailable = await configureLeadMemory(String(agent.session.id), webServer.getOrigin())
       memoryReady = true
     }
-    this.keep(agent, scoped.on('llm/stream', async function* (_options, next) {
-      // 初始化失败时在真正推理前重试；策略未建立则拒绝请求，不能默默开放记忆写入。
+    // 先建立闸门和空掩码，装配期间不能推理或暴露继承工具。
+    const gate = scoped.on('llm/stream', async function* (_options, next) {
+      if (!configured) throw new Error('Lead 工具策略尚未就绪，请重新装配会话')
       await ensureMemory()
       yield* next()
+    })
+    let lockdown: () => unknown
+    try { lockdown = scoped.tools.restrict({ allow: [] }) }
+    catch (error) { this.keep(agent, gate); throw error }
+    await this.resetInstalled(String(agent.session.id))
+    this.keep(agent, gate)
+    this.keep(agent, lockdown)
+    await this.refreshWorkerCapabilities()
+    this.keep(agent, scoped.systemPrompt.context({
+      name: 'orchestrator:worker-capabilities',
+      order: 609,
+      required: true,
+      text: () => renderWorkerCapabilityIndex(this.workerCapabilities),
+      interpolate: false,
+    }))
+    this.keep(agent, scoped.systemPrompt.context({
+      name: 'orchestrator:roster',
+      order: 610,
+      required: true,
+      text: () => this.renderRoster(String(agent.session.id)),
+      interpolate: false,
     }))
     try { await ensureMemory() }
     catch (error) {
@@ -593,6 +595,10 @@ export class OrchestratorService extends TypertRemoteService {
     }
     for (const tool of this.leadTools(agent)) this.keep(agent, scoped.tools.register(tool as any))
     this.keep(agent, scoped.tools.register(this.questionTool(agent) as any))
+    this.keep(agent, await installLeadToolPolicy(agent, !memoryReady || memoryAvailable,
+      message => this.hostCtx.logger.warn(message)))
+    lockdown()
+    configured = true
   }
 
   /** 注册 runtime 版 genui skill，覆盖 dsh-genui 原版的正文围栏教学。 */
@@ -641,22 +647,16 @@ export class OrchestratorService extends TypertRemoteService {
     this.keep(agent, () => { updating = true; return release?.() })
   }
 
-  private applyLeadToolDenylist(agent: Agent): void {
-    try {
-      this.watchToolPolicy(agent, names => {
-        const unrecognized = unrecognizedGlobalTools(names)
-        if (unrecognized.length > 0) {
-          this.hostCtx.logger.warn(`orchestrator: unrecognized global tools visible to Lead: ${unrecognized.join(', ')} — review LEAD_TOOL_DENY in lead-policy.ts`)
-        }
-        return leadToolDenyList(names)
-      })
-    } catch (error) {
-      this.hostCtx.logger.warn(`orchestrator: lead tool denylist failed: ${String(error)}`)
-    }
-  }
-
   private async configureWorker(agent: Agent): Promise<void> {
     await this.resetInstalled(String(agent.session.id))
+    const conv = this.conversationByChild(String(agent.session.id))
+    let wanted: string
+    try { wanted = executionMode(conv?.mode ?? 'general').preset }
+    catch (error) {
+      // 被移除的模式不能在定时唤醒/手动打开时借错误预设继续运行。
+      this.keep(agent, agent.ctx.on('llm/stream', async function* () { throw error }))
+      throw error
+    }
     // Worker 切换为完全访问权限（沙箱全开放 + 审批 never）：后台执行无人值守，
     // 默认 workspace-write+ask 会让敏感操作停在审批上永远等不到人。
     // 该选择按会话持久化（sandbox/mode 与 approval/policy 事件），重复调用为 no-op；Lead 不受影响。
@@ -669,7 +669,6 @@ export class OrchestratorService extends TypertRemoteService {
     } catch (error) {
       this.hostCtx.logger.warn(`orchestrator: worker permission preset unavailable: ${String(error)}`)
     }
-    const wanted = WORKER_PRESET
     try {
       if (this.composedPreset(agent) !== wanted) await this.hostCtx.agentPresets.select(agent, wanted)
     } catch (error) {
@@ -684,7 +683,7 @@ export class OrchestratorService extends TypertRemoteService {
 
     const scoped = agent.ctx
     // 不做工具白名单裁剪：宿主与用户安装的其他工具（浏览器、MCP、技能等）对 Worker 全部可见；
-    // 通用行为约束和 task_* 上报协议已固化在 WORKER_PRESET 的 persona 中。
+    // 通用行为约束和 task_* 上报协议已固化在执行模式的 persona 中。
     // restrict 从工具清单里直接移除（模型看不到），比 guard（可见但调用报错）更干净。
     try {
       this.watchToolPolicy(agent, names => names.filter(name => isWorkerToolForbidden(name) !== undefined))
@@ -834,7 +833,7 @@ export class OrchestratorService extends TypertRemoteService {
         : pending.length > 0
           ? `｜待办/日程 ${pending.length} 项待处理：${pending.slice(0, 3).map(schedule => schedule.title).join('、')}${pending.length > 3 ? '…' : ''}`
           : `｜待办/日程 ${schedules.length} 项全部完成`
-      return `- ${conv.id} [${conv.state}] ${conv.title}${taskSegment}｜更新 ${formatRosterTime(conv.updatedAt)}${todoSegment}`
+      return `- ${conv.id} [${conv.state}] ${conv.title}｜模式 ${conv.mode ?? 'general'}${taskSegment}｜更新 ${formatRosterTime(conv.updatedAt)}${todoSegment}`
     })
     return `Orchestrator roster（dispatch 用 conversationId 复用子会话；get 看详情）：\n${lines.join('\n')}`
   }
@@ -962,6 +961,7 @@ export class OrchestratorService extends TypertRemoteService {
           }))
           return toJson({
             title: conv.title,
+            mode: conv.mode,
             state: conv.state,
             ...conv.workspaceName ? { workspaceName: conv.workspaceName } : {},
             createdAt: conv.createdAt,
@@ -1003,6 +1003,7 @@ export class OrchestratorService extends TypertRemoteService {
     if (args.conversationId) {
       const existing = this.conversationById(args.conversationId)
       if (!existing || existing.parentSessionId !== parentSessionId) return { ok: false, result: { kind: 'error', error: 'conversation not found' } }
+      resolveExecutionMode(args.mode, existing.mode ?? 'general')
       await this.refreshWorkerModelIfUnavailable(existing.childSessionId, parent)
 
       // 改需求：先在存储里原子完成“旧任务 interrupted + 新任务 active”，再取消子会话当前轮次，
@@ -1060,6 +1061,7 @@ export class OrchestratorService extends TypertRemoteService {
         return { ok: false, result: await this.failLaunch(conv, task, error) }
       }
     } else {
+      const mode = resolveExecutionMode(args.mode)
       const conversationId = createId('conv')
       const taskId = createId('task')
       const childSessionId = randomUUID()
@@ -1073,6 +1075,7 @@ export class OrchestratorService extends TypertRemoteService {
         childSessionId,
         parentSessionId,
         title: args.subject,
+        mode,
         workspaceName: workspace.name,
         workspaceDir: workspace.dir,
       })
@@ -1080,7 +1083,7 @@ export class OrchestratorService extends TypertRemoteService {
       task = buildTask(args, { id: taskId, parentSessionId, conversationId, predecessorTaskId: null })
       await this.putPair(conv, task)
       try {
-        await this.createWorkerAgent(childSessionId, workspace.dir, parent, conv.title)
+        await this.createWorkerAgent(childSessionId, workspace.dir, parent, conv.title, conv.mode)
         await this.deliverToWorker(childSessionId, workerPrompt(task) + todoStatusSection(this.schedulesOf(conv.id)), `orchestrator task ${task.subject}`)
       } catch (error) {
         return { ok: false, result: await this.failLaunch(conv, task, error) }
@@ -1215,8 +1218,8 @@ export class OrchestratorService extends TypertRemoteService {
   /**
    * Worker 的模型选项。Agent.options 只是会话创建时的快照：用户在主会话里切换模型走
    * 会话级选择（model/selection 事件 + requestHeader），不回写 options。这里按
-   * session-controller 内部 selectionFor 的同一顺序解析主会话当前生效模型——
-   * 可用默认设置 → 会话级 pending 选择 → 最近请求头 → 全局默认——覆盖 provider/model/reasoningEffort；
+   * 公开 agent.model.current() 解析主会话当前生效模型（会话选择、请求头、全局默认），
+   * 可用 Worker 默认设置优先，覆盖 provider/model/reasoningEffort；
    * 任一步读取失败回退到创建快照。Worker 首个请求头落盘后，后续轮次沿用它。
    */
   private async workerModelOptions(parent: Agent): Promise<Agent['options']> {
@@ -1226,21 +1229,8 @@ export class OrchestratorService extends TypertRemoteService {
       this.hostCtx.logger.warn(`orchestrator: configured worker model unavailable, inherit lead: ${configured.provider}/${configured.model}`)
     }
     try {
-      const projections = (this.hostCtx as unknown as { sessionProjections?: SessionProjectionsLike }).sessionProjections
-      const pending = projections?.stateOf(parent.session, 'modelSelection')?.pending
-      if (hasExactModel(pending)) return this.withModelSelection(parent, pending)
-      const header = parent.session.requestHeader()
-      if (header?.config.provider && header.config.model) {
-        const keepEffort = header.config.reasoningEffort !== undefined && header.adapterDefaults?.reasoningEffort !== true
-        return this.withModelSelection(parent, {
-          provider: header.config.provider,
-          model: header.config.model,
-          ...keepEffort ? { reasoningEffort: header.config.reasoningEffort } : {},
-        })
-      }
-      const defaults = (this.hostCtx as unknown as { agentDefaultModel?: AgentDefaultModelLike }).agentDefaultModel
-      const fallback = defaults?.currentSelection()
-      if (hasExactModel(fallback)) return this.withModelSelection(parent, fallback)
+      const current = parent.model.current()
+      if (hasExactModel(current)) return this.withModelSelection(parent, current)
     } catch (error) {
       this.hostCtx.logger.warn(`orchestrator: read lead model selection failed: ${String(error)}`)
     }
@@ -1249,13 +1239,11 @@ export class OrchestratorService extends TypertRemoteService {
 
   /** 旧 Worker 保持原模型；仅在模型明确失效时按新 Worker 的优先级重选，不重建会话。 */
   private async refreshWorkerModelIfUnavailable(childSessionId: string, parent: Agent): Promise<void> {
-    const agents = this.hostCtx.agents as unknown as AgentModelSelectionRegistryLike | undefined
-    if (!agents || typeof agents.selectionFor !== 'function' || typeof agents.selectForNextRequest !== 'function') return
     await this.withAgent(childSessionId, async agent => {
-      const current = agents.selectionFor(agent).current
-      if (await this.modelAvailable(current) !== false) return
+      const current = agent.model.current()
+      if (!current || await this.modelAvailable(current) !== false) return
       const next = await this.workerModelOptions(parent)
-      if (!hasExactModel(next)) {
+      if (!hasExactModel(next) || await this.modelAvailable(next) !== true) {
         this.hostCtx.logger.warn(`orchestrator: worker model unavailable and no replacement found: ${current.provider}/${current.model}`)
         return
       }
@@ -1264,7 +1252,7 @@ export class OrchestratorService extends TypertRemoteService {
         model: next.model,
         ...next.reasoningEffort ? { reasoningEffort: next.reasoningEffort } : {},
       }
-      agents.selectForNextRequest(agent, selection)
+      agent.model.select(selection)
       this.hostCtx.logger.info(`orchestrator: worker model reassigned: ${current.provider}/${current.model} -> ${selection.provider}/${selection.model}`)
     })
   }
@@ -1274,15 +1262,16 @@ export class OrchestratorService extends TypertRemoteService {
    * subagent 血统），因此 schedule 等只对 depth-0 会话开放的宿主能力对 Worker 可用。
    * cwd 与 agentPreset 直接写入 session header，冷恢复后保持不变；模型优先使用默认设置。
    */
-  private async createWorkerAgent(childSessionId: string, cwd: string, parent: Agent, title: string): Promise<void> {
+  private async createWorkerAgent(childSessionId: string, cwd: string, parent: Agent, title: string, mode = 'general'): Promise<void> {
+    const preset = executionMode(mode).preset
     await this.hostCtx.agents.withoutInitiator(async () => {
       const handle = await this.hostCtx.agents.create({
         sessionId: childSessionId as SessionId,
-        meta: { cwd, agentPreset: WORKER_PRESET },
+        meta: { cwd, agentPreset: preset },
         agentOptions: await this.workerModelOptions(parent),
         // agents.create 是底层工厂：写入 session header 不会自动装载预设。
         // 与 sessionController 的创建路径一致，在发布 Agent 前绑定工具与 persona。
-        setup: async agentCtx => { await this.hostCtx.agentPresets.mount(agentCtx, WORKER_PRESET) },
+        setup: async agentCtx => { await this.hostCtx.agentPresets.mount(agentCtx, preset) },
         signal: AbortSignal.timeout(LAUNCH_ACCEPT_TIMEOUT_MS),
       })
       try {
@@ -1835,6 +1824,17 @@ export class OrchestratorService extends TypertRemoteService {
     await this.serialize(async () => {
       const now = timestamp()
       for (const [, conv] of this.conversations().entries()) {
+        try { executionMode(conv.mode ?? 'general') }
+        catch (error) {
+          const reason = String(error)
+          this.hostCtx.logger.warn(`orchestrator: cannot recover ${conv.id}: ${reason}`)
+          for (const [, task] of this.tasks().entries()) {
+            if (task.conversationId !== conv.id || !isUnfinishedTask(task.status)) continue
+            await this.tasks().put(task.id, gateTaskDelivery(failTask(task, reason, now, { reasonCode: 'configuration' }), this.deliveryToggles()))
+          }
+          await this.conversations().put(conv.id, { ...failConversation(conv, now), activeTaskId: null })
+          continue
+        }
         const active = conv.activeTaskId ? this.taskById(conv.activeTaskId) : conv.lastTaskId ? this.taskById(conv.lastTaskId) : undefined
         if (!conv.activeTaskId && active?.status !== 'input_required') continue
         if (!active) {

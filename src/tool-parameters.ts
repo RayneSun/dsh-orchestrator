@@ -1,4 +1,5 @@
 import { blockReasonCodes, schedulePriorities } from './types.ts'
+import { executionModeIds } from './modes.ts'
 
 /**
  * orchestrator_dispatch 的参数描述。注意：dsh-tools 的参数 DSL 只支持
@@ -8,6 +9,7 @@ import { blockReasonCodes, schedulePriorities } from './types.ts'
  */
 export const DISPATCH_TOOL_PARAMETERS = {
   subject: { type: 'string', required: true, description: '短主题' },
+  mode: { type: 'string', enum: executionModeIds, description: '执行模式；新建省略使用 general，复用省略沿用原模式；已有会话不能切换模式' },
   workspaceName: { type: 'string', description: '新建子会话必填：子工作区目录名，必须匹配 ^[a-z0-9][a-z0-9-]{0,79}$（英文小写短横线 slug，如 daily-news、plane-war）；复用已有子会话时忽略' },
   prompt: { type: 'string', required: true, description: '只写细化后的用户需求；不要拆分步骤、指导执行方法或指定工具/Skill/技术方案/上报字段/展示组件，不要重复环境信息或粘贴无关内部 ID' },
   conversationId: { type: 'string', description: '复用已有工作流时提供' },

@@ -1,112 +1,136 @@
-# TODO
+# TODO：Lead 上下文收敛与执行模式实施
 
-## 当前状态（0.3.19，2026-11-09）
+更新时间：2026-11-17。当前为 **0.3.24 之后的未发布工作区改动**。本文件替换旧清单，区分代码完成、自动验证与真实 Web 验收；不将设计推导当作实测结果。
 
-本版完成五工具拆分、结果拍平、记忆插件替换与 npm scope 迁移。当前契约及升级步骤见 [board-api.md](docs/board-api.md)。历史方案仅作决策档案。
+用户最终范围：先保存原提示词，改造 Lead / 通用 Worker，删除冗余机制，验证工具暴露；**PPT 暂不实施，只保留扩展点**。随后已获用户授权打包部署本地 Web；不提交或对外发布，不修改 Desktop GUI。
 
-## 历史方案与验收记录
+## 1. 已确定方案
 
-以下内容保留原始决策和当时验收结果，其中的“未 commit”、版本号、测试数、stash 提示和旧字段不代表当前状态，也不是待执行命令。v0.3.14 的三处问题卡方案最终收敛为看板与 Worker 原生卡两处；旧 `userTodos` / `setTodoStatus` 已被 `schedules` / `setScheduleStatus` 替代。
+| 对象 | 职责 | 装配策略 |
+| --- | --- | --- |
+| Lead | 直接回答、轻量查询、路由、派发、交付 | 完整 persona + required 动态 context；继承工具固定 allow；原生记忆查询 |
+| general Worker | 通用持久根执行会话 | 保留完整执行预设、AGENTS、技能及原生记忆；现有动态 deny |
+| 未来专用 Worker | 同一生命周期的能力组合 | 由 modes.ts 声明 persona / 追加插件；当前没有 PPT 模式 |
 
-## 自进化技能库（方案已确认方向，待实施）
+- Lead 保留 memory_search/read；记忆停止开关为 `{ inject:false, write:true, dream:true }`。
+- 当前上游把注入和查询绑定在 inject：**保留查询就允许自动注入**；快照作为资料，不能覆盖当前请求与系统约束。
+- 不要求第三方适配，不改第三方 bundle、不建影子工具、不直接写记忆库兜底。
+- 固定 allow 只限制继承工具；自身 scope 注册是平台例外。
+- complete 排除普通 section，includeRuntimeContext:false 抑制 optional context；第三方 required context 与直接消息 hook 不在全面隔离承诺中。
 
-参考 dsh-ciri 的 SkillProvider 模式（`/Users/lixuchuan/Documents/deepseek-harness/development/dsh-ciri`，只读参考、不改动它）。
+## 2. 提示词存档与迁移
 
-1. **技能库位置**：主工作区 `skills/`，落盘即保存，无 git。结构：`skills/<名称>/SKILL.md`（frontmatter: name/description/whenToUse + 何时用/怎么用）+ 可选 `scripts/`（复杂步骤沉淀为可执行脚本，SKILL.md 只教调用）+ 根放 `README.md` 说明格式。
-2. **发现机制**（新模块 `src/skills.ts`）：服务激活时 `ctx.inject(['skills'])` 注册 SkillProvider（rank 300 与 CUSTOM_RANK 一致），扫描 `skills/*/SKILL.md` 解析 frontmatter；`fs.watch` 防抖 500ms invalidate，新技能落盘即生效；skills 服务缺失时降级无操作；启动幂等建目录 + 放 README.md（只补缺不覆盖）。
-3. **Worker 访问**：Worker 文件作用域在子工作区，为每个 Worker 子工作区建 `skills` 符号链接（win32 用 junction）指向主工作区 `skills/`。
-4. **工具面**：Worker 预设已有 `tool-skill`；Lead 预设补挂 `tool-skill`。
-5. **自进化协议（prompt）**：WORKER_PROMPT 加"技能沉淀"节——流程第二次出现或一次任务多步才走通的复杂操作，收尾时沉淀为技能；代码落 `scripts/` 不抄进文档；一次性的不沉淀，结论/事实仍写 memory 不双写。LEAD_PROMPT 加一句：用户说"以后都这样处理"时派发 Worker 沉淀技能。
-6. **种子技能**：不带，只放 README.md。
-7. **测试**：frontmatter 解析/扫描/provider list-get/watch 降级单测；skills 链接复用 memory link 测试模式；装包实测 Worker 沉淀技能后 Lead 新会话可调用。
+- [x] 变更前保存实际 LEAD_PROMPT、LEAD_MEMORY_PROMPT、WORKER_PROMPT 全文及来源 commit。
+- [x] 存档：`docs/prompt-snapshots/0.3.24-before-lead-refactor.md`，仅供审阅，不参与装配。
+- [x] Lead 保留闲聊直接答、一事一会、后台一句确认、只交付结果、不暴露内部概念等产品约束。
+- [x] Lead 保留轻量 web / 文件定位 / 分段读取；来源链接、日期核验与不可信外部文本纪律补入自包含提示。
+- [x] 合并原记忆纪律：仅工具可用时查询、先查重、拟好条目后 silent 派 Worker；不重复注册独立记忆 section。
+- [x] 说明 roster / 能力索引为动态事实，present 只交付通知中的关键制品。
+- [x] Worker 保留原任务协议、边界、文件约束及结果输出规范；已授权的同一操作不重复确认。
+- [x] 完整 persona 不含未注册模板变量，不在 service 再注册第二份 complete 提示。
 
-## v0.3.14：状态收缩 + 问题卡 + 看板重构（代码已实施，未 commit，待用户验收）
+## 3. 运行时与模型 API
 
-> UI 已按 `~/.codex/visualizations/2026/10/28/01a18123-5b41-7e41-b9b0-88d4cdcac2f0/board-ui-v3-mock.html` 定稿；投递机制调研见 `docs/delivery-to-lead.md`；接口文档（含收缩后协议）在 `docs/board-api.md`（§6.1 树状图）。
-> ⚠️ 实施前先处理 stash@{0}（自进化技能库，同样改 types/service/messages，直接 pop 会冲突）：先完成本批次或先落 stash，二选一，避免双线改同文件。
+- [x] 依据本机 Homebrew CLI 0.2.2-rc.1 对齐 DSH 开发依赖及 peer 最低要求；不修改 CLI / GUI 安装。
+- [x] Cordis 4.1.0、Schemastery 3.19.0 与实际运行时对齐；保留 zod 4.4.3 单实例 override，更新 lockfile。
+- [x] 使用 `agent.model.current()/select()`，删除旧 selectionFor/selectForNextRequest 与投影探测接口。
+- [x] 新 Worker：可用的默认配置优先，其次 Lead 当前公开选择，最后创建选项快照。
+- [x] 已有 Worker：原模型可用 / 目录查询失败 / current 未确定均不切换；明确失效且替代项验证可用才 select。
+- [x] 验证失效模型、目录异常、无准确替代项、替代项也不可用，不重建会话。
 
-### 1. Status 收缩（Worker 协议 5 → 4）
+## 4. Lead 装配与工具策略
 
-- `taskUpdateStatuses` = `running / input_required / completed / failed`；`blocked` 枚举删除
-- `failed` 字段改为 `fail: { error ★, reasonCode? }`（与 report 对称）；`remediation` 删除；`blockReasonCodes` 6 类保留挂 fail.reasonCode
-- 存量迁移（types.ts read 迁移）：旧 blocked → failed+reasonCode；旧平铺 error/reasonCode → fail 对象；旧 remediation 拼进 error 尾部 `\n建议：…`
-- superRefine：completed→report 必填；input_required→questions 必填；failed→fail 必填（无 reasonCode 不带建议类字段）；白名单外字段报错带路径
-- `DeliveryToggles`：blocked 档并进 failed 档；**inputRequired 默认改 false**（三处问题卡已覆盖可见性）
-- input_required 命名**保留不改**（与 ConversationState/平台同词）；UI 文案统一"待你操作"
-- 公共字段（全状态可选）：`header?`（≤8 字粗体标题）、`progressNote?`（≤80 字，**保留原名不改 detail**）、`userTodos?`（全状态开放）
-- `summary` 字段删除；`conv.outline.summary` 改由 Host 自动维护 = 历次 dispatch subject 拼接（保留最近 3~5 个），roster 摘要行照常
+### 4.1 固定提示与动态 context
 
-### 2. QuestionItem 问卷 + 三处同源问题卡
+- [x] preset persona 设置 complete:true / includeRuntimeContext:false，挂载期生效。
+- [x] Lead 移除 AGENTS、todo、模型技能工具及无消费入口的 GenUI skill 覆盖。
+- [x] Lead 保留 time-context 与 compaction；文件插件显式仅 read/read_image，关闭 write/edit/applyPatch。
+- [x] roster 与 Worker 能力索引改 required context，interpolate:false；roster 每次装配实时读取记录。
+- [x] 普通第三方 section 不进入最终系统提示；optional 宿主 context 被抑制，required cwd / 第三方 context 保留。
 
-```
-questions: QuestionItem[]   ★ input_required 必填（纯 question 字符串字段删除）
-└── { id?(Host 补 q1/q2/…，返回值回显), question ★, header?, detail?,
-     options?: [{label ★, description?}], multiSelect? }
-```
+### 4.2 单一能力表与失败路径
 
-- 数据源：TaskRecord.questions（新增字段）；存量 question → questions:[{id:'q1',question}]
-- **三处渲染，一个数据源**：
-  1. **看板问题卡**（位于待办框上方，warn 色框）：选项 chip（单选切换/多选叠加）+ 自定义输入 + 提交 → 新 RPC `answerTaskQuestions({taskId, answers})`
-  2. **Worker 子会话工具行卡**：client 注册 `tool.call.toolview` keyed `task_update`（机制已验证：dsh-client-ui-tool 同款 ask-question-row），从调用参数渲染，作答走同一 RPC；非 activeTask 的历史行禁用交互
-  3. **主会话原生卡**（投递开时）：Host 调 `ctx.userQuestions.ask({questions, agent: leadAgent})`——平台原生 ask_user_question 卡渲染在 Lead 聊天、零模型推理，答案 resolve 回 Host
-- 作答路由：`answerTaskQuestions` 与原生卡 resolve 汇入同一路径——串行幂等（状态检查，先答先赢）→ task 转 running 新 TaskRun（followup Worker 带结构化答复）→ 给 Lead 日志 `session.append` 不唤醒备忘（防重复转派）
-- 已知限制（接受）：程序化 ask 不进 userQuestions 投影，主聊天卡刷新/重启后不可恢复（看板/子会话卡不受影响）
-- 主会话打字回答链路保持：Lead 被唤醒（prefix 带通知+答复）→ 派发答复（转述格式 `[q1] 选了 xxx`）
+- [x] capabilities.ts 同时生成 preset 插件配置与继承 allow；记忆只引用全局插件，不重复挂载。
+- [x] 正常继承名单：read/read_image、glob/grep、web_search/web_fetch、present、memory_search/read（后两项记忆禁用时移除）。
+- [x] 自身工具仅注册 orchestrator_dispatch/get 与增强 ask_user_question，不把它们放进继承 allow。
+- [x] 直接使用 restrict 的过滤前继承名校验，不拿 schemas 的过滤后视图静默求交。
+- [x] 首方能力短暂缺失有界重试；仍缺失记录错误并退化 allow:[]，自身路由/提问保留。
+- [x] 空 allow 也失败则拒绝该请求；不使用 guard 冒充隐藏。
+- [x] 替换顺序：先新闸门与临时空掩码，再释放旧注册；安装新 allow 后释放临时掩码。
+- [x] configure 按 Lead 会话串行；重装无重复工具、context 或遗留空掩码。
+- [x] 稳定路径不监听 tools/change；晚注册的未知继承工具自动隐藏。
+- [x] 会话退出与插件卸载清理注册、限制、监听及步骤计时器。
 
-### 3. 看板 UI 重构（按定稿 mock）
+### 4.3 原生记忆
 
-会话卡片自上而下：会话头（chevron+属性图标🚫/⏰+subject+状态徽标+打开按钮）→ ask 卡 → 待办框（可独立折叠，**会话折叠也恒显**）→ 工作区行 → **任务框**（圈住多轮，框头"N 轮·显示最新"，默认折叠只显示最新一轮，可展开全部）
-- 多轮：新→旧；轮内 = 状态徽标+subject+expander → `header: progressNote` 行（running shimmer；input_required 无动画）→ 步骤框（todo_write）→ 展开区（结果/错误+制品+同步时间）→ 脚注（创建时间+耗时，running 实时）
-- 状态展示映射（App 同款 4 态）：进行中=queued+running；待你操作=input_required；已完成=completed；失败/停止=failed+interrupted
-- 会话头徽标跟随最新一轮
+- [x] 依赖固定 @cmjt/dsh-personal-memory@0.4.6；复用原生门控实现，不修改上游产物。
+- [x] 会话先 flush，再调用宿主 origin 下 skip-dreams；整组幂等设置、有界重试及超时保留。
+- [x] 初始化门控失败时，在推理前重试；持续失败不调用下游模型。
+- [x] 仅 404/405 空响应为插件禁用；JSON 错误、异常内容及网络失败仍报错。
+- [x] 原生 HTTP + SQLite 覆盖默认 / 自定义 projectDir，不依赖 orchestrator 定位数据库。
+- [x] 实际调用原生 memory_search/read 查询 Worker 写入的条目；Lead memory_remember 被门控拒绝，Worker 可写。
+- [x] 原生 agent/pre-step 实测向 Lead 插入记忆内容，证明没有误关自动注入。
+- [x] 持久 scope 中 write/dream=true；未将后台反思关闭误写成“全部上下文隔离”。
 
-### 4. 连带改动
+## 5. Worker 与模式链（PPT 不实施）
 
-- **提示词**：Lead——4 态、fail 对象、看板/原生卡已答复场景、转述格式、无 summary；Worker——questions 示例、fail 示例、header/progressNote、删 summary/task 教程类表述；task_update 描述只写能力
-- **文档**：README/AGENTS.md 协议同步；`docs/board-api.md` 更新为新协议后随 release 出 `dsh-orchestrator-board-api-v0.3.14-changes.md`（破坏性变更清单：blocked→fail、question→questions、title→header、summary 删、inputRequired 默认反转、新 RPC）
-- **`docs/delivery-to-lead.md`** 补一段"已实施"结论（input_required 走原生卡，不再用 append 文本通知——按最终实施为准修订）
+- [x] modes.ts 集中 ID、名称、能力说明、preset；提供可选专用 prompt 与追加插件，不新增调度器。
+- [x] 当前只注册 general；模型 DSL、Zod 与能力索引不宣传 ppt，ppt 输入明确拒绝。
+- [x] Conversation.mode 缺字段读作 general；保留未知非空存储值供恢复诊断，不切换 domain v3。
+- [x] dispatch.mode 可选且无 default；新建省略→general，复用省略→沿用，相同允许，不同报错。
+- [x] 模式冲突检查先于换模型、中断、改目录或写入；复用不覆盖原模式与工作区。
+- [x] provisionDispatch 写 mode；创建 meta.agentPreset 与 setup.mount 从同一模式定义取值。
+- [x] configureWorker 取消硬编码；冷恢复使用记录模式。
+- [x] 已移除模式：会话 failed、未完成任务 failed(configuration)，保留历史终态 outbox；装配拒绝推理。
+- [x] 通用 Worker 保留根会话、danger-full-access、AGENTS、技能、命令、定时、todo、present/goal 与 GenUI card 通道。
+- [x] Worker 仍用动态 deny + guard 失败回退；后装普通工具默认开放，不改为白名单。
+- [x] 验证 configureWorker 后五个 task_* 上报工具齐全；编排、直接提问及直接渲染工具隐藏。
+- [x] 提问、改单、定时轮次、终态交付、手动停止、重启与 outbox 通过既有全量回归。
+- [ ] **延期**：PPT persona、技能目录、专用 preset、真实制品制作与渲染验收，后续另行实施。
 
-### 5. 测试与验收
+## 6. 已删除的维护机制
 
-- 单测：迁移三件套（blocked→fail、字段改名、question→questions）；fail superRefine；questions 校验+id 回显；answerTaskQuestions 幂等路由（先答先赢/后答拒绝/Lead 备忘）；outline 自动拼接；现有用例回归
-- 门禁：tsc×2、vitest、tsdown、verify:packaging
-- E2E（装 web profile 重启，重点实测）：主聊天原生卡真实渲染与结算；三处作答互斥；看板新层级（任务框折叠/会话折叠/待办恒显）；静默任务的看板+子会话双卡；重启恢复
-- 发版：commit → tag v0.3.14 → release（tgz + 变更 md），需网络时代理 127.0.0.1:7892
+- [x] Lead deny/keep 名单、57 项宿主基线、陌生全局工具告警及对应测试。
+- [x] Lead 提示段名单与逐名空覆盖；保留 Worker 自己的既有段处理。
+- [x] Lead tools/change 扫描刷新、无技能入口的 GenUI override。
+- [x] 独立 LEAD_MEMORY_PROMPT 的运行时装配与旧模型接口/无效探测。
+- [x] README、AGENTS、board-api、文档索引同步固定 allow、context 边界、模式与运行时要求。
+- [x] 原始历史发布记录保持可追溯；当前实现说明另存 docs/lead-context-refactor.md。
 
-### 决策记录
+## 7. 验证分层与证据
 
-- input_required 不改名（平台一致性）；progressNote 不改名 detail（用户裁定，避免与 QuestionItem.detail 歧义）
-- Worker 会话问题卡若 toolview 注册实测失败：降级为非交互提示行，交互收敛看板（不阻塞本批次）
-- 用户Todos 全状态开放的场景兜底：failed 时也可留"需用户本人确认"的待办
+### 7.1 自动化（真实 rc.1 核心组件参与）
 
+- [x] 使用真实 Cordis、scope 链、ToolsService、persona、SystemPrompt 与 Native executor，而非仅比较 mock 名单。
+- [x] 真实 fs/fs-search/web/present 插件按能力表配置注册，实际工具名与声明一致。
+- [x] 验证最终系统提示及 schema；web provider 未就绪时按平台条件从本步工具清单移除。
+- [x] 原生执行器成功调用 read；隐藏 write 调用报错且修改函数不执行。
+- [x] 新继承工具默认隐藏、自身 scope 第三方例外保留；测试同时写清限制边界。
+- [x] 必需能力缺失、时序恢复、空 allow 失败、重新装配、并发 configure 与清理。
+- [x] memory 原生路由/数据库/工具/消息 hook，门控失败拒绝推理及恢复后放行。
+- [x] 模式默认 / 冲突 / 未知恢复、DSL-Zod 契约及 Worker 模型边界。
+- [x] host/client TypeScript、全量 Vitest（27 文件 / 235 用例）、tsdown、packaging（12 文件 dry-run）、diff 检查通过；证据与限制见改造记录。
 
-## v0.3.14 实施验收记录（2026-10-28）
+### 7.2 真实 Web 与成本（未执行，不冒充完成）
 
-- 已过门禁：tsc(host/client)、vitest 94/94、tsdown、verify:packaging。
-- 已装 web profile 重启实测：普通后台任务 running→completed；问题卡从 input_required 到看板作答后恢复 running，答案注入 Worker；userTodos.create 创建成功；用户画勾走 setTodoStatus 并显示完成。
-- 实测发现并修复：`answerTaskQuestions` 未手动 markRemote 导致 RPC 404；task_update 工具描述补充 userTodos 必须顶层。
-- Worker 上下文确认：子会话 cwd 正确指向 `/Users/lixuchuan/Documents/deepseek-harness/assistant/<workspaceName>`，sandbox/approval 为 danger-full-access/never，投递与作答注入文本均落 transcript。
-- 文档已同步：README/AGENTS 协议；docs/board-api.md 改为 v0.3.14 收缩协议；docs/delivery-to-lead.md 记录当前 input_required 链路。
+- [ ] 在新 Web 会话验证闲聊、联网、文件读取、记忆查询、general 派发及 present 交付。
+- [ ] 验证同会话改单、阻塞提问作答、终态交付与进程重启后的恢复。
+- [ ] 核对真实 provider、文件沙箱、权限配置、全局第三方插件与 schedule 唤醒行为。
+- [ ] 用同一真实多步任务对比 roster section / context：输入 token、缓存命中、system/message 追加数、user/message context 快照数；不可观测的指标如实标注。
 
-## v0.3.14 最终实施（2026-10-29）
+当前保留唯一 required context 实现；尚未获得真实 token/cache 数据，不承诺节省比例，也不把快照数当状态变化数。
 
-### input_required 阻塞工具调用（本轮核心改动）
+### 7.3 本地打包部署（2026-11-17 已完成）
 
-- `task_update(input_required)` 改为阻塞工具调用：Worker 调用后 Promise 挂起不返回，用户作答后工具直接返回 `{ answers: [{ id, selected, custom? }] }`，Worker 同轮继续执行（不开新轮、不注入消息）。
-- 问题卡只在两处渲染：
-  1. **子会话**：对 Worker 会话（live root）挂 `ctx.userQuestions.ask()`，平台原生 ask_user_question 卡。
-  2. **任务看板**：自定义 AskCard（已有）。
-- **主会话完全不参与**：`deliveryToggles.inputRequired` 硬编码 `false`；`deliverOnInputRequired` 配置项和设置页开关均已删除；无 Lead 侧 ask、无 text notice。
-- 一处作答、另一处自动消失：看板作答 → `resolvePendingAnswers` → abort Worker 的 ask（原生卡清理）→ Promise resolve；Worker 原生卡作答 → `ask()` resolve → `answerTaskQuestions` → `resolvePendingAnswers` → 看板卡消失（下次渲染无 input_required 任务）。
-- 已删除冗余代码：`deliverInputRequired`、`answerInjectPrompt`、`appendLeadMemo`、`deliverToWorker` 注入路径、`deliverOnInputRequired`/`deliverOnBlocked` 配置项。
+- [x] 重新构建与打包校验，生成 12 文件的本地 0.3.24 tgz；不覆盖原 dist 发行包。
+- [x] 备份部署前 profile 配置、lockfile 与原已安装插件，保存到本次独立部署目录。
+- [x] 停止旧 Web，先 remove 再通过 tgz 绝对路径 add 到真实 web profile。
+- [x] 使用指定启动脚本及 start_new_session 重启，确认新进程监听 127.0.0.1:3080，启动日志无错误。
+- [x] 核对 profile 启用插件、依赖指向新包；四个入口 bundle 与 cordis.patch.yml 的安装文件 SHA-256 与构建一致。
+- [x] 启动 token 换取认证 cookie 返回 303，携 cookie 获取 Web 前端返回 200。
 
-### 门禁与验证
+包与备份目录：`dist/local-2026-11-17T09-44-43-916Z/`。详细证据见 `docs/lead-context-refactor.md`；真实模型与 UI 验收仍按 7.2 保持未完成。
 
-- tsc host/client：通过
-- vitest：94/94 通过
-- tsdown + verify:packaging：通过
-- E2E（web profile 实测）：看板卡显示 → 作答 → 卡消失；Worker 原生卡显示 → 作答 → 卡消失 + 看板卡消失；Worker 1 轮内完成（无第二次执行请求）；工具返回值含用户答案
+## 8. 当前完成边界
 
-### 版本
-
-- 0.3.14-beta.3（未 commit，待用户验收后 commit + tag + release）
+代码、自动化验证及本地 Web 打包安装、重启、认证 HTTP 验证已完成；外部模型 E2E、提交/tag/push/release 均未执行。PPT 明确延期。真实 Web 联调应使用新 Lead 会话，Desktop GUI 保持不动。

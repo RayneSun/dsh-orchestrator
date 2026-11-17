@@ -55,7 +55,7 @@ function harness() {
     pendingAnswers: new PendingAnswers(), revisionTurnEnds: new Map(),
     latestModels: new Map(), scheduledTurns: new Map(), activeScheduleIds: new Map(), pendingScheduleCalls: new Map(),
     emitChanged: vi.fn(), deliverPendingTask: vi.fn(),
-    withAgent: async (_id: string, operation: (agent: unknown) => Promise<unknown>) => operation({}),
+    withAgent: async (_id: string, operation: (agent: unknown) => Promise<unknown>) => operation({ model: { current: () => undefined } }),
     interruptWorker: vi.fn(), deliverToWorker: vi.fn(), renameWorkerSession: vi.fn(),
   })
   const call = (method: string, ...args: unknown[]) => service[method](...args)
@@ -222,5 +222,26 @@ describe('日程先校验再写入', () => {
     const input = taskTodoInputSchema.parse({ create: [{ title: '新增' }], update: [{ id: 'missing', status: 'done' }] })
     await expect(fixture.call('todoFromWorker', input, 'worker')).rejects.toThrow('schedule not found')
     expect(fixture.tables.schedules.size).toBe(0)
+  })
+})
+
+describe('执行模式与恢复', () => {
+  it('复用省略 mode 与显式 general 都沿用已有工作区和会话', async () => {
+    const f = harness()
+    for (const mode of [undefined, 'general']) {
+      await f.call('provisionDispatch', { conversationId: 'conversation', subject: '补充', prompt: '继续', mode }, { session: { id: 'lead' } }, 'lead')
+      expect(f.conversations.get('conversation')?.mode).toBe('general')
+      expect(f.conversations.get('conversation')?.childSessionId).toBe('worker')
+    }
+  })
+
+  it('被移除模式冷恢复明确失败，结算活动任务并保留已有终态 outbox', async () => {
+    const f = harness()
+    f.conversations.set('conversation', { ...f.conversation, mode: 'removed' })
+    f.tasks.set('finished', { ...f.task, id: 'finished', status: 'completed', result: '旧结果', delivery: { state: 'pending', attempts: 0 } } as TaskRecord)
+    await f.call('recoverRuntimeState')
+    expect(f.conversations.get('conversation')).toMatchObject({ mode: 'removed', state: 'failed', activeTaskId: null })
+    expect(f.tasks.get('task')).toMatchObject({ status: 'failed', reasonCode: 'configuration', error: expect.stringContaining('removed') })
+    expect(f.tasks.get('finished')).toMatchObject({ status: 'completed', result: '旧结果', delivery: { state: 'pending' } })
   })
 })

@@ -10,6 +10,8 @@
 
 **0.3.24 后待发布的提问协议变更**：问题和选项新增媒体预览，Host 为问题/选项补 `id`；新作答的 `answers[].selected` 改存选项 ID，不再存 label。旧任务读盘时会补问题/选项 ID，但旧答案中的 label 原样保留，不会伪造为新 ID。下游读取历史答案时需同时识别两种值；完整字段、作答链路及迁移说明见 §4、§11。
 
+**当前工作区待发布变更**：Conversation 新增 `mode`，旧 domain v3 记录缺字段按 `general` 读取；不新增存储域。派发协议见下文；PPT 暂不启用。
+
 ## 1. 接入方式
 
 ### 1.1 数据源
@@ -69,6 +71,7 @@
 | id | string | `conv_<uuid>` |
 | childSessionId | string | 子会话 DSH 会话 ID；跳转子会话、问题卡作答都用它 |
 | parentSessionId | string | 所属主会话 ID（与请求参数一致） |
+| mode | string | 执行模式；当前仅 general；旧记录缺字段默认 general，未知值保留供恢复诊断 |
 | title | string | 子会话标题（默认=首个任务主题，复用派发可同步更新） |
 | workspaceName | string? | 子工作区目录名（英文 slug，位于主工作区内） |
 | workspaceDir | string? | 子工作区绝对路径（移动端一般不展示） |
@@ -79,6 +82,12 @@
 | revision | number | 乐观锁版本号，任意字段变化时 +1 |
 | hasActiveSchedule | boolean | 仅 snapshot 投影字段（不落库）：任一原生活动 schedule 为 true，否则明确为 false；App 可据此渲染 ⏰ |
 | createdAt / updatedAt | string(ISO 8601) | 创建/更新时间 |
+
+### 2.1 模型派发协议（非看板 RPC）
+
+`orchestrator_dispatch` 可选 `mode`，当前枚举只有 `general`；模型可见 DSL 与 Host Zod 同步。新建省略默认 general，复用省略沿用已保存模式，显式相同允许，显式不同在中断/写入前报错；不借改单切模式。dispatch 成功仍仅返回 conversationId，`orchestrator_get` 的会话投影增加 mode。
+
+未知存储模式不静默转为 general：恢复将其未完成任务标 failed（reasonCode=configuration）、会话标 failed，保留模式值和已存在的终态 outbox；打开或定时唤醒该 Worker 时拒绝推理。创建与预设挂载均从集中模式表解出 preset。
 
 ## 3. Task（子任务 / TaskRun）
 

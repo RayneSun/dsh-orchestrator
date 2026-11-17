@@ -6,10 +6,10 @@ DSH 主控助理编排插件，也是一个开箱即用的个人助理能力包�
 
 ## 预设
 
-- `may-orchestrator-lead`：主控助理。DSH 自带工具全部可用（一步轻量查询、记忆查阅直接做）；个人记忆写/管理与 GenUI 直接渲染工具对 Lead 隐藏，需要实际执行时按提示词派发 Worker。长期记忆使用 dsh-personal-memory 的原生 `memory_search` / `memory_read`，不再复刻查询工具；Lead 停止自动反思、写入和空闲整理，保留原生记忆读入，写入手册只向 Worker 提供。
+- `may-orchestrator-lead`：主控助理。继承工具使用固定 allow：`read/read_image`、`glob/grep`、`web_search/web_fetch`、`present` 与可用时的原生 `memory_search/memory_read`；自身注册 `orchestrator_dispatch/orchestrator_get/ask_user_question`。文件修改、命令、技能加载和记忆维护交给 Worker。Lead 使用完整 persona，关闭 optional runtime context，不挂 AGENTS、todo 或技能入口。
 - `may-orchestrator-worker`：统一执行 Worker，是与主会话同级的**一等根会话**（非子代理），因此定时任务（schedule）等平台能力对其开放。工具采用**黑名单**：文件、命令、网页、浏览器、技能、MCP、定时任务等宿主自带与用户安装的工具默认可用，可使用子智能体（subagent/fork）与后台任务（job）做并行、隔离或长耗时处理；仅禁止编排循环（workflow/ralph）、调用 orchestrator 编排工具和直接向用户提问。
 
-Worker 的任务上报协议、安全红线（支付/删除等不可逆操作先确认）、文件边界与整洁约束都固化在预设 persona 中，每次派发只传递细化后的用户需求与验收点（独立工作区由运行时自动绑定，不重复环境声明或指定执行方法）。Lead 额外获得按实际可见范围生成的 Worker 工具与 Skill 能力索引，用于判断能否派发，不暴露为新的模型工具。上报拆为 5 个独立工具，每个工具的 schema 只含该状态合法字段（v0.3.19 起，不兼容旧会话）：
+Worker 的任务上报协议、安全红线（支付/删除等不可逆操作须明确授权，已授权的同一操作不重复确认）、文件边界与整洁约束都固化在预设 persona 中，每次派发只传递细化后的用户需求与验收点（独立工作区由运行时自动绑定，不重复环境声明或指定执行方法）。Lead 额外获得按实际可见范围生成的 Worker 工具与 Skill 能力索引，用于判断能否派发，不暴露为新的模型工具。上报拆为 5 个独立工具，每个工具的 schema 只含该状态合法字段（v0.3.19 起，不兼容旧会话）：
 
 - `task_running`：进行中上报，可带 `header`（最多 8 个字的状态标题）与 `progressNote`（一句话进展）
 - `task_input_required`：必带结构化 `questions`，在看板与子会话展示同源多媒体问题弹窗；看板只显示入口，任一入口作答后阻塞工具返回答案，Worker 同轮继续。问题主体可展示多张图片/音视频，选项可单独附预览；Lead 的同名增强版 `ask_user_question` 也复用该弹窗但不写任务表
@@ -34,16 +34,20 @@ Worker 的任务上报协议、安全红线（支付/删除等不可逆操作先
 
 记忆插件的“停止读入”同时会停用查询，因此 Lead 保留原生记忆快照。快照中的项目导引可能提及 `memory_project`，该工具仍对 Lead 隐藏，项目全景与记忆维护交给 Worker；不为此重建查询工具或改写插件消息。
 
-Lead 的只读策略通过记忆插件已有的会话门控接口设置，短暂失败时幂等重试，仍失败则在推理前再次确认，避免未建立策略就运行；记忆目录由该插件自行定位，支持其自定义 `projectDir` / `homeDir`。手动禁用记忆插件后会跳过门控并移除 Lead 的记忆能力提示，不影响其他功能；重新启用并重启后恢复只读策略。orchestrator 不直接打开记忆数据库，也不创建工作区记忆链接。
+Lead 的只读策略通过记忆插件已有的会话门控接口设置，短暂失败时幂等重试，仍失败则在推理前再次确认，避免未建立策略就运行；记忆目录由该插件自行定位，支持其自定义 `projectDir` / `homeDir`。手动禁用记忆插件后会跳过门控且不暴露查询工具，固定提示仅要求工具可用时查询，不影响其他功能；重新启用并重启后恢复只读策略。orchestrator 不直接打开记忆数据库，也不创建工作区记忆链接。
 
 这些能力插件的普通依赖不会把旧版 DSH runtime 提升到 profile 依赖树；macOS 驱动只通过宿主的 peer runtime 加载，避免覆盖 `@deepseek-ai/dsh-tools`。
 
+Lead 的封闭保证仅覆盖继承工具；agent 自身 scope 的第三方注册仍可见。complete 排除普通系统提示段，但不拦截第三方消息 hook 或 required context；允许记忆查询也允许自动注入，不宣称全面隔离插件。
+
+执行模式集中在 `src/modes.ts`，当前仅启用 `general`：新建派发省略 `mode` 默认通用；复用省略则沿用，不能切换已有会话模式。模式贯穿持久化、预设挂载和恢复；已移除模式恢复失败并阻止推理。PPT 专用模式暂不实施，未来复用同一 Worker 生命周期。实现和验证边界见[改造记录](docs/lead-context-refactor.md)，改造前提示词见[原文快照](docs/prompt-snapshots/0.3.24-before-lead-refactor.md)。
+
 ## 工作方式
 
-- Lead 的系统提示中注入实时 roster（conversationId、状态、创建/更新时间），按“一事一会”拆分与对号：同一事项的追问、改单、继续推进复用原 Conversation；只是“同类”的两件事（两个不同提醒、两次不同购物、两个不相关查询）分别新建子会话。用户指代的历史任务（如“上周那个”）按主题与时间对号。
+- Lead 的 required runtime context 中提供实时 roster 与模式/能力索引；固定系统提示不随工作流状态变化。roster 包含 conversationId、模式、状态和创建/更新时间，按“一事一会”拆分与对号：同一事项的追问、改单、继续推进复用原 Conversation；只是“同类”的两件事（两个不同提醒、两次不同购物、两个不相关查询）分别新建子会话。用户指代的历史任务（如“上周那个”）按主题与时间对号。
 - `orchestrator_dispatch` 新建 Conversation，或向已有持久子会话排队新 TaskRun；目标会话仍在运行时，会先把旧任务原子标记为 `interrupted`（改单中断，区别于失败/取消，不向主会话投递失败通知），中断子会话当前轮次，再把新需求 steer 进**同一个**子会话继续执行。
 - 用户在子会话中手动停止执行时，活动任务进入 `interrupted`（非失败），工作流回到 idle，并向主会话投递中断通知：Lead 据此简短告知用户并询问继续、改需求还是放弃，答复仍复用同一工作流。
-- Worker 系统提示自动遮蔽 DSH 自举开发说明（checkout/Web GUI/HMR）等与执行任务无关的全局段落，且不组合 present/goal 等面向终端用户的插件，降低每轮上下文体积。
+- Worker 保留完整执行预设（含 present/goal）、AGENTS、技能和既有工具 deny；继续遮蔽现有几段与执行无关的全局说明。
 - Worker 不能直接向用户提问：需要用户选择、补充或接管浏览器/系统确认时调用 `task_input_required({questions})`，问题卡在看板和子会话同步展示；任一入口作答后阻塞的工具调用立即返回用户答案，Worker 同轮继续执行。权限/配置/依赖/网络等系统阻碍使用 `task_failed + reasonCode`。
 - Worker 多步骤任务继续使用内置 `todo_write`；Host 监听子会话的 `todo/write` 事件（约 350ms 合并）并自动同步到 TaskRun 的步骤进度，任务看板会实时显示 `✓/▶/○` 与 `已完成/总数`。Worker 不需要为每个 todo 变化调用状态上报，todo 全完成也不会自动结束任务，终态仍以 `task_completed`/`task_failed` 为准。
 - 新建 Worker 会在当前主工作区下获得独立工作目录：派发时必须提供 `workspaceName`（英文小写短横线 slug，如 `daily-news`，正则 `^[a-z0-9][a-z0-9-]{0,79}$`；同名冲突自动递增 `-2`、`-3`）。复用已有子会话时继续使用原目录，无需再传。
@@ -70,7 +74,7 @@ Lead 的只读策略通过记忆插件已有的会话门控接口设置，短暂
 
 ## 分发安装
 
-要求接收方已安装 DSH `0.2.1-rc.2` 或更高版本，并且使用 Web profile。
+要求接收方已安装 DSH `0.2.2-rc.1` 或更高版本，并且使用 Web profile。
 
 从私有源安装，记忆与 GenUI 插件随依赖自动安装并启用，无需单独添加：
 

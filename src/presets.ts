@@ -1,8 +1,10 @@
 import type { PresetDefinition } from '@deepseek-ai/dsh-agent-preset-registry'
 import { LEAD_PROMPT, WORKER_PROMPT } from './messages.ts'
+import { leadCapabilities } from './capabilities.ts'
+import { executionModes } from './modes.ts'
 
 export const LEAD_PRESET = 'may-orchestrator-lead'
-export const WORKER_PRESET = 'may-orchestrator-worker'
+export const WORKER_PRESET = executionModes[0].preset
 type PluginRow = PresetDefinition['plugins'][number]
 
 function shell(id: string, name: string, disabled?: boolean): PluginRow {
@@ -67,25 +69,17 @@ export function buildPresetDefinitions(): PresetDefinition[] {
         {
           id: 'persona',
           name: '@deepseek-ai/dsh-persona',
-          config: { prefix: LEAD_PROMPT },
+          config: { prefix: LEAD_PROMPT, complete: true, includeRuntimeContext: false },
         },
-        ...basics,
-        // 一步查询与轻量自带工具（0.2.7 起 tool-web 被误删，一步查询一度只是空头承诺）：
-        // web（web_search/web_fetch）、fs-search（glob/grep）、fs（read/write/edit/read_image）、
-        // todo/goal 与制品交付。执行与调试类（bash/terminal/jobs/session-query/mcp-resources）
-        // 与编排旁路（subagent/schedule）仍不挂载——那些是 Worker 的活，Lead 保持轻量。
-        { id: 'tool-web', name: '@deepseek-ai/dsh-tool-web', config: { fetch: true, searchTimeoutMs: 60_000 } },
-        { id: 'tool-fs-search', name: '@deepseek-ai/dsh-tool-fs-search', config: { sampleOverCapGlobResults: false } },
-        { id: 'tool-fs', name: '@deepseek-ai/dsh-tool-fs' },
-        { id: 'tool-present', name: '@deepseek-ai/dsh-tool-present' },
-        { id: 'tool-todo', name: '@deepseek-ai/dsh-tool-todo', config: { allowParallelInProgress: false } },
+        { id: 'time-context', name: '@deepseek-ai/dsh-time-context' },
+        ...leadCapabilities.flatMap(capability => capability.plugin ? [capability.plugin] : []),
         // ask_user_question 由 questionTool 在选装该能力的会话中注册；避免与原生工具撞名。
         compaction,
       ],
     },
-    {
-      id: WORKER_PRESET,
-      name: '执行 Worker',
+    ...executionModes.map(mode => ({
+      id: mode.preset,
+      name: mode.name,
       order: 20,
       description: '可使用宿主与用户安装的全部工具执行任务（含子智能体与后台任务）；禁止编排循环与 orchestrator 工具，通过 task_* 上报工具汇报状态与维护待办/日程',
       plugins: [
@@ -94,7 +88,7 @@ export function buildPresetDefinitions(): PresetDefinition[] {
           name: '@deepseek-ai/dsh-persona',
           // rc.2 起 persona suffix 不再支持 {{cwd}} 模板变量（严格插值，仅 provider/model）；
           // 平台 dsh-working-directory 已给每个会话注入 Current working directory，无需手写。
-          config: { prefix: WORKER_PROMPT },
+          config: { prefix: mode.prompt ?? WORKER_PROMPT },
         },
         ...basics,
         bash,
@@ -117,8 +111,9 @@ export function buildPresetDefinitions(): PresetDefinition[] {
         { id: 'tool-web', name: '@deepseek-ai/dsh-tool-web', config: { fetch: true, searchTimeoutMs: 60_000 } },
         { id: 'present', name: '@deepseek-ai/dsh-tool-present' },
         { id: 'tool-plugin-manager', name: '@deepseek-ai/dsh-plugin-manager/tools' },
+        ...mode.plugins ?? [],
         compaction,
       ],
-    },
+    })),
   ]
 }

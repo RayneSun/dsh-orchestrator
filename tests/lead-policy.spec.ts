@@ -1,59 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { renderPrompt } from '@deepseek-ai/dsh-system-prompt'
+import { renderContextSnapshot } from '@deepseek-ai/dsh-system-prompt'
 import { OrchestratorService } from '../src/service.ts'
-import { DSH_CORE_TOOL_BASELINE, LEAD_SUPPRESSED_SECTIONS, LEAD_TOOL_DENY, LEAD_TOOL_KEEP, leadToolDenyList, unrecognizedGlobalTools } from '../src/lead-policy.ts'
+import { leadToolAllowList } from '../src/lead-policy.ts'
 import { createConversation, createTask, type ConversationRecord, type TaskRecord } from '../src/types.ts'
-
-describe('Lead 工具黑名单与提示段抑制', () => {
-  it('deny 只含个人记忆写/管理与 GenUI 直接渲染', () => {
-    expect([...LEAD_TOOL_DENY].sort()).toEqual([
-      'memory_dream', 'memory_find_similar', 'memory_home', 'memory_project',
-      'memory_remember', 'memory_update', 'render_ui', 'validate_dsh_ui',
-    ].sort())
-  })
-
-  it('deny 名单不含 DSH 自带基线工具与记忆只读', () => {
-    for (const name of LEAD_TOOL_DENY) {
-      expect(DSH_CORE_TOOL_BASELINE).not.toContain(name)
-    }
-    expect(LEAD_TOOL_DENY).not.toContain('memory_search')
-    expect(LEAD_TOOL_DENY).not.toContain('memory_read')
-    expect(LEAD_TOOL_DENY).not.toContain('ask_user_question')
-  })
-
-  it('陌生工具巡检：基线外且未命中 deny 的名字被报告', () => {
-    const registered = [...DSH_CORE_TOOL_BASELINE, 'memory_search', 'memory_read', 'some_new_plugin_tool', 'bsk_x']
-    expect(unrecognizedGlobalTools(registered)).toEqual(['some_new_plugin_tool', 'bsk_x'])
-    expect(unrecognizedGlobalTools([...DSH_CORE_TOOL_BASELINE, 'memory_search', 'memory_read'])).toEqual([])
-  })
-
-  it('keep 集不与基线/deny 重叠', () => {
-    for (const name of LEAD_TOOL_KEEP) {
-      expect(DSH_CORE_TOOL_BASELINE).not.toContain(name)
-      expect(LEAD_TOOL_DENY).not.toContain(name)
-    }
-  })
-
-  it('leadToolDenyList 只过滤当前注册的精确工具名', () => {
-    const registered = [
-      'bash', 'read', 'web_search', // 自带：不 deny
-      'memory_search', 'memory_read', // 个人记忆只读：保留
-      'memory_remember', 'render_ui', 'validate_dsh_ui', // 第三方精确名
-      'bsk_navigate', 'ego_click', // 未安装插件的工具名不再特殊处理
-      'some_future_plugin_tool', // 陌生第三方：不拦（prompt 引导兜底）
-    ]
-    expect(leadToolDenyList(registered)).toEqual(['memory_remember', 'render_ui', 'validate_dsh_ui'])
-    expect(unrecognizedGlobalTools(registered)).toEqual(['bsk_navigate', 'ego_click', 'some_future_plugin_tool'])
-  })
-
-  it('遮蔽个人记忆写入手册与 GenUI 围栏教学，不含已移除插件', () => {
-    expect(LEAD_SUPPRESSED_SECTIONS).toContain('dsh-personal-memory:guide')
-    expect(LEAD_SUPPRESSED_SECTIONS).toContain('genui:fence')
-    expect(LEAD_SUPPRESSED_SECTIONS).not.toContain('plugin:dsh-qqmail')
-    expect(LEAD_SUPPRESSED_SECTIONS).not.toContain('ui:deliverable-file-references')
-    expect(LEAD_TOOL_DENY).not.toContain('present')
-  })
-})
 
 describe('Lead roster 提示词', () => {
   it('任务结果等动态文本中的模板花括号按字面渲染', async () => {
@@ -62,8 +11,6 @@ describe('Lead roster 提示词', () => {
     Object.assign(service, {
       installed: new Map(),
       resetInstalled: async () => {},
-      applyLeadToolDenylist: () => {},
-      registerGenuiCardSkill: () => {},
       leadTools: () => [],
       snapshotFor: () => ({ conversations: [{
         id: 'conv', state: 'idle', title: '标题 {{ }}', outline: { summary: '摘要 {{unknown}}' },
@@ -80,8 +27,8 @@ describe('Lead roster 提示词', () => {
     })
     vi.stubGlobal('fetch', vi.fn(async () => new Response('{"ok":true}')))
     const agent = { session: { id: 'lead' }, ctx: {
-      tools: { register: () => () => {} },
-      systemPrompt: { section: (section: { name: string, text: () => string, interpolate?: boolean }) => {
+      tools: { register: () => () => {}, restrict: () => () => {} },
+      systemPrompt: { context: (section: { name: string, text: () => string, interpolate?: boolean }) => {
         sections.set(section.name, section)
         return () => {}
       } },
@@ -90,9 +37,9 @@ describe('Lead roster 提示词', () => {
 
     await service.configureLead(agent)
     const roster = sections.get('orchestrator:roster')!
-    const rendered = renderPrompt({
-      sections: [{ name: roster.name, text: roster.text(), interpolate: roster.interpolate }],
-      contexts: [], tools: [], variables: {},
+    const rendered = renderContextSnapshot({
+      sections: [],
+      contexts: [{ name: roster.name, text: roster.text(), interpolate: roster.interpolate }], tools: [], variables: {},
     })
     expect(rendered).toContain('结果 {{ }} 与 {{unknown}}')
     expect(rendered).toContain('需求 {{ }}')

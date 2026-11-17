@@ -26,6 +26,8 @@ async function nativeMemory(projectDir?: string) {
   const previousHome = activeHomeDir()
   setActiveHomeDir(home)
   const routes = new Map<string, Handler>()
+  const tools = new Map<string, any>()
+  const hooks = new Map<string, (...args: any[]) => any>()
   const onDispose: Array<() => void> = []
   const server = createServer((req, res) => {
     const handler = routes.get(req.url!)
@@ -46,7 +48,7 @@ async function nativeMemory(projectDir?: string) {
       routes.set(path, handler)
       return () => { routes.delete(path) }
     } },
-    systemPrompt: { section: () => () => {} },
+    systemPrompt: { context: () => () => {} },
     commands: { register: () => () => {} },
     sessionPersistence: { list: async () => [
       { id: 'lead', cwd: home }, { id: 'worker', cwd: home },
@@ -54,10 +56,11 @@ async function nativeMemory(projectDir?: string) {
   }
   const ctx = {
     logger: { info: vi.fn(), warn: vi.fn() },
-    tools: { register: () => () => {} },
+    tools: { register: (tool: any) => { tools.set(tool.name, tool); return () => tools.delete(tool.name) }, restrict: () => () => {} },
     get: (name: keyof typeof services) => services[name],
-    on: (name: string, handler: () => void) => {
+    on: (name: string, handler: (...args: any[]) => any) => {
       if (name === 'dispose') onDispose.push(handler)
+      hooks.set(name, handler)
       return () => {}
     },
     effect: (start: () => () => void) => start(),
@@ -72,10 +75,32 @@ async function nativeMemory(projectDir?: string) {
     reflect: false, dream: { enabled: false }, semantic: { enabled: false },
   })
   expect(routes.has('/dsh-personal-memory/skip-dreams')).toBe(true)
-  return { home, origin, db: getDb('', projectDir) }
+  return { home, origin, db: getDb('', projectDir), tools, hooks }
 }
 
 describe('Lead 原生记忆只读策略', () => {
+  it('原生工具保留 Lead 查询与自动注入，拒绝直接写入，Worker 仍可写', async () => {
+    const { home, origin, tools, hooks } = await nativeMemory()
+    await configureLeadMemory('lead', origin)
+    const agent = (id: string) => ({ session: { id, header: { id, cwd: home }, events: [] } })
+    const exec = (id: string) => ({ agent: agent(id), signal: AbortSignal.timeout(5000) })
+    const entry = { content: '项目偏好使用紫色主题', project: '测试项目', keywords: ['主题', '紫色'], importance: 9 }
+    await tools.get('memory_remember').execute(entry, exec('worker'))
+    const messages = [{ role: 'user', source: { kind: 'user' }, content: [{ type: 'text', text: '紫色主题' }] }]
+    const injected = await hooks.get('agent/pre-step')!({ agent: agent('lead'), messages, signal: AbortSignal.timeout(5000) }, async () => ({ kind: 'enter', messages }))
+    expect(injected.messages.length).toBeGreaterThan(messages.length)
+    const snapshots = injected.messages.filter((message: any) => message.source?.kind === 'plugin:dsh-personal-memory' && message.source.form === 'snapshot')
+    expect(snapshots).toHaveLength(1)
+    expect(JSON.stringify(snapshots)).toContain(entry.project)
+    const search = await tools.get('memory_search').execute({ query: '紫色' }, exec('lead'))
+    const serialized = JSON.stringify(search)
+    expect(serialized).toContain('紫色')
+    const id = search.hits[0].id
+    expect(await tools.get('memory_read').execute({ id }, exec('lead'))).toMatchObject({ found: true, content: entry.content })
+    await expect(tools.get('memory_remember').execute(entry, exec('lead'))).rejects.toThrow()
+
+  })
+
   it.each([undefined, 'custom-memory'])('原生接口定位数据库（projectDir=%s），幂等禁写与禁整理且不影响 Worker', async (projectDir) => {
     const { home, origin, db } = await nativeMemory(projectDir)
     db.setMemoryScopeField('lead', 'inject', true)
@@ -120,14 +145,14 @@ describe('Lead 原生记忆只读策略', () => {
     const service = Object.create(OrchestratorService.prototype)
     const fetch = vi.fn(async () => new Response('{"ok":true}'))
     vi.stubGlobal('fetch', fetch)
-    const agent = { session: { id: 'lead' }, ctx: { tools: { register: () => () => {} }, systemPrompt: { section: () => () => {} }, on: () => () => {} } }
+    const agent = { session: { id: 'lead' }, ctx: { tools: { register: () => () => {}, restrict: () => () => {} }, systemPrompt: { context: () => () => {} }, on: () => () => {} } }
     const flush = vi.fn(async (session) => {
       expect(session).toBe(agent.session)
       expect(fetch).not.toHaveBeenCalled()
     })
     Object.assign(service, {
       installed: new Map(), resetInstalled: async () => {},
-      applyLeadToolDenylist: () => {}, registerGenuiCardSkill: () => {}, leadTools: () => [],
+      leadTools: () => [],
       hostCtx: { sessions: { flush }, get: () => ({ getOrigin: () => 'http://localhost' }), logger: { warn: vi.fn() } },
     })
     await service.configureLead(agent)
@@ -142,13 +167,13 @@ describe('Lead 原生记忆只读策略', () => {
     vi.stubGlobal('fetch', fetch)
     let beforeStream: (_options: unknown, next: () => AsyncGenerator<string>) => AsyncGenerator<string>
     const agent = { session: { id: 'lead' }, ctx: {
-      tools: { register: () => () => {} },
-      systemPrompt: { section: () => () => {} },
+      tools: { register: () => () => {}, restrict: () => () => {} },
+      systemPrompt: { context: () => () => {} },
       on: (_name: string, hook: typeof beforeStream) => { beforeStream = hook; return () => {} },
     } }
     Object.assign(service, {
       installed: new Map(), resetInstalled: async () => {},
-      applyLeadToolDenylist: () => {}, registerGenuiCardSkill: () => {}, leadTools: () => [],
+      leadTools: () => [],
       hostCtx: { sessions: { flush: async () => {} }, get: () => ({ getOrigin: () => 'http://localhost' }), logger: { warn: vi.fn() } },
     })
     await service.configureLead(agent)
@@ -166,8 +191,8 @@ describe('Lead 原生记忆只读策略', () => {
     let beforeStream: (_options: unknown, next: () => AsyncGenerator<string>) => AsyncGenerator<string>
     const sections = new Map<string, { text: () => string }>()
     const agent = { session: { id: 'lead' }, ctx: {
-      tools: { register: () => () => {} },
-      systemPrompt: { section: (section: { name: string, text: () => string }) => {
+      tools: { register: () => () => {}, restrict: () => () => {} },
+      systemPrompt: { context: (section: { name: string, text: () => string }) => {
         sections.set(section.name, section)
         return () => {}
       } },
@@ -175,11 +200,11 @@ describe('Lead 原生记忆只读策略', () => {
     } }
     Object.assign(service, {
       installed: new Map(), resetInstalled: async () => {},
-      applyLeadToolDenylist: () => {}, registerGenuiCardSkill: () => {}, leadTools: () => [],
+      leadTools: () => [],
       hostCtx: { sessions: { flush: async () => {} }, get: () => ({ getOrigin: () => 'http://localhost' }), logger: { warn: vi.fn() } },
     })
     await service.configureLead(agent)
-    expect(sections.get('orchestrator:memory')!.text()).toBe('')
+    expect(sections.has('orchestrator:memory')).toBe(false)
     const next = vi.fn(async function* () { yield 'ok' })
     expect(await beforeStream!({}, next).next()).toEqual({ value: 'ok', done: false })
     expect(next).toHaveBeenCalledOnce()
