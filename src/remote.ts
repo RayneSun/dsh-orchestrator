@@ -33,9 +33,12 @@ export const answerQuestionsResultSchema = z.object({
   error: z.string().optional(),
 }).strict()
 
-export const questionRequestsRequestSchema = z.object({ sessionId: z.string().min(1) }).strict()
+export const questionRequestsRequestSchema = z.union([
+  z.object({ sessionId: z.string().min(1) }).strict(),
+  z.object({ sessionIds: z.array(z.string().min(1)).min(1) }).strict(),
+])
 export const questionRequestsResultSchema = z.array(z.object({
-  id: z.string(), taskId: z.string().optional(), questions: z.array(questionItemInputSchema),
+  id: z.string(), sessionId: z.string(), taskId: z.string().optional(), questions: z.array(questionItemInputSchema),
 }).strict())
 export const answerDirectQuestionRequestSchema = z.object({
   sessionId: z.string().min(1), id: z.string().min(1), answers: z.array(questionAnswerSchema).min(1),

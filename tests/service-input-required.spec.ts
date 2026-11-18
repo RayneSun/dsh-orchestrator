@@ -60,6 +60,29 @@ describe('reportFromWorker：活动任务上报后的 Conversation 状态同步'
   })
 })
 
+describe('questionRequests：待答会话投影', () => {
+  it('批量读取只返回指定会话的待答问题，单会话查询保持可用', () => {
+    const service = Object.create(OrchestratorService.prototype)
+    const questions = [{ id: 'q1', question: '继续吗？' }]
+    Object.assign(service, {
+      domain: {},
+      tasks: () => new Map([
+        ['task-a', { id: 'task-a', status: 'input_required', conversationId: 'conv-a', questions }],
+        ['task-b', { id: 'task-b', status: 'running', conversationId: 'conv-b' }],
+      ]),
+      conversationById: (id: string) => id === 'conv-a' ? { childSessionId: 'worker-a' } : { childSessionId: 'worker-b' },
+      directQuestions: new Map([['direct-a', { sessionId: 'lead-a', questions }]]),
+    })
+    expect(service.questionRequests({ sessionIds: ['worker-a', 'lead-a'] })).toEqual([
+      { id: 'task-a', taskId: 'task-a', sessionId: 'worker-a', questions },
+      { id: 'direct-a', sessionId: 'lead-a', questions },
+    ])
+    expect(service.questionRequests({ sessionId: 'worker-a' })).toEqual([
+      { id: 'task-a', taskId: 'task-a', sessionId: 'worker-a', questions },
+    ])
+  })
+})
+
 
 describe('task_todo 独立更新', () => {
   it('创建待办/日程写库后广播一次变更，回执使用 todos，校验失败不写库不广播', async () => {

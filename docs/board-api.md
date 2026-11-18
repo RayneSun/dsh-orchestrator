@@ -50,7 +50,7 @@
 | 响应 | `{ "ok": true, "taskId": "task_<uuid>" }`，失败为 `{ "ok": false, "error": string }` |
 | 行为 | 显式 taskId 时只接受该任务；目标任务必须仍是 `input_required`，先答先赢。Host resolve 挂起的工具调用；定时任务与另一个 activeTask 并存时不会抢占 activeTaskId。selected 使用 option.id。 |
 
-**questionRequests**（会话内待答请求）：请求 `{ "sessionId": "<会话 sessionId>" }`，响应 `[{ "id": string, "taskId"?: string, "questions": QuestionItem[] }]`。Worker 的 `id/taskId` 均为任务 ID；Lead 会话请求没有 `taskId`，`id` 是临时请求 ID。未等待时返回空数组。
+**questionRequests**（待答请求）：请求 `{ "sessionId": "<会话 sessionId>" }`，或批量请求 `{ "sessionIds": string[] }`；仅返回指定会话的待答请求。响应 `[{ "id": string, "sessionId": string, "taskId"?: string, "questions": QuestionItem[] }]`。Worker 的 `id/taskId` 均为任务 ID；Lead 会话请求没有 `taskId`，`id` 是临时请求 ID。未等待时返回空数组。客户端用会话列表中的会话 ID 批量查询并同步黄色待回答状态，弹窗只展示当前会话的问题。
 
 **answerDirectQuestion**（Lead 会话作答）：请求 `{ "sessionId": string, "id": string, "answers": QuestionAnswer[] }`，响应 `{ "ok": boolean, "error"?: string }`。传入 `questionRequests` 给出的请求 ID；回答不写 Task/snapshot，模型工具返回的 `selected` 是选项 **label**，与 RPC 请求里的选项 **id** 不同。
 

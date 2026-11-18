@@ -871,14 +871,19 @@ export class OrchestratorService extends TypertRemoteService {
   }
 
   /** 会话弹窗轮询：Worker 直接读 Task，其他模式读临时挂起请求。 */
-  questionRequests(request: { sessionId: string }): Array<{ id: string; taskId?: string; questions: import('./types.ts').QuestionItem[] }> {
-    const { sessionId } = request
+  questionRequests(request: { sessionId: string } | { sessionIds: string[] }): Array<{ id: string; sessionId: string; taskId?: string; questions: import('./types.ts').QuestionItem[] }> {
+    const sessionIds = new Set('sessionIds' in request ? request.sessionIds : [request.sessionId])
     if (!this.domain) return []
     const tasks = [...this.tasks().entries()].map(([, task]) => task)
-      .filter(task => task.status === 'input_required' && this.conversationById(task.conversationId)?.childSessionId === sessionId)
-      .map(task => ({ id: task.id, taskId: task.id, questions: task.questions ?? [] }))
-    const direct = [...this.directQuestions.entries()].filter(([, item]) => item.sessionId === sessionId)
-      .map(([id, item]) => ({ id, questions: item.questions }))
+      .filter(task => task.status === 'input_required')
+      .flatMap(task => {
+        const childSessionId = this.conversationById(task.conversationId)?.childSessionId
+        return childSessionId && sessionIds.has(childSessionId)
+          ? [{ id: task.id, sessionId: childSessionId, taskId: task.id, questions: task.questions ?? [] }]
+          : []
+      })
+    const direct = [...this.directQuestions.entries()].filter(([, item]) => sessionIds.has(item.sessionId))
+      .map(([id, item]) => ({ id, sessionId: item.sessionId, questions: item.questions }))
     return [...tasks, ...direct]
   }
 

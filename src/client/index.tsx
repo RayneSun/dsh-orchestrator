@@ -51,36 +51,44 @@ function BoardTitle(): React.ReactElement {
 
 function QuestionOverlay(props: any): React.ReactElement {
   const current = props.uiSession.adapter.current
+  const sessions = props.sessions.list
   const [sessionId, setSessionId] = useState<string | undefined>(() => current.getSnapshot().key)
+  const [sessionIds, setSessionIds] = useState<string[]>(() => Object.keys(sessions.getSnapshot().byId))
   useEffect(() => {
     const sync = () => setSessionId(current.getSnapshot().key)
     sync()
     return current.subscribe(sync)
   }, [current])
-  const [pending, setPending] = useState<{ sessionId: string; request?: QuestionRequest }>()
-  const request = pending?.sessionId === sessionId ? pending.request : undefined
+  useEffect(() => sessions.subscribe(() => setSessionIds(Object.keys(sessions.getSnapshot().byId))), [sessions])
+  const [requests, setRequests] = useState<Array<QuestionRequest & { sessionId: string }>>([])
+  const request = requests.find(item => item.sessionId === sessionId)
   const [hidden, setHidden] = useState(false)
   useEffect(() => {
     const publish = props.publish
-    if (!request || !sessionId || typeof publish !== 'function') return
-    return publish({
-      key: 'orchestrator-question:' + request.id, sessionId, kind: 'orchestrator-question',
-      requestId: request.id, title: request.questions[0]?.question ?? '待你回答', total: request.questions.length,
-    }, () => setHidden(false))
-  }, [request?.id, sessionId, props.publish])
+    if (typeof publish !== 'function') return
+    const dispose = requests.map(item => publish({
+      key: 'orchestrator-question:' + item.id, sessionId: item.sessionId, kind: 'question',
+      requestId: item.id, title: item.questions[0]?.question ?? '待你回答', total: item.questions.length,
+    }, () => setHidden(false)))
+    return () => dispose.forEach(stop => stop())
+  }, [requests, props.publish])
   useEffect(() => {
-    if (!sessionId) { setPending(undefined); return }
     let disposed = false
     const load = async () => {
+      if (!sessionIds.length) { setRequests([]); return }
       try {
-        const result = await props.orchestrator.questionRequests({ sessionId })
-        if (!disposed && result.ok) setPending({ sessionId, request: result.value[0] })
+        const result = await props.orchestrator.questionRequests({ sessionIds })
+        if (!disposed && result.ok) setRequests(current =>
+          current.length === result.value.length && current.every((item, index) =>
+            item.id === result.value[index].id && item.sessionId === result.value[index].sessionId
+            && JSON.stringify(item.questions) === JSON.stringify(result.value[index].questions))
+            ? current : result.value)
       } catch { /* web reconnect */ }
     }
     void load()
     const timer = setInterval(() => void load(), 1000)
     return () => { disposed = true; clearInterval(timer) }
-  }, [sessionId, props.orchestrator])
+  }, [props.orchestrator, sessionIds])
   useEffect(() => setHidden(false), [request?.id])
   if (!request || !sessionId) return <></>
   return <>
@@ -92,7 +100,7 @@ function QuestionOverlay(props: any): React.ReactElement {
           : await props.orchestrator.answerDirectQuestion({ sessionId, id: request.id, answers })
         if (result.ok === false) throw new Error(result.error?.message ?? '提交失败')
         if (!result.value.ok) throw new Error(result.value.error ?? '问题已由其他入口回答')
-        setPending(undefined)
+        setRequests(current => current.filter(item => item.id !== request.id))
       }} />}
   </>
 }
@@ -113,7 +121,7 @@ function registerUi(ctx: any): void {
   ctx.effect(() => {
     const disposeQuestion = ctx.slots.inject('shell.overlay', () => ctx.slots.register({
       name: 'shell.overlay', id: 'orchestrator.question-dialog', order: 40,
-      inject: () => ({ orchestrator, uiSession: ctx.uiSession, publish }),
+      inject: () => ({ orchestrator, uiSession: ctx.uiSession, sessions: ctx.sessions, publish }),
     }, QuestionOverlay))
     const disposeHeader = ctx.slots.inject(
       'conversation.session.header.utilities',
@@ -173,7 +181,7 @@ export async function apply(ctx: Context): Promise<() => Promise<void>> {
   }
 
   const ui = client.inject(
-    ['remote.orchestrator', 'remote', 'remote.session', 'slots', 'uiWorkspace', 'uiSession', 'sidebarRightTabs', 'sidebarRight'],
+    ['remote.orchestrator', 'remote', 'remote.session', 'slots', 'uiWorkspace', 'uiSession', 'sessions', 'sidebarRightTabs', 'sidebarRight'],
     registerUi,
   )
   try {
