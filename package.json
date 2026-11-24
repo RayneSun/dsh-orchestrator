@@ -32,7 +32,7 @@
   },
   "dependencies": {
     "@changfenhuang/dsh-genui": "0.15.0",
-    "@cmjt/dsh-personal-memory": "0.4.6",
+    "@cmjt/dsh-personal-memory": "0.4.9",
     "@fullcalendar/react": "7.1.5",
     "temporal-polyfill": "1.0.7",
     "zod": "^4.4.3"

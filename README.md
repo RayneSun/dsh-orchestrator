@@ -26,7 +26,7 @@ Worker 的任务上报协议、安全红线（支付/删除等不可逆操作先
 
 安装本 bundle 会自动安装并启用以下能力：
 
-- [dsh-personal-memory v0.4.6](https://github.com/friendllcc/dsh-personal-memory/releases/tag/v0.4.6)：通过私有 npm 源的 `@cmjt/dsh-personal-memory@0.4.6` 普通依赖自动安装。Lead 与 Worker 原生共享用户全局记忆库，默认数据家在 `~/.dsh/storages/dsh-personal-memory`（设置了 `DSH_HOME` 时跟随该目录），SQLite 位于其中的 `.dsh-personal-memory/memory.db`。Worker 保留完整记忆能力；Lead 只查询。旧工作区库的发现与合并交由插件原生迁移，不再创建共享链接，也不删除旧记忆。
+- [dsh-personal-memory](https://github.com/friendllcc/dsh-personal-memory)：通过私有 npm 源的 `@cmjt/dsh-personal-memory@0.4.9` 普通依赖自动安装。Lead 与 Worker 原生共享用户全局记忆库，默认数据家在 `~/.dsh/storages/dsh-personal-memory`（设置了 `DSH_HOME` 时跟随该目录），SQLite 位于其中的 `.dsh-personal-memory/memory.db`。Worker 保留完整记忆能力；Lead 只查询。旧工作区库的发现与合并交由插件原生迁移，不再创建共享链接，也不删除旧记忆。
 - `@changfenhuang/dsh-genui@0.15.0`：普通依赖随包安装并在 bundle 中默认启用，负责渲染 Worker 提交的 `dsh-ui` 卡片。orchestrator 继续用定制 skill 约束 Worker 只通过 `task_completed.card` 提交卡片，不开放直接渲染与验证工具。
 - `@fullcalendar/react@7.1.5`：日程页的 Breezy / Indigo 月历与跨天色条布局；React 运行时使用宿主，日历与样式内联进 client bundle。
 
@@ -80,7 +80,7 @@ dsh plugin --profile web add @cmjt/dsh-orchestrator --registry http://36.138.53.
 
 使用 GitHub Release tgz 安装时同样指定私有源，以便解析 `@cmjt` 依赖；若已有 `@cmjt:registry` 映射则可省略 `--registry`。普通 registry 依赖无需关闭 pnpm 安全校验。
 
-记忆依赖固定为 `0.4.6`，GenUI 依赖固定为 `0.15.0`。orchestrator 不再捆绑 BrowserSkill、Computer Use 或 QQ 邮箱；需要这些能力时可另行安装对应插件，Worker 仍可使用后装工具。Lead 不再保留这些插件的工具名/前缀专门遮蔽，也不遮蔽 QQ 邮箱公告段。
+记忆依赖固定为 `0.4.9`，GenUI 依赖固定为 `0.15.0`。orchestrator 不再捆绑 BrowserSkill、Computer Use 或 QQ 邮箱；需要这些能力时可另行安装对应插件，Worker 仍可使用后装工具。Lead 不再保留这些插件的工具名/前缀专门遮蔽，也不遮蔽 QQ 邮箱公告段。
 
 如果旧版本曾单独执行 `dsh plugin --profile web add @changfenhuang/dsh-genui`，升级前先执行 `dsh plugin --profile web remove @changfenhuang/dsh-genui`，移除独立的 bundle 条目；orchestrator 会保留依赖并自行启用 GenUI，避免重复注册。
 
