@@ -2,7 +2,7 @@
 
 当前版本 **0.3.24**，包名 `@cmjt/dsh-orchestrator`。本版升级 FullCalendar 日程视图、统一 `task_todo` 工具协议，并兼容个人记忆插件禁用状态。
 
-工作区另有尚未发布的 Lead 上下文与通用 Worker 模式改造，实施范围与验证边界见下表中的改造记录。
+尚未发布的 Lead 上下文与通用 Worker 模式改造见下表中的改造记录。`alpha` 的 interaction-core 文档是下一阶段的实施方案和接入草案，当前运行时仍以 README、接口文档和源码为准。
 
 ## 当前文档
 
@@ -11,7 +11,9 @@
 | [README](../README.md) | 产品能力、预设、安装与开发入口 |
 | [AGENTS](../AGENTS.md) | 环境约束、模块职责、状态机、工具策略与开发门禁 |
 | [看板数据接口](board-api.md) | snapshot、日程勾选、问题作答 RPC 及字段契约；含全部字段与状态定义 |
-| [GenUI 卡片规范](../genui-card-skill.md) | 随包加载的 Worker 运行时文档，规定 task_completed 的 card 展示通道与组件 |
+| [GenUI 卡片规范](../genui-card-skill.md) | 当前随包加载的 Worker 文档，规定 `task_completed.card` 展示通道与组件 |
+| [interaction-core 实施说明](worker-hooks-implementation.md) | Alpha 设计：可配置 Worker、双路问答与 GenUI 运行时切换 |
+| [interaction-core 接入协议 v1](worker-reporting-protocol-v1.md) | Alpha 草案：面向外部 Worker 的问答、任务上报和 `create_ui` 引用契约 |
 | [看板交互设计稿](board-schedule-mock.html) | 会话 / 日程双页、待操作入口、两图直选与三图整体评价弹窗；静态数据，不接后端 |
 | [看板全字段展示](board-showcase.html) | 各任务/日程状态、Snapshot 字段示例、五个远程方法与字段映射；静态数据，不接后端 |
 | [0.3.24 发布记录](milestones/0.3.24.md) | 日历交互升级、待办工具更名与记忆能力按可用性注入 |

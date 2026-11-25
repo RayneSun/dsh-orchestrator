@@ -170,6 +170,8 @@ uv run --no-project --python /usr/bin/python3 python -c 'import subprocess; subp
 
 ### Worker 上报协议
 
+当前实现见下文。Alpha 的 [interaction-core 实施说明](docs/worker-hooks-implementation.md) 和[接入协议](docs/worker-reporting-protocol-v1.md) 是后续改造草案，当前工具和 RPC 尚未切换。
+
 - **5 个独立工具（v0.3.19 起，单工具 `task_update` 已删除）**：`task_running` / `task_input_required` / `task_completed` / `task_failed` / `task_todo`。每个工具的 zod input schema（`taskReportInputSchemas` / `taskTodoInputSchema`）只含该工具合法字段，schema 结构即校验——不再有 allowlist / superRefine 交叉校验（单工具 + 条件必填被模型多次踩坑，拆分是根治）。四个状态工具可带 header（≤8 字极简状态标题）和 progressNote（一句话进展）；task_todo 不带进度字段。
   - `task_input_required`：必填 `questions[]`；问题主体可带 `media[]`，选项可带 `preview`。Host 补问题/选项 ID，答案的 selected 使用选项 ID。子会话与看板打开同款弹窗，工具阻塞至回答。Lead 的增强版 `ask_user_question` 独立挂载，不写 Task。
   - `task_completed`：必填 `result`（只阐述用户需求的最终结果，不写怎么做，不含过程性内容或文件路径）；可选 `artifacts`（关键制品的子工作区相对路径，投递时自动加工作区前缀，仅供 Lead 调用 present）与 `card`（dsh-ui 结构化明细 JSON，Host 序列化围栏后由 Lead 原封不动输出）；正文、卡片和制品不重复。

@@ -42,6 +42,8 @@ Lead 的封闭保证仅覆盖继承工具；agent 自身 scope 的第三方注�
 
 执行模式集中在 `src/modes.ts`，当前仅启用 `general`：新建派发省略 `mode` 默认通用；复用省略则沿用，不能切换已有会话模式。模式贯穿持久化、预设挂载和恢复；已移除模式恢复失败并阻止推理。PPT 专用模式暂不实施，未来复用同一 Worker 生命周期。实现和验证边界见[改造记录](docs/lead-context-refactor.md)，改造前提示词见[原文快照](docs/prompt-snapshots/0.3.24-before-lead-refactor.md)。
 
+下一阶段的可配置 Worker、双路问答和 GenUI 引用设计见 [interaction-core 实施说明](docs/worker-hooks-implementation.md)，尚未进入当前运行时。
+
 ## 工作方式
 
 - Lead 的 required runtime context 中提供实时 roster 与模式/能力索引；固定系统提示不随工作流状态变化。roster 包含 conversationId、模式、状态和创建/更新时间，按“一事一会”拆分与对号：同一事项的追问、改单、继续推进复用原 Conversation；只是“同类”的两件事（两个不同提醒、两次不同购物、两个不相关查询）分别新建子会话。用户指代的历史任务（如“上周那个”）按主题与时间对号。
